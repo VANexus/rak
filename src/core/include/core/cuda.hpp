@@ -138,4 +138,39 @@ private:
   size_t size_ = 0;
 };
 
+/** Page-locked (pinned) host buffer for async cudaMemcpy with the GPU. */
+template <typename T>
+class PinnedBuffer {
+public:
+  PinnedBuffer() = default;
+  explicit PinnedBuffer(size_t count) { allocate(count); }
+  ~PinnedBuffer() { free(); }
+
+  PinnedBuffer(const PinnedBuffer &) = delete;
+  PinnedBuffer &operator=(const PinnedBuffer &) = delete;
+  PinnedBuffer(PinnedBuffer &&o) noexcept { ptr_ = o.ptr_; size_ = o.size_; o.ptr_ = nullptr; o.size_ = 0; }
+  PinnedBuffer &operator=(PinnedBuffer &&o) noexcept {
+    if (this != &o) { free(); ptr_ = o.ptr_; size_ = o.size_; o.ptr_ = nullptr; o.size_ = 0; }
+    return *this;
+  }
+
+  void allocate(size_t count) {
+    free();
+    void *ptr = nullptr;
+    CUDA_CHECK(cudaMallocHost(&ptr, count * sizeof(T)));
+    ptr_ = static_cast<T *>(ptr);
+    size_ = count;
+  }
+  void free() { if (ptr_) { cudaFreeHost(ptr_); ptr_ = nullptr; size_ = 0; } }
+
+  [[nodiscard]] T *data() noexcept { return ptr_; }
+  [[nodiscard]] const T *data() const noexcept { return ptr_; }
+  [[nodiscard]] size_t size() const noexcept { return size_; }
+  [[nodiscard]] size_t bytes() const noexcept { return size_ * sizeof(T); }
+
+private:
+  T *ptr_ = nullptr;
+  size_t size_ = 0;
+};
+
 }  // namespace rak::core

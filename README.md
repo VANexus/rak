@@ -51,6 +51,21 @@ ros2 launch boot stereo.launch.py
 
 Camera: SP2812 SBS, 1280x720 @ 30 Hz → left 640x720 + right 640x720, MJPEG.
 
+### 30 fps tuning
+
+The eye capture node sustains a full 30 fps end-to-end. Two things make that happen:
+
+1. **Decode thread.** `nvjpegDecode()` blocks the CPU for ~10 ms and cannot be
+   pipelined in a single thread. The node runs it on a dedicated background
+   thread with ping-pong double-buffering; the main thread does grab + copy +
+   publish. Since camera grab (~33 ms) dominates decode (~10 ms), the decode
+   thread always finishes before the next frame is needed.
+
+2. **Fixed frame rate.** Some USB cameras expose an auto-exposure mode that
+   drags the output frame rate down to ~20 fps in low light
+   (`V4L2_CID_EXPOSURE_DYNAMIC_FRAMERATE`). The node disables this control at
+   startup so the camera actually delivers the 30 fps requested via `S_PARM`.
+
 ## Hardware target
 
 Jetson Orin Nano, JetPack 7.2 (CUDA 13.2, TensorRT 10.16, VPI 4.1.4).

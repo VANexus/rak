@@ -11,8 +11,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <condition_variable>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 
 namespace rak::eye {
 
@@ -58,7 +60,10 @@ struct NvJpegDecoder::Impl {
 };
 
 NvJpegDecoder::NvJpegDecoder() : impl_(new Impl) {
-  nvjpegCheck(nvjpegCreateSimple(&impl_->handle), "nvjpegCreateSimple");
+  // GPU_HYBRID: Huffman decode runs on GPU too, so nvjpegDecode() is fully
+  // async (CPU submits and returns immediately). This lets us overlap decode
+  // with the next frame's camera grab.
+  nvjpegCheck(nvjpegCreate(NVJPEG_BACKEND_GPU_HYBRID, nullptr, &impl_->handle), "nvjpegCreate(GPU_HYBRID)");
   nvjpegCheck(nvjpegJpegStateCreate(impl_->handle, &impl_->state), "nvjpegJpegStateCreate");
 }
 NvJpegDecoder::~NvJpegDecoder() {
@@ -114,37 +119,45 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
   pub_left_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(config_.left_info_topic, rclcpp::SensorDataQoS());
   pub_right_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(config_.right_info_topic, rclcpp::SensorDataQoS());
 
-  // Allocate GPU scratch for each eye (BGR = 3 bytes per pixel)
-  size_t eye_bytes = (size_t)eye_w_ * eye_h_ * 3;
-  left_gpu_ = std::make_unique<rak::core::DeviceBuffer<uint8_t>>(eye_bytes);
-  right_gpu_ = std::make_unique<rak::core::DeviceBuffer<uint8_t>>(eye_bytes);
-  // Temp GPU buffer for the full decoded SBS frame
+  // Ping-pong GPU buffer for the decoded SBS frame (pipeline overlap)
   sbs_w_ = config_.sbs_width;
   sbs_h_ = config_.sbs_height;
-  sbs_gpu_ = std::make_unique<rak::core::DeviceBuffer<uint8_t>>((size_t)sbs_w_ * sbs_h_ * 3);
+  for (int i = 0; i < kSlots; ++i) {
+    sbs_gpu_[i] = std::make_unique<rak::core::DeviceBuffer<uint8_t>>((size_t)sbs_w_ * sbs_h_ * 3);
+  }
+
+  // Pinned (page-locked) host download buffers — required for true async DMA
+  size_t eye_bytes = (size_t)eye_w_ * eye_h_ * 3;
+  left_host_ = std::make_unique<rak::core::PinnedBuffer<uint8_t>>(eye_bytes);
+  right_host_ = std::make_unique<rak::core::PinnedBuffer<uint8_t>>(eye_bytes);
 
   rak::core::init_cuda(0);
 
-  // nvJPEG decoder (GPU-side MJPEG decode)
+  // nvJPEG decoder (GPU-side MJPEG decode) — owned by the decode thread.
   nvjpeg_ = std::make_unique<NvJpegDecoder>();
 
-  // CUDA stream for async decode + copy
-  stream_ = std::make_unique<rak::core::CudaStream>();
+  // Two streams on two threads: decode_stream_ is used by the decode thread,
+  // copy_stream_ by the main capture thread (grab + copy + publish).
+  decode_stream_ = std::make_unique<rak::core::CudaStream>();
+  copy_stream_ = std::make_unique<rak::core::CudaStream>();
 
   if (!open_device() || !init_device()) {
     throw std::runtime_error("eye: failed to initialise camera " + config_.device);
   }
 
   running_ = true;
+  decode_thread_ = std::thread([this] { decode_loop(); });
   capture_thread_ = std::thread([this] { capture_loop(); });
 
-  RCLCPP_INFO(logger_, "eye: capturing %s %dx%d SBS @ %d fps -> left/right %dx%d (nvJPEG GPU decode)",
+  RCLCPP_INFO(logger_, "eye: capturing %s %dx%d SBS @ %d fps -> left/right %dx%d (nvJPEG GPU decode thread, pinned DMA)",
               config_.device.c_str(), config_.sbs_width, config_.sbs_height,
               config_.fps, eye_w_, eye_h_);
 }
 
 CaptureNode::~CaptureNode() {
   running_ = false;
+  decode_cv_.notify_all();  // wake decode thread so it can exit
+  if (decode_thread_.joinable()) decode_thread_.join();
   if (capture_thread_.joinable()) capture_thread_.join();
   close_device();
 }
@@ -187,6 +200,22 @@ bool CaptureNode::init_device() {
   parm.parm.capture.timeperframe.numerator = 1;
   parm.parm.capture.timeperframe.denominator = config_.fps;
   xioctl(fd_, VIDIOC_S_PARM, &parm);
+
+  // Disable exposure_dynamic_framerate: when enabled, the camera lowers its
+  // output frame rate whenever the auto-exposure time grows (e.g. low light),
+  // which would drag us from 30 fps down to ~20 fps. With it off, exposure is
+  // clamped to the frame interval so the camera actually delivers the rate we
+  // asked for via S_PARM. Skip silently if the control is absent.
+  {
+    struct v4l2_control ctrl{};
+    ctrl.id = 0x009a0903;  // V4L2_CID_EXPOSURE_DYNAMIC_FRAMERATE (not in this kernel's videodev2.h)
+    ctrl.value = 0;
+    if (xioctl(fd_, VIDIOC_S_CTRL, &ctrl) == -1) {
+      RCLCPP_WARN(logger_, "eye: could not disable exposure_dynamic_framerate (errno %d) — fps may drop in low light", errno);
+    } else {
+      RCLCPP_INFO(logger_, "eye: exposure_dynamic_framerate disabled -> fixed %d fps", config_.fps);
+    }
+  }
 
   struct v4l2_requestbuffers req{};
   req.count = 4;
@@ -256,36 +285,90 @@ bool CaptureNode::grab_frame(std::vector<uint8_t> &jpeg_bytes) {
   return true;
 }
 
+void CaptureNode::decode_loop() {
+  // Dedicated decode thread: nvjpegDecode blocks the CPU (~10 ms). By running
+  // it here, that 10 ms overlaps the main thread's camera grab (~33 ms).
+  // Handshake: main thread sets decode_slot_ to say "decode jpeg_buf_[slot]
+  // into sbs_gpu_[slot]"; we do it, then set ready_slot_ = slot.
+  while (running_) {
+    int slot;
+    {
+      std::unique_lock<std::mutex> lk(decode_mutex_);
+      decode_cv_.wait(lk, [this] { return decode_slot_ >= 0 || !running_; });
+      if (!running_) break;
+      slot = decode_slot_;
+      decode_slot_ = -1;
+    }
+    // Synchronous GPU decode into the ping-pong slot. This blocks ~10 ms.
+    decoded_pitch_[slot] = nvjpeg_->decode_to_gpu(
+        jpeg_buf_[slot].data(), jpeg_buf_[slot].size(),
+        sbs_w_, sbs_h_, sbs_gpu_[slot]->data(), *decode_stream_);
+    {
+      std::lock_guard<std::mutex> lk(decode_mutex_);
+      ready_slot_ = slot;
+    }
+  }
+}
+
 void CaptureNode::capture_loop() {
-  std::vector<uint8_t> jpeg;
+  // Main thread: grab -> copy -> publish. The decode of frame N happens on the
+  // decode thread while we grab frame N+1 (~33 ms > 10 ms decode), so by the
+  // time we need frame N decoded, it is always ready.
+  //
+  // Timeline (wall-clock, one iteration == one published frame):
+  //   grab frame N into jpeg_buf_[slot]      (~33 ms; decode thread decodes N-1 meanwhile)
+  //   hand slot to decode thread (non-blocking)
+  //   wait for ready_slot_ == 1-slot         (~0 ms, decode always finished)
+  //   copy sbs_gpu_[1-slot] -> host + publish (~0.2 ms pinned DMA)
+  //   slot = 1-slot
 
-  // Host-side download buffer for publishing (zero-copy image transport is the upgrade path)
-  std::vector<uint8_t> host_eye((size_t)eye_w_ * eye_h_ * 3);
+  const size_t eye_bytes = (size_t)eye_w_ * eye_h_ * 3;
+  int slot = 0;
 
+  // Prime: grab + handoff the first frame so the decode thread has work.
+  if (!grab_frame(jpeg_buf_[slot])) return;
+  {
+    std::lock_guard<std::mutex> lk(decode_mutex_);
+    decode_slot_ = slot;
+  }
+  decode_cv_.notify_one();
+  slot = 1 - slot;
+
+  int frame_idx = 0;
+  auto fps_t0 = std::chrono::high_resolution_clock::now();
   while (running_ && rclcpp::ok()) {
-    if (!grab_frame(jpeg)) continue;
+    // --- stage 1: grab next frame (~33 ms, decode thread works during this) ---
+    if (!grab_frame(jpeg_buf_[slot])) continue;
 
-    // 1) GPU-side decode of the full SBS MJPEG frame into sbs_gpu_ (device memory).
-    size_t decoded_pitch = nvjpeg_->decode_to_gpu(
-        jpeg.data(), jpeg.size(), sbs_w_, sbs_h_, sbs_gpu_->data(), *stream_);
+    // Hand this frame to the decode thread (it will finish well before we need it).
+    {
+      std::lock_guard<std::mutex> lk(decode_mutex_);
+      decode_slot_ = slot;
+    }
+    decode_cv_.notify_one();
 
-    // 2) Split into left/right eyes on the device (cudaMemcpy2D, async on our stream).
+    // --- stage 2: wait for the OTHER frame (1-slot) to be decoded ---
+    {
+      std::unique_lock<std::mutex> lk(decode_mutex_);
+      decode_cv_.wait(lk, [this, slot] { return ready_slot_ == 1 - slot || !running_; });
+      ready_slot_ = -1;
+    }
+
+    const int pub_slot = 1 - slot;
+    const size_t decoded_pitch = decoded_pitch_[pub_slot];
+
+    // --- stage 3: copy decoded SBS frame -> pinned host, split left/right ---
     CUDA_CHECK(cudaMemcpy2DAsync(
-        left_gpu_->data(), (size_t)eye_w_ * 3,
-        sbs_gpu_->data(), decoded_pitch,
-        (size_t)eye_w_ * 3, eye_h_, cudaMemcpyDeviceToDevice, *stream_));
+        left_host_->data(), (size_t)eye_w_ * 3,
+        sbs_gpu_[pub_slot]->data(), decoded_pitch,
+        (size_t)eye_w_ * 3, eye_h_, cudaMemcpyDeviceToHost, *copy_stream_));
     CUDA_CHECK(cudaMemcpy2DAsync(
-        right_gpu_->data(), (size_t)eye_w_ * 3,
-        sbs_gpu_->data() + eye_w_ * 3, decoded_pitch,
-        (size_t)eye_w_ * 3, eye_h_, cudaMemcpyDeviceToDevice, *stream_));
-
-    // 3) Download each eye to host for the ROS message.
-    CUDA_CHECK(cudaMemcpyAsync(host_eye.data(), left_gpu_->data(), host_eye.size(),
-                                          cudaMemcpyDeviceToHost, *stream_));
-    stream_->synchronize();
+        right_host_->data(), (size_t)eye_w_ * 3,
+        sbs_gpu_[pub_slot]->data() + eye_w_ * 3, decoded_pitch,
+        (size_t)eye_w_ * 3, eye_h_, cudaMemcpyDeviceToHost, *copy_stream_));
+    copy_stream_->synchronize();
 
     auto stamp = now();
-
     auto make_image = [&](const std::string &frame, const uint8_t *eye_data) {
       auto msg = std::make_shared<sensor_msgs::msg::Image>();
       msg->header.stamp = stamp;
@@ -295,17 +378,21 @@ void CaptureNode::capture_loop() {
       msg->encoding = "bgr8";
       msg->step = eye_w_ * 3;
       msg->is_bigendian = 0;
-      msg->data.assign(eye_data, eye_data + (size_t)eye_w_ * eye_h_ * 3);
+      msg->data.assign(eye_data, eye_data + eye_bytes);
       return msg;
     };
+    pub_left_->publish(*make_image(config_.frame_id + "_left", left_host_->data()));
+    pub_right_->publish(*make_image(config_.frame_id + "_right", right_host_->data()));
 
-    pub_left_->publish(*make_image(config_.frame_id + "_left", host_eye.data()));
+    slot = 1 - slot;
 
-    // Right eye: download again (reuse host_eye buffer).
-    CUDA_CHECK(cudaMemcpy(host_eye.data(), right_gpu_->data(), host_eye.size(),
-                                     cudaMemcpyDeviceToHost));
-    pub_right_->publish(*make_image(config_.frame_id + "_right", host_eye.data()));
-
+    if (++frame_idx % 30 == 0) {
+      auto t1 = std::chrono::high_resolution_clock::now();
+      float secs = std::chrono::duration<float>(t1 - fps_t0).count();
+      float fps = 30.0f / secs;
+      RCLCPP_INFO(logger_, "eye: %.1f fps", fps);
+      fps_t0 = t1;
+    }
     // TODO: publish CameraInfo (loaded from calibration YAML)
   }
 }

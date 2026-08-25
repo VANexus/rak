@@ -84,20 +84,40 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_left_info_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_right_info_;
 
-  // GPU scratch buffers
-  std::unique_ptr<rak::core::DeviceBuffer<uint8_t>> left_gpu_;
-  std::unique_ptr<rak::core::DeviceBuffer<uint8_t>> right_gpu_;
-  std::unique_ptr<rak::core::DeviceBuffer<uint8_t>> sbs_gpu_;   // full decoded SBS frame
+  // GPU scratch buffers (ping-pong for pipeline overlap)
+  static constexpr int kSlots = 2;
+  std::unique_ptr<rak::core::DeviceBuffer<uint8_t>> sbs_gpu_[kSlots];  // decoded SBS frame per slot
   int eye_w_ = 0;
   int eye_h_ = 0;
   int sbs_w_ = 0;
   int sbs_h_ = 0;
 
-  // nvJPEG GPU decoder + async stream
+  // Pinned host download buffers (page-locked for true async DMA)
+  std::unique_ptr<rak::core::PinnedBuffer<uint8_t>> left_host_;
+  std::unique_ptr<rak::core::PinnedBuffer<uint8_t>> right_host_;
+
+  // --- decode thread: nvJPEG decode blocks the CPU (~10 ms), so it runs on a
+  //     dedicated thread. The main thread does grab + copy + publish (~33 ms);
+  //     since decode (10 ms) < grab (33 ms), the decode thread always finishes
+  //     before the next frame is needed. Ping-pong double buffering. ---
+  void decode_loop();
+
   std::unique_ptr<NvJpegDecoder> nvjpeg_;
-  std::unique_ptr<rak::core::CudaStream> stream_;
+  std::unique_ptr<rak::core::CudaStream> decode_stream_;   // owned by decode thread
+  std::unique_ptr<rak::core::CudaStream> copy_stream_;     // owned by main thread (capture_loop)
+
+  // Ping-pong jpeg source buffers (filled by main, consumed by decode thread).
+  std::vector<uint8_t> jpeg_buf_[kSlots];
+  size_t decoded_pitch_[kSlots] = {0, 0};
+
+  // Cross-thread handshake (mutex + condvar).
+  std::mutex decode_mutex_;
+  std::condition_variable decode_cv_;
+  int decode_slot_ = -1;                 // slot the main thread wants decoded (-1 = none)
+  int ready_slot_ = -1;                  // slot that has been decoded and is ready to publish
 
   std::thread capture_thread_;
+  std::thread decode_thread_;
   std::atomic<bool> running_{false};
 
   rclcpp::Logger logger_;
