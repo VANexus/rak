@@ -6,6 +6,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `rak` is an AI-native stereo vision system for Jetson Orin Nano (JetPack 7.2) as a ROS 2 (Jazzy) colcon workspace. Neural depth / detection / segmentation — not traditional CV. The pipeline keeps image data GPU-resident from camera capture through inference; CUDA streams overlap capture → decode → inference.
 
+## System context (rak robot)
+
+This is the **brain** of a three-repo robot. Perception lives here; real-time control lives in two STM32 leaf nodes that this repo commands over CAN FD.
+
+```
+[USB SBS Camera] → eye (V4L2 + nvJPEG GPU decode)
+        ↓  left/right image_raw (GPU-resident)
+   depth (VPI rectify + TRT depth)
+        ↓  depth + rectified
+   mind (TRT detection/segmentation)
+        ↓  detections
+   world (3D tracking & fusion)
+        ↓  TrackedObjects
+   nerve → CAN FD → STM32 nodes
+                        ↓
+        ┌───────────────┴───────────────┐
+        ↓                               ↓
+  rak-arm                           rak-chassis
+  STM32G474 · M4F                   STM32H743 · M7
+  Arm joint control                 Mobile base control
+  (GitHub: Thecnfor/rak-arm)        (GitHub: Thecnfor/rak-chassis)
+```
+
+- **This repo (rak):** stereo vision + AI perception on Jetson. `eye` captures, `depth`/`mind` infer, `world` tracks, `nerve` (Rust, socketcan) sends motion commands + receives feedback over CAN FD.
+- **rak-arm:** STM32G474 arm joint controller. Receives joint commands, runs HRTIM precision motor control, reports encoder/current state.
+- **rak-chassis:** STM32H743 mobile base controller. Receives drive commands, runs wheel motor control + IMU/odometry fusion.
+
+The CAN FD bus is the nervous system. `nerve` bridges ROS 2 messages ↔ CAN frames (`CanFrame.msg`). When writing perception-to-action logic, remember the loop closes through those two STM32 nodes — their command/feedback protocol (in their repos) defines what this brain can ask of the body.
+
 ## Build
 
 The C++ packages (`core`, `eye`) link NVIDIA libraries that only exist on the Jetson target — CUDA 13.2, TensorRT (`nvinfer`/`nvonnxparser`), and VPI (`/opt/nvidia/vpi4`). They will not compile on a generic machine (this dev box has none of them). Build on the Jetson:
