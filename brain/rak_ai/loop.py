@@ -107,9 +107,10 @@ def run(
     force_s2: int | None = None,
     out_dir: Path = EPISODE_DIR,
     verbose: bool = True,
+    weights: str = "auto",
 ) -> Logger:
     body = MockBody(scenario)
-    s1: Decider = StubDecider() if decider == "stub" else LayaDecider()
+    s1: Decider = StubDecider() if decider == "stub" else LayaDecider(weights=weights)
     s2 = consultant or StubConsultant()
     log = Logger(out_dir=out_dir)
     log.log(
@@ -119,6 +120,8 @@ def run(
         decider=decider,
         consultant=type(s2).__name__,
         force_s2=force_s2,
+        s1_device=str(getattr(s1, "device", "")) or None,
+        s1_weights=str(getattr(s1, "weights", "")) or None,
     )
 
     pending: dict[int, tuple[SceneState, Decision, str]] = {}
@@ -185,12 +188,19 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scenario", default="approach", choices=["approach", "cross", "clear"])
     p.add_argument("--decider", default="stub", choices=["stub", "laya"])
+    p.add_argument(
+        "--weights",
+        default="auto",
+        choices=["auto", "fp16", "bf16", "fp32"],
+        help="resident weight precision for laya; auto takes the checkpoint's amp dtype "
+        "(half of it -- fp32 is what used to fall off this box's GPU)",
+    )
     p.add_argument("--ticks", type=int, default=50)
     p.add_argument("--force-s2", type=int, default=None, help="force escalation from this tick")
     p.add_argument("--out", default=str(EPISODE_DIR))
     a = p.parse_args()
 
-    log = run(a.scenario, a.ticks, a.decider, force_s2=a.force_s2, out_dir=Path(a.out))
+    log = run(a.scenario, a.ticks, a.decider, force_s2=a.force_s2, out_dir=Path(a.out), weights=a.weights)
     print(f"\nepisode: {log.path}")
 
 

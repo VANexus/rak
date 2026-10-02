@@ -113,6 +113,12 @@ class BrainNode(Node):
         # -- parameters -------------------------------------------------
         self.declare_parameter("decider", "stub")
         self.declare_parameter("consultant", "stub")
+        # auto|fp16|bf16|fp32: the resident weight precision. "auto" takes the
+        # checkpoint's own amp dtype, which halves the model (803 MiB vs 1606 MiB)
+        # with one rounding step instead of two -- on this board the fp32 peak is
+        # what pushed System 1 off the GPU. fp32 is the escape hatch if a decision
+        # ever looks wrong.
+        self.declare_parameter("s1_weights", "auto")
         self.declare_parameter("scenario", "approach")
         self.declare_parameter("sim", False)
         self.declare_parameter("rate", 10.0)  # sim + watchdog Hz
@@ -148,10 +154,15 @@ class BrainNode(Node):
 
         # -- the two halves of the brain, both in this process ----------
         decider = str(g("decider"))
-        self._s1: Decider = StubDecider() if decider == "stub" else LayaDecider()
+        self._s1: Decider = (
+            StubDecider() if decider == "stub" else LayaDecider(weights=str(g("s1_weights")))
+        )
         # "cuda"/"cpu": laya swallows CUDA OOM and degrades to CPU, which on this
         # box is 8x slower -- slower than the sensor rate, so it must not be quiet.
         self._s1_device = str(getattr(self._s1, "device", ""))
+        self._s1_weights = str(getattr(self._s1, "weights", ""))
+        self._s1_place_error = str(getattr(self._s1, "place_error", ""))
+        self._s1_weights_mib = round(int(getattr(self._s1, "weights_bytes", 0) or 0) / 1048576)
         consultant = str(g("consultant"))
         self._s2: Consultant = StubConsultant() if consultant == "stub" else _rai(consultant)
 
@@ -208,6 +219,8 @@ class BrainNode(Node):
         self.create_timer(1.0 / self._rate, self._watchdog)
         self.get_logger().info(
             f"brain up: decider={decider} s1_device={self._s1_device or '-'} "
+            f"s1_weights={self._s1_weights or '-'}"
+            f"{f' ({self._s1_weights_mib} MiB resident)' if self._s1_weights_mib else ''} "
             f"sim={self._body is not None} "
             f"perception={PERCEPTION_TOPIC} decision={DECISION_TOPIC}"
         )
@@ -216,10 +229,12 @@ class BrainNode(Node):
         self.get_logger().info(f"corpus: {self._log.path.parent}")
         if self._s1_device == "cpu":
             self.get_logger().warn(
-                "System 1 fell back to CPU (~1.6 s/predict, vs ~0.19 s on GPU): "
-                "slower than the sensor rate, so frames are dropped. This box has "
-                "3.4 GB of unified memory and laya needs ~1.9 GB of it -- free "
-                "some, or run with -p decider:=stub."
+                "System 1 is on CPU (~1.6 s/predict, vs ~0.19 s on GPU): slower "
+                "than the sensor rate, so frames are dropped. This box has 3.4 GB "
+                "of unified memory and the model costs ~800 MiB at s1_weights=auto "
+                "(~1600 MiB at fp32, which is what used to fail) -- free some, or "
+                "run with -p decider:=stub."
+                + (f" Placement said: {self._s1_place_error[:200]}" if self._s1_place_error else "")
             )
 
     # -- inputs --------------------------------------------------------
@@ -409,6 +424,7 @@ class BrainNode(Node):
             node="ros",
             rate=self._rate,
             s1_device=self._s1_device,  # a CPU row was produced by an 8x slower run
+            s1_weights=self._s1_weights or None,  # fp16 rows are not fp32 comparable
         )
         return log
 

@@ -17,8 +17,10 @@ authorises motion, so nothing here trusts its confidence. See gate().
 
 from __future__ import annotations
 
+import json
 import os
 import time
+from pathlib import Path
 from typing import Protocol
 
 from .types import Action, Decision, Entity, SceneState, Tier
@@ -156,6 +158,40 @@ class StubDecider:
         )
 
 
+# Names that mean "store the weights at half width". Mapped to torch dtypes by
+# the caller, because torch is imported late on purpose (the stub path must run
+# on a box with no torch at all).
+_HALF_PRECISIONS = ("fp16", "float16", "bf16", "bfloat16")
+
+
+def _checkpoint_amp_dtype(model: str) -> str:
+    """The precision a checkpoint says it computes in, without loading it.
+
+    `auto` has to pick a storage dtype *before* the weights exist, and laya's own
+    rule is `cfg["amp_dtype"]` (this checkpoint ships bf16, so fp32 storage buys
+    nothing but cost). Reading the small JSON beside the weights beats loading
+    1.6 GB to ask the question. Falls back to laya's own default when the model is
+    not cached locally or the key is missing.
+    """
+    cfg_path = None
+    try:
+        local = Path(model)
+        if (local / "rl_agent_config.json").is_file():
+            cfg_path = local / "rl_agent_config.json"
+        else:
+            from huggingface_hub import snapshot_download
+
+            # Metadata only: the weights are already on this box, and pulling 800
+            # MiB to read a config field would be its own kind of bug.
+            root = Path(snapshot_download(model, allow_patterns=["rl_agent_config.json"]))
+            cfg_path = root / "rl_agent_config.json"
+        if cfg_path is not None and cfg_path.is_file():
+            return str(json.loads(cfg_path.read_text()).get("amp_dtype") or "fp16")
+    except Exception:
+        pass
+    return "fp16"
+
+
 class LayaDecider:
     """Laya adapter. Loads once, predicts per tick.
 
@@ -177,16 +213,88 @@ class LayaDecider:
     malformed answer is a normal path that degrades to LOW, never an exception.
     """
 
-    def __init__(self, model: str = "convaiinnovations/laya-typed-decisions") -> None:
+    def __init__(
+        self,
+        model: str = "convaiinnovations/laya-typed-decisions",
+        weights: str = "auto",
+    ) -> None:
         # Must precede the import: a TF/abseil deadlock hangs loading otherwise.
         os.environ.setdefault("USE_TF", "0")
         import laya  # noqa: PLC0415 -- deliberately deferred, see USE_TF above
+        import torch  # noqa: PLC0415 -- same reason
 
-        self._agent = laya.load(model)
+        # Load on CPU, then place ourselves -- the order is the whole point. The
+        # checkpoint is F16 on disk (421M params, 803 MiB), but laya builds its
+        # module in torch's default dtype and then moves the whole thing in one
+        # step. On this unified-memory board CUDA's "free" is just the pages
+        # nobody is holding, so the fp32 build starves the GPU before anything
+        # could be cast: `laya.load(model)` OOMs around 1.6 GB and drops to CPU
+        # without raising.
+        #
+        # `build_model(pretrained=False)` is what decides the parameter dtype, so
+        # setting the default dtype before the load keeps fp32 out of the picture
+        # entirely: peak RSS becomes the halved model instead of the fp32 one we
+        # would then have to cast away. Restored in `finally` -- a process-wide
+        # default leaking into the rest of the brain is worse than the peak.
+        want = os.environ.get("LAYA_CUDA_AMP", "").lower() or weights  # laya's own override
+        if want == "auto":
+            want = _checkpoint_amp_dtype(model)
+        half = None
+        if want in _HALF_PRECISIONS:
+            half = torch.bfloat16 if want.startswith("bf") else torch.float16
+
+        # Half weights are only runnable where autocast is on: laya enables it for
+        # CUDA (and, opt-in, for CPU via LAYA_CPU_AMP). Handing back bf16 weights
+        # with no autocast is the `mat1 and mat2 must have the same dtype` crash, so
+        # without either the request degrades to the fp32 CPU path we had before.
+        amp_on_cpu = os.environ.get("LAYA_CPU_AMP", "").lower() in _HALF_PRECISIONS
+        if half is not None and not torch.cuda.is_available() and not amp_on_cpu:
+            half, want = None, "fp32"
+
+        prev_default = torch.get_default_dtype()
+        try:
+            if half is not None:
+                torch.set_default_dtype(half)
+            self._agent = laya.load(model, device="cpu")
+        finally:
+            torch.set_default_dtype(prev_default)
+
+        # An explicit dtype anywhere inside the build beats the default; casting
+        # the CPU copy is cheap and is the last chance to keep fp32 off the GPU.
+        if half is not None and next(self._agent.model.parameters()).dtype != half:
+            self._agent.model.to(dtype=half)
+        self.weights = want if half is not None else "fp32"
+
+        target = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.place_error = ""
+        if target.type == "cuda":
+            try:
+                # Per-parameter move: each CPU tensor is dropped as its GPU twin
+                # appears, so the unified-memory peak stays near one copy.
+                self._agent.model.to(target)
+                # What laya would have configured had it placed the model itself:
+                # autocast on CUDA, at the checkpoint's amp dtype.
+                self._agent.device = target
+                self._agent.amp_enabled = True
+                self._agent.dtype = half if half is not None else torch.float32
+                # Return the freed pages to the system; the caching allocator
+                # would otherwise keep them mapped and the box would not see them.
+                torch.cuda.empty_cache()
+            except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
+                # Stay on CPU, but keep the fact: laya prints this to stdout and
+                # the node has to be able to report it on a bus.
+                self.place_error = str(exc)
+
         # laya falls back to CPU on CUDA OOM *without raising* -- on this 3.4 GB
         # Jetson that is ~190 ms -> ~1.6 s per predict, slower than the sensor
         # rate. Whoever runs us needs to know which one they got.
         self.device = str(getattr(self._agent, "device", "unknown")).split(":")[0]
+        try:
+            self.weights_bytes = sum(
+                int(p.numel()) * int(p.element_size()) for p in self._agent.model.parameters()
+            )
+        except Exception:  # introspection only; never fail a load over a log line
+            self.weights_bytes = 0
 
     def decide(self, state: SceneState) -> Decision:
         t0 = time.perf_counter()
