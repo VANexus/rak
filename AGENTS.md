@@ -34,6 +34,9 @@ source install/setup.bash
 ros2 run eye eye_capture
 ros2 launch boot lidar.launch.py
 
+# Memory/DMA mode of the board itself (needs sudo; see Gotchas)
+sudo scripts/rak-mode.sh status | headless | desktop
+
 # The brain as a node (model + deps come from brain/.venv, resolved at run time)
 ros2 launch boot brain.launch.py decider:=laya sim:=true
 ros2 run brain brain_node --ros-args -p sim:=true -p decider:=stub
@@ -95,6 +98,17 @@ colcon already knows this from `package.xml`). Treat `colcon build` +
   point: colcon builds scripts with its own system `python3`, which cannot `import
   pydantic`. It re-execs `$RAK_BRAIN_PYTHON` or `<repo>/brain/.venv/bin/python`, so the
   venv never needs to be activated at build time.
+- The 1024x600 touchscreen and the camera compete for the same pool. A logged-in
+  GNOME session drives `CmaFree` to **0 kB** of the 256 MiB CMA area, and `eye`
+  asks that pool for 4 `V4L2_MEMORY_MMAP` buffers -- so capture fails in a way that
+  looks like a camera bug but is a memory decision. `scripts/rak-mode.sh headless`
+  stops and disables gdm (~1.8 -> ~2.3 GiB available, 75-160 MiB CMA back); it also
+  kills every `DISPLAY=:1` launch script until `desktop`, and because autologin is
+  off here, coming back means typing the password at the touchscreen once.
+- nvpmodel sits in the **10W** mode on this board (6 cores, capped EMC bandwidth),
+  so the ~158 ms/predict figure and eye's 30 fps are both measured under that cap.
+  Raising it (`sudo nvpmodel -m 0 && sudo jetson_clocks`) is root and changes the
+  thermal envelope -- do not assume a benchmark is comparable across the two.
 - Laya costs **~1.4 GB of this box's 3.4 GB of unified memory** to sit on the GPU:
   804 MiB of resident weights (421M params, bf16) plus ~600 MiB of CUDA context and
   cuDNN/cuBLAS workspace, measured at 158 ms/predict. It used to need ~1.9 GB, and
