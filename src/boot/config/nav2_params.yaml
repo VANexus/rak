@@ -129,16 +129,33 @@ collision_monitor:
     map_frame: "map"
     transform_tolerance: 0.5
     source_timeout: 1.0
-    # collision_monitor refuses to start if `polygons` is empty (the empty
-    # list crashes parameter parsing on Jazzy). Until the URDF/footprint
-    # discussion lands, give it a placeholder 0.4 x 0.4 square at the
-    # robot base; the polygon is named `polygon_unused` and never referenced
-    # by any action so it has no effect on the nav behaviour. The costmap's
-    # obstacle_layer + inflation_layer still own real collision avoidance.
+    # collision_monitor also requires `observation_sources` to be a non-empty
+    # list, otherwise it fails on configure with "parameter 'observation_sources'
+    # is not initialized". Wire /scan in so it has something to read; the
+    # polygon below is named "polygon_unused" and `action_type: "none"` so this
+    # has no actual collision-monitoring behaviour. Real collision avoidance is
+    # owned by the costmap's obstacle_layer + inflation_layer (which already
+    # listen to /scan in local_costmap / global_costmap).
+    observation_sources: ["scan_source"]
+    scan_source:
+      type: "scan"
+      topic: "/scan"
+      min_obs_dist: 0.3
+      max_obs_dist: 6.0
+      obstacles_per_point: 1
+      # sample_step is mandatory when using PointCloud / LaserScan source;
+      # without it the configure pass aborts the same way.
     polygons: ["polygon_unused"]
     polygon_unused:
       type: "polygon"
-      points: [0.2, 0.2, 0.2, -0.2, -0.2, -0.2, -0.2, 0.2]
+      # collision_monitor parses `points` as a STRING (JSON list of [x, y]
+      # pairs), not a YAML sequence of floats. Setting it as a flat list of
+      # numbers is silently coerced to string and then rejected on
+      # configure with "Wrong parameter type ... is of type {string}, setting
+      # it to {double_array} is not allowed." The official example in
+      # nav2_collision_monitor/params/collision_monitor_params.yaml uses
+      # exactly this "[[x1,y1], [x2,y2], ...]" format.
+      points: "[[0.2, 0.2], [0.2, -0.2], [-0.2, -0.2], [-0.2, 0.2]]"
       action_type: "none"
     publish_debug: false
 
@@ -206,3 +223,39 @@ global_costmap:
         # the StaticLayer's QoS overrides must match or the layer misses the
         # first map. map_topic defaults to /map, no remap needed.
         map_topic: /map
+
+# docking_server: lifted verbatim from
+# /opt/ros/jazzy/share/nav2_bringup/params/nav2_params.yaml. We don't actually
+# use docking on xrak (no charging dock, no charging goal), but
+# lifecycle_manager_navigation's bringup pass aborts if docking_server fails
+# to configure -- so we have to feed it enough params to start, then never
+# call its action. The whole block below is parked and inert.
+docking_server:
+  ros__parameters:
+    controller_frequency: 50.0
+    initial_perception_timeout: 5.0
+    wait_charge_timeout: 5.0
+    dock_approach_timeout: 30.0
+    undock_linear_tolerance: 0.05
+    undock_angular_tolerance: 0.1
+    max_retries: 3
+    base_frame: "base_link"
+    fixed_frame: "odom"
+    dock_backwards: false
+    dock_prestaging_tolerance: 0.5
+
+    dock_plugins: ['simple_charging_dock']
+    simple_charging_dock:
+      plugin: 'opennav_docking::SimpleChargingDock'
+      docking_threshold: 0.05
+      staging_x_offset: -0.7
+      use_external_detection_pose: true
+      use_battery_status: false
+      use_stall_detection: false
+      external_detection_timeout: 1.0
+      external_detection_translation_x: -0.18
+      external_detection_translation_y: 0.0
+      external_detection_rotation_roll: -1.57
+      external_detection_rotation_pitch: -1.57
+      external_detection_rotation_yaw: 0.0
+      filter_coef: 0.1
