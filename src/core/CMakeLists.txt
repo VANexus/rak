@@ -20,10 +20,10 @@ find_package(rosidl_default_generators REQUIRED)
 
 # Generate custom messages
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/CanFrame.msg"
   "msg/TrackedObject.msg"
   "msg/TrackedObjects.msg"
-  "msg/ModelConfig.msg"
+  "msg/Action.msg"
+  "msg/Decision.msg"
   DEPENDENCIES std_msgs sensor_msgs geometry_msgs vision_msgs builtin_interfaces
 )
 
