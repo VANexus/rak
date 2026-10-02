@@ -32,7 +32,7 @@ public:
       std::shared_ptr<ob::StreamProfile> chosen;
       for (uint32_t j = 0; j < profiles->count(); ++j) {
         auto p = profiles->getProfile(j);
-        RCLCPP_INFO(this->get_logger(), "  profile[%u] fmt=%d %ux%u", j, p->format(), p->width(), p->height());
+        RCLCPP_INFO(this->get_logger(), "  profile[%u] fmt=%d %ux%u", j, p->format(), profileWidth(p), profileHeight(p));
         if (!chosen) {
           // prefer MJPG for color, Y16 for depth; otherwise pick first available
           if ((st == OB_SENSOR_COLOR && (p->format() == OB_FORMAT_MJPG || p->format() == OB_FORMAT_YUYV || p->format() == OB_FORMAT_RGB)) ||
@@ -42,12 +42,12 @@ public:
         }
       }
       if (chosen) {
-        RCLCPP_INFO(this->get_logger(), "  -> enabling fmt=%d %ux%u", chosen->format(), chosen->width(), chosen->height());
+        RCLCPP_INFO(this->get_logger(), "  -> enabling fmt=%d %ux%u", chosen->format(), profileWidth(chosen), profileHeight(chosen));
         config->enableStream(chosen);
       }
     }
     pipe_.start(config, [this](std::shared_ptr<ob::FrameSet> frameset) {
-      RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "FrameSet received, count=%lu", frameset->frameCount());
+      RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "FrameSet received, count=%u", frameset->frameCount());
       onFrameset(frameset);
     });
     RCLCPP_INFO(this->get_logger(), "Astra S pipeline started");
@@ -113,6 +113,21 @@ private:
   }
   static OBFormat frameFormat(std::shared_ptr<ob::Frame> & frame) {
     return frame->format();
+  }
+
+  // Resolution is a VideoStreamProfile property only: the base StreamProfile
+  // exposes format()/type(), and one StreamProfileList carries gyro/accel
+  // profiles too. Same cast the frame path above uses, so a non-video profile
+  // yields 0 instead of throwing the way `as<VideoStreamProfile>()` would.
+  static uint32_t profileWidth(const std::shared_ptr<ob::StreamProfile> & sp) {
+    if (!sp) return 0;
+    auto vp = std::dynamic_pointer_cast<ob::VideoStreamProfile>(sp);
+    return vp ? vp->width() : 0;
+  }
+  static uint32_t profileHeight(const std::shared_ptr<ob::StreamProfile> & sp) {
+    if (!sp) return 0;
+    auto vp = std::dynamic_pointer_cast<ob::VideoStreamProfile>(sp);
+    return vp ? vp->height() : 0;
   }
 
   void publishColor(std::shared_ptr<ob::Frame> frame, const rclcpp::Time & stamp) {
