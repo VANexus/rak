@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## System context (rak robot)
 
-This is the **brain** of a three-repo robot. Perception lives here; real-time control lives in two STM32 leaf nodes that this repo commands over CAN FD.
+This is the **brain** of a three-repo robot. Perception lives here; real-time control lives in two STM32F407 leaf nodes that this repo commands over classic CAN 2.0A @ 1 Mbps.
 
 ```
 [USB SBS Camera] → eye (V4L2 + nvJPEG GPU decode)
@@ -19,21 +19,27 @@ This is the **brain** of a three-repo robot. Perception lives here; real-time co
         ↓  detections
    world (3D tracking & fusion)
         ↓  TrackedObjects
-   nerve → CAN FD → STM32 nodes
+   can bridge (planned, not implemented yet) → CAN 2.0A 1 Mbps
                         ↓
         ┌───────────────┴───────────────┐
         ↓                               ↓
-  rak-arm                           rak-chassis
-  STM32G474 · M4F                   STM32H743 · M7
-  Arm joint control                 Mobile base control
-  (GitHub: Thecnfor/rak-arm)        (GitHub: Thecnfor/rak-chassis)
+  vehical_rak_arm                   vehical_rak_chassis
+  STM32F407VET6 · M4F               STM32F407VET6 · M4F
+  4 joints 25 kHz + base stepper    4 mecanum wheels 25 kHz
+  VANexus/vehical_rak_arm           VANexus/vehical_rak_chassis
 ```
 
-- **This repo (rak):** stereo vision + AI perception on Jetson. `eye` captures, `depth`/`mind` infer, `world` tracks, `nerve` (Rust, socketcan) sends motion commands + receives feedback over CAN FD.
-- **rak-arm:** STM32G474 arm joint controller. Receives joint commands, runs HRTIM precision motor control, reports encoder/current state.
-- **rak-chassis:** STM32H743 mobile base controller. Receives drive commands, runs wheel motor control + IMU/odometry fusion.
+> The two leaf nodes are **the same board**: WHEELTEC C30D (STM32F407VET6 with an
+> onboard 4-channel AT8236 driver, onboard CAN transceiver on CAN1 = PD0/PD1).
+> Only the role differs. The bus is **classic CAN 2.0A @ 1 Mbps — no CAN FD**: the
+> Orin's `mttcan` can do FD, the F407's bxCAN cannot, so an FD frame would be
+> error-framed by both leaf nodes. Never pass `fd on` when bringing up `can0`.
 
-The CAN FD bus is the nervous system. `nerve` bridges ROS 2 messages ↔ CAN frames (`CanFrame.msg`). When writing perception-to-action logic, remember the loop closes through those two STM32 nodes — their command/feedback protocol (in their repos) defines what this brain can ask of the body.
+- **This repo (rak):** perception + decision on the Orin — `eye` captures, `brain` decides, `astra_bridge` feeds the camera. **There is no CAN bridge here yet**: `nerve` was never implemented, `CanFrame.msg` is gone, and `motor_stub/cmd_vel_stub.py` only forwards Nav2's `Twist` from `/cmd_vel` to `/cmd_vel_raw` (no `Vy`, no enable bit, no CRC/counter). The wire contract lives in the leaf-node repos.
+- **vehical_rak_chassis:** mecanum base. Takes `(Vx, Vy, ωz)` at 100 Hz, does its own wheel inverse kinematics and closes four wheels at **25 kHz** (fixed-point, inside a TIM ISR, outside the RTOS scheduler); reports measured body velocity at 100 Hz.
+- **vehical_rak_arm:** 4-DOF arm. Takes joint targets from MoveIt — **the IK lives here, not on the MCU** — and closes 4 identical MG513P30_12V geared motors at **25 kHz**, plus a base stepper on a 1 kHz position loop. It never powers into motion by itself: homing is explicit (`HOME_REQUEST`, low-speed single-direction stall detection), and a lost bus makes it *hold position* instead of releasing, because the arm falls when unpowered.
+
+That CAN bus is the nervous system, but the wire format is **not** defined here: the source of truth is `docs/PROTOCOL.md` (CAN v3) plus the machine-readable `docs/protocol-signals.yaml`, shipped in each leaf-node repo, with `tools/can_check.py` as the codec gate (structure check + golden vectors + CRC tamper cases). Read those before writing perception-to-action logic. Frame IDs carry priority — safety `0x010`, EMCY `0x020/0x021` and the 1 kHz interlock `0x030/0x031` all sit below command frames `0x100/0x101/0x102`, so an e-stop always wins arbitration. Bus timing: 100 Hz Jetson↔leaf, 1 kHz between the two leaf nodes.
 
 ## Build
 
@@ -72,7 +78,7 @@ source install/setup.bash
         ↓  detections
    world (3D tracking & fusion)
         ↓  TrackedObjects
-   nerve → CAN FD → STM32 nodes
+   can bridge (planned) → CAN 2.0A 1 Mbps → 2× STM32F407
 ```
 
 **`core`** (`src/core/include/core/*.hpp`) is the shared foundation and the idiomatic patterns for new code:

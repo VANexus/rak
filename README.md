@@ -13,7 +13,7 @@ Performance-first, C++-priority. Neural-network depth, detection & segmentation 
 | `depth` | C++ | Stereo depth: VPI rectification + TensorRT neural depth estimation |
 | `mind` | C++ | AI inference engine (TensorRT FP16/INT8, DLA offload) |
 | `world` | C++ | Perception fusion: 3D tracking, object maps |
-| `nerve` | Rust | CAN FD bridge to multiple STM32 microcontrollers (socketcan) |
+| `can bridge` | — | **planned, not implemented**: classic CAN 2.0A @ 1 Mbps to the two STM32F407 leaf nodes (no CAN FD — the F407 cannot). Today `motor_stub` only forwards Nav2's `Twist`, without `Vy` |
 | `boot` | — | Launch files, config YAML, RViz |
 | `forge` | Python | Tools: stereo calibration, profiling, CAN bus monitor |
 
@@ -28,7 +28,7 @@ Performance-first, C++-priority. Neural-network depth, detection & segmentation 
         ↓  detections
    world (3D tracking & fusion)
         ↓  TrackedObjects
-   nerve → CAN FD → STM32 nodes
+   can bridge (planned) → CAN 2.0A 1 Mbps → 2× STM32F407
 ```
 
 Data stays GPU-resident from `eye` capture through `depth`/`mind` inference. CUDA streams overlap capture → decode → inference.
