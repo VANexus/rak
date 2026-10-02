@@ -112,8 +112,11 @@ velocity_smoother:
     feedback: "OPEN_LOOP"
     max_velocity: [0.5, 0.0, 1.0]   # [linear.x, linear.y, angular.z]
     min_velocity: [-0.5, 0.0, -1.0]
+    # acceleration is positive (speeding up); deceleration must be NEGATIVE
+    # (velocity_smoother validates this on startup; positive decel aborts the
+    # whole configure pass and leaves every other node stuck unconfigured).
     max_accel: [1.0, 0.0, 2.0]
-    max_decel: [1.0, 0.0, 2.0]
+    max_decel: [-1.0, 0.0, -2.0]
     odom_topic: "odom"
     odom_duration: 0.1
     use_realtime_priority: false
