@@ -1,0 +1,50 @@
+# Normalise the N10_P /scan before anything downstream (rf2o, slam_toolbox)
+# sees it.
+#
+# Why this exists: the vendored lslidar N10_P branch (lslidar_driver.cc:973,
+# :1020-1030) packs TWO returns per angular sample -- layer A at ranges[i] and
+# layer B at ranges[i + count_num] -- but declares angle_increment for ONE
+# layer (2*pi/count_num) and angle_max = 2*pi. So every message carries
+# 2*count_num readings where the metadata implies count_num, and the second
+# half is addressed at angles 2*pi..4*pi. karto rejects that on the first scan:
+#
+#     LaserRangeScan contains 1058 range readings, expected 529
+#
+# with expected = round((angle_max - angle_min) / angle_increment), and a
+# rejected registration means the mapper never processes a scan at all -- no
+# /map, no map->odom, no error beyond that one line.
+#
+# Layer B is not worth keeping anyway: measured over 40 revolutions it holds
+# 29-41 finite readings out of 528, against 502-514 for layer A.
+#
+# The vendor tree stays pristine, so both halves run through stock
+# laser_filters instead:
+#
+#   filter1  keep only the angle span that layer A occupies, which drops
+#            layer B (ranges count_num+... are beyond upper_angle).
+#   filter2  re-bin to a FIXED beam count. This is the part that makes the
+#            karto check unconditionally satisfiable: num_bins is a constant,
+#            and the filter rewrites angle_increment = 2*pi/num_bins and
+#            angle_max = angle_min + 2*pi, so round((angle_max-angle_min)/
+#            angle_increment) == num_bins == len(ranges) on every single
+#            message. A per-message truncation would instead expose karto to
+#            count_num, which jitters 527-531 from revolution to revolution.
+#
+# num_bins must stay <= count_num (observed 527-531, vendor
+# lslidar_driver.cc:762-763 derives count_num from the actual scan, not
+# PACKET_SIZE, so the per-revolution jitter is real), otherwise the top
+# bins are never written and stay NaN. 525 keeps a 2-6-beam margin under
+# jitter and yields 2*pi/525 = 0.686 deg, well matched to the 0.05 m grid.
+scan_to_scan_filter_chain:
+  ros__parameters:
+    filter1:
+      name: drop_second_layer
+      type: laser_filters/LaserScanAngularBoundsFilter
+      params:
+        lower_angle: -10.0     # below angle_min: never truncate the start
+        upper_angle: 6.28      # just under 2*pi: stop after layer A's count_num
+    filter2:
+      name: fixed_beam_count
+      type: laser_filters/LaserScanBinningFilter
+      params:
+        num_bins: 525

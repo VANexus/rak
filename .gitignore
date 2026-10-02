@@ -25,3 +25,16 @@ COLCON_IGNORE
 # OS
 .DS_Store
 Thumbs.db
+
+# CodeGraph index
+.codegraph/
+
+# brain: venv and the decision corpus
+brain/.venv/
+brain/data/
+brain/**/__pycache__/
+*.egg-info/
+
+# 调试产物：tf 树导出，非交付物
+frames_*.gv
+frames_*.pdf

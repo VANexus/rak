@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Minimal Cyclone DDS config for xrak. Domain 45 by team-mandate. The
+  schema for CycloneDDS 0.10.5 rejects our tuning knobs (SocketReceiveBufferSize
+  is documented but appears to live under <Internal><Socket> sub-structure
+  in this version); the file is intentionally stripped to only the
+  schema-accepted elements. Add knobs back once the schema is verified.
+-->
+<CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain id="45">
+    <General>
+      <Interfaces>
+        <NetworkInterface autodetermine="true" priority="default" multicast="default" />
+      </Interfaces>
+      <AllowMulticast>true</AllowMulticast>
+    </General>
+  </Domain>
+</CycloneDDS>

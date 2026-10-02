@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<!-- Patched for ROS 2 Jazzy: dropped the ROS 1-era cmake_modules dep,
+     run_depend to exec_depend, added the undeclared nav_msgs and boost. -->
+<package format="2">
+  <name>rf2o_laser_odometry</name>
+  <version>0.1.0</version>
+  <description>
+    Estimation of 2D odometry based on planar laser scans. Useful for mobile robots with innacurate base odometry.
+    For full description of the algorithm, please refer to:
+    Planar Odometry from a Radial Laser Scanner. A Range Flow-based Approach. ICRA 2016
+    Available at: http://mapir.isa.uma.es/mapirwebsite/index.php/mapir-downloads/papers/217
+  </description>
+
+  <maintainer email="jgmonroy@uma.es">Javier G. Monroy</maintainer>
+  <author email="marianojt@uma.es"> Mariano Jaimez</author>
+  <author email="jgmonroy@uma.es"> Javier G. Monroy</author>
+  <license>GPL v3</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>eigen3_cmake_module</buildtool_depend>
+  <depend>geometry_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>eigen</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>boost</depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
