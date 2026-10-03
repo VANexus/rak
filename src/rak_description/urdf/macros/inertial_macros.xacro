@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!--
+  inertial_macros.xacro - solid-shape inertia tensors.
+  Spec section 7.3: NO raw `<inertia ixx="0.1"/>` anywhere. Every link's
+  `<inertial>` block must call one of these macros.
+  Sources: standard solid-body formulas (parallel-axis theorem not
+  required because all shapes are centered at joint origin).
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Solid box inertia tensor, centered.
+       mass: total mass (kg)
+       Lx, Ly, Lz: full side lengths (m) -->
+  <xacro:macro name="box_inertial" params="mass Lx Ly Lz xyz:='0 0 0' rpy:='0 0 0'">
+    <inertial>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+      <mass value="${mass}"/>
+      <inertia ixx="${mass*(Ly*Ly + Lz*Lz)/12}"
+               iyy="${mass*(Lx*Lx + Lz*Lz)/12}"
+               izz="${mass*(Lx*Lx + Ly*Ly)/12}"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Solid cylinder inertia tensor, axis along Z.
+       mass: total mass (kg)
+       r: radius (m); L: length along Z (m) -->
+  <xacro:macro name="cylinder_inertial" params="mass r L xyz:='0 0 0' rpy:='0 0 0'">
+    <inertial>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+      <mass value="${mass}"/>
+      <inertia ixx="${mass*(3*r*r + L*L)/12}"
+               iyy="${mass*(3*r*r + L*L)/12}"
+               izz="${mass*r*r/2}"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </xacro:macro>
+
+</robot>

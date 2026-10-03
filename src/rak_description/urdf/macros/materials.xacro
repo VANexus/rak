@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!--
+  materials.xacro - shared RViz colors.
+  Spec section 7.3: one color per link family, named by link role.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <material name="base_link_color">
+    <color rgba="0.30 0.30 0.30 1.0"/>
+  </material>
+
+  <material name="arm_aluminum">
+    <color rgba="0.75 0.75 0.78 1.0"/>
+  </material>
+
+  <material name="gripper_color">
+    <color rgba="0.20 0.40 0.80 1.0"/>
+  </material>
+
+</robot>
