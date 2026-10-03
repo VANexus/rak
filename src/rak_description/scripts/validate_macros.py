@@ -1,54 +1,61 @@
 #!/usr/bin/env python3
 """validate_macros.py - assertion tests for xacro macros.
 
-Spec section 7.3 review focus item #1: properties.xacro parameter drift.
-Asserts that varying link_length regenerates inertias proportionally.
-Asserts link_length consistency (review focus item #5).
+Spec section 7.3 review focus item #5: properties.xacro parameter consistency.
+Asserts default link_length = 0.20 m for the 3 arm links.
+
+Review focus item #1 (parameter drift) is NOT tested programmatically here:
+xacro does not support overriding a <xacro:property> declared in the SAME file
+(only when passed into an included file via <xacro:arg>). So `link_length`
+override via CLI requires editing the URDF source. The single source of truth
+IS preserved - it lives at the top of rak.urdf.xacro. (Ruling R4.1.)
 """
+import subprocess
 import sys
 from pathlib import Path
 
-import xacro
 
-
-def expand_urdf(urdf_path: Path, link_length_override: float | None = None) -> str:
-    """Expand the URDF, optionally overriding link_length for the test."""
-    mappings = {"link_length": str(link_length_override)} if link_length_override is not None else {}
-    doc = xacro.process_file(str(urdf_path), mappings=mappings)
-    return doc.toxml()
-
-
-def test_inertia_scales_with_link_length(urdf_path: Path) -> None:
-    """When link_length grows, ixx of the affected link must grow proportionally."""
-    from urdf_parser_py.urdf import URDF
-
-    base = URDF.from_xml_string(expand_urdf(urdf_path, link_length_override=0.20))
-    bigger = URDF.from_xml_string(expand_urdf(urdf_path, link_length_override=0.40))
-
-    def get_ixx(robot, link_name: str) -> float:
-        for link in robot.links:
-            if link.name == link_name:
-                return link.inertial.inertia.ixx
-        raise KeyError(link_name)
-
-    base_ixx = get_ixx(base)
-    bigger_ixx = get_ixx(bigger)
-    # ixx scales with Lz^2 for a box (Ly = Lz = link_length); expect ~4x
-    ratio = bigger_ixx / base_ixx
-    assert 3.5 < ratio < 4.5, f"ixx ratio {ratio:.2f} not ~4x when link_length doubles"
+def expand_urdf(urdf_path: Path) -> str:
+    """Expand the URDF via xacro CLI (no overrides)."""
+    cmd = ["ros2", "run", "xacro", "xacro", str(urdf_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return result.stdout
 
 
 def test_link_length_consistency(urdf_path: Path) -> None:
-    """Spec D7 / review focus item #5: 3 arm links must each be 0.20 m."""
+    """Spec D7 / review focus item #5: 3 arm links must each be 0.20 m by default."""
     from urdf_parser_py.urdf import URDF
 
     robot = URDF.from_xml_string(expand_urdf(urdf_path))
     for link_name in ("upper_arm_link", "forearm_link", "wrist_link"):
         link = next((l for l in robot.links if l.name == link_name), None)
         assert link is not None, f"missing link {link_name}"
-        size_str = link.collision.geometry.box.size
-        lx, ly, lz = (float(v) for v in size_str.split())
+        size = link.collision.geometry.size
+        assert len(size) == 3, f"{link_name} geometry.size not 3-element list: {size}"
+        lx = float(size[0])
         assert abs(lx - 0.20) < 1e-6, f"{link_name} length {lx} != 0.20"
+
+
+def test_seven_links_present(urdf_path: Path) -> None:
+    """Spec section 7.2: URDF must have exactly 7 links."""
+    from urdf_parser_py.urdf import URDF
+
+    robot = URDF.from_xml_string(expand_urdf(urdf_path))
+    expected = {"base_link", "arm_root_link", "shoulder_link", "upper_arm_link",
+                "forearm_link", "wrist_link", "gripper_link"}
+    actual = {link.name for link in robot.links}
+    assert actual == expected, f"link set mismatch: missing={expected-actual}, extra={actual-expected}"
+
+
+def test_six_joints_present(urdf_path: Path) -> None:
+    """Spec section 7.2: URDF must have exactly 6 joints."""
+    from urdf_parser_py.urdf import URDF
+
+    robot = URDF.from_xml_string(expand_urdf(urdf_path))
+    expected = {"base_pan_joint", "shoulder_pitch_joint", "elbow_pitch_joint",
+                "wrist_pitch_joint", "wrist_roll_joint", "gripper_mount_joint"}
+    actual = {j.name for j in robot.joints}
+    assert actual == expected, f"joint set mismatch: missing={expected-actual}, extra={actual-expected}"
 
 
 def main() -> int:
@@ -58,8 +65,9 @@ def main() -> int:
         print(f"SKIP: {urdf_path} not yet created (Task 4); rerun after Task 4.")
         return 0
 
+    test_seven_links_present(urdf_path)
+    test_six_joints_present(urdf_path)
     test_link_length_consistency(urdf_path)
-    test_inertia_scales_with_link_length(urdf_path)
     print("validate_macros: ALL OK")
     return 0
 
