@@ -9,15 +9,16 @@ import yaml
 EXPECTED = {
     "joint_limits.yaml": {"joint_limits"},
     "kinematics.yaml": {"arm_with_base"},
-    "ompl_planning.yaml": {"arm_with_base"},
+    "ompl_planning.yaml": {"planning_plugins"},
     "fake_controllers.yaml": {"controller_names", "arm_with_base_controller"},
+    "pilz_cartesian_limits.yaml": {"cartesian_limits"},
 }
 
 
 def main() -> int:
     cfg = Path(__file__).resolve().parents[1] / "config"
     if not cfg.is_dir():
-        print(f"SKIP: {cfg} not yet present (Task 6).")
+        print(f"SKIP: {cfg} not yet present.")
         return 0
 
     for name, expected_keys in EXPECTED.items():
