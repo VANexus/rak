@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!--
+  rak.srdf - MoveIt2 semantic description.
+  Spec section 7.4.
+  Review focus item #2: group name and chain must match kinematics.yaml
+  in Task 6; mistyping either breaks M4 silently.
+-->
+<robot name="rak">
+
+  <!-- virtual_joint: chassis is planar in /world, driven by nav2 (not MoveIt). -->
+  <virtual_joint name="world_to_base" type="planar"
+                 parent_frame="world" child_link="base_link"/>
+
+  <!-- planning group: full 5-DOF arm chain -->
+  <group name="arm_with_base">
+    <chain base_link="base_link" tip_link="gripper_link"/>
+  </group>
+
+  <!-- end effector: gripper mount -->
+  <end_effector name="gripper_eef" parent_link="gripper_link"
+                group="arm_with_base"/>
+
+  <!-- self-collision matrix: disable adjacent pairs only.
+       Intentionally NOT disabled: base_link <-> upper_arm_link
+       (must be checked at planning time, may collide at extreme configs). -->
+  <disable_collisions link1="base_link"       link2="arm_root_link"  reason="adjacent"/>
+  <disable_collisions link1="arm_root_link"   link2="shoulder_link"  reason="adjacent"/>
+  <disable_collisions link1="shoulder_link"   link2="upper_arm_link" reason="adjacent"/>
+  <disable_collisions link1="upper_arm_link"  link2="forearm_link"   reason="adjacent"/>
+  <disable_collisions link1="forearm_link"    link2="wrist_link"     reason="adjacent"/>
+  <disable_collisions link1="wrist_link"      link2="gripper_link"   reason="adjacent"/>
+
+</robot>
