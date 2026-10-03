@@ -11,7 +11,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg = get_package_share_directory("rak_description")
+    pkg = get_package_share_directory("boot")
     urdf_path = os.path.join(pkg, "urdf", "rak.urdf.xacro")
     rviz_config = os.path.join(pkg, "config", "rviz_view.rviz")
 

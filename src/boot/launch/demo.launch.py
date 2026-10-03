@@ -27,13 +27,13 @@ from moveit_configs_utils import MoveItConfigsBuilder
 
 
 def generate_launch_description():
-    pkg = get_package_share_directory("rak_description")
+    pkg = get_package_share_directory("boot")
     urdf_path = os.path.join(pkg, "urdf", "rak.urdf.xacro")
     srdf_path = os.path.join(pkg, "urdf", "rak.srdf")
     rviz_config = os.path.join(pkg, "config", "rviz_view.rviz")
 
     moveit_config = (
-        MoveItConfigsBuilder("rak", package_name="rak_description")
+        MoveItConfigsBuilder("rak", package_name="boot")
         .robot_description(file_path=urdf_path)
         .robot_description_semantic(file_path=srdf_path)
         .joint_limits(file_path=os.path.join(pkg, "config", "joint_limits.yaml"))

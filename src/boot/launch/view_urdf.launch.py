@@ -13,7 +13,7 @@ from rclpy.parameter import Parameter
 
 
 def generate_launch_description():
-    pkg = get_package_share_directory("rak_description")
+    pkg = get_package_share_directory("boot")
     urdf_path = os.path.join(pkg, "urdf", "rak.urdf.xacro")
 
     # Command joins args WITHOUT spaces; trailing space after 'xacro '.

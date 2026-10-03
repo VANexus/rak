@@ -23,5 +23,5 @@ source /home/xrak/rak/install/setup.bash
 
 cd /home/xrak/rak
 
-exec setsid nohup ros2 launch rak_description demo.launch.py \
+exec setsid nohup ros2 launch boot demo.launch.py \
     </dev/null >/tmp/demo_run.log 2>&1
