@@ -1,0 +1,8 @@
+# pilz_cartesian_limits.yaml - placeholder for MoveItConfigsBuilder.
+# MoveItConfigsBuilder in Jazzy v2.12.4 auto-loads this file. Pilz motion
+# planner is NOT in our stack (we use OMPL only), so this file just needs
+# to exist with valid YAML; MoveIt never invokes the planner.
+cartesian_limits:
+  arm_with_base:
+    max_translation: 1.0
+    max_rotation: 1.0
