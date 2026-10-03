@@ -5,6 +5,9 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
+        - /Grid1
+        - /RobotModel1
+        - /TF1
     Splitter Ratio: 0.5
   - Class: rviz_common/Selection
     Name: Selection
@@ -30,7 +33,8 @@ Visualization Manager:
       Name: Grid
       Normal Cell Count: 0
       Offset:
-      Plane Cell Count: 10
+      Plane Cell Count: 20
+      Plane Cell Size: 0.05
       Plane: XY
       Reference Frame: <Fixed Frame>
     - Class: rviz_default_plugins/RobotModel
@@ -38,11 +42,25 @@ Visualization Manager:
       Name: RobotModel
       Robot Description: robot_description
       TF Prefix: ""
+      Visual Enabled: true
+      Update Interval: 0
+    - Class: rviz_default_plugins/TF
+      Marker Scale: 0.3
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+      Tree:
+          {}
+      Update Interval: 0
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
     Default Light: true
-    Fixed Frame: world
+    # R10.1 (was 'world'): use 'base_link' until nav2/SLAM provides world->base_link.
+    # Toggle to 'world' once /map->base_link is live. See demo.launch.py static_tf
+    # fallback for headless preview.
+    Fixed Frame: base_link
     Frame Rate: 30
   Name: root
   Tools:
@@ -60,9 +78,8 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.01
-      Scale: 10
-      Target Frame: <Fixed Frame>
-      Value: TopDownOrtho (rviz)
-      X: 0
+      Scale: 5
+      Target Frame: base_link
+      X: 0.2
       Y: 0
     Saved: ~

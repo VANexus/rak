@@ -14,6 +14,10 @@ its pilz_cartesian_limits.yaml is missing or empty. Workaround: provide
 a minimal pilz_cartesian_limits.yaml (already added to config/). The
 "Planning plugin name is empty" error in some test runs was traced to
 a transient config-loading race; with a clean build it is not present.
+
+R10.1: static_transform_publisher world->base_link = identity so RViz
+Fixed Frame='world' resolves before nav2/SLAM is running. Remove this
+node once /map->base_link is live from slam_toolbox.
 """
 import os
 
@@ -82,4 +86,20 @@ def generate_launch_description():
         parameters=[{"use_sim_time": False}],
     )
 
-    return LaunchDescription([rsp, jsp, move_group, rviz])
+    # R10.1: world->base_link fallback so RViz's Fixed Frame='world' resolves
+    # without nav2/SLAM. Identity transform; chassis lives at world origin
+    # in the demo scenario. Drop this node once /map->base_link is live.
+    static_world_to_base = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="static_world_to_base_link",
+        arguments=[
+            "--x", "0", "--y", "0", "--z", "0",
+            "--roll", "0", "--pitch", "0", "--yaw", "0",
+            "--frame-id", "world",
+            "--child-frame-id", "base_link",
+        ],
+        output="log",
+    )
+
+    return LaunchDescription([rsp, jsp, static_world_to_base, move_group, rviz])
