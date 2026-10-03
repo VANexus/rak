@@ -1,0 +1,15 @@
+# fake_controllers.yaml - MoveIt fake controller manager config.
+# Spec D9: fake_joint_driver is the only controller until CAN bridge lands.
+# Spec section 7.5.
+controller_names:
+  - arm_with_base_controller
+arm_with_base_controller:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+    - base_pan_joint
+    - shoulder_pitch_joint
+    - elbow_pitch_joint
+    - wrist_pitch_joint
+    - wrist_roll_joint

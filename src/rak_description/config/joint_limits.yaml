@@ -1,0 +1,20 @@
+# joint_limits.yaml - joint velocity / acceleration / jerk bounds.
+# Spec section 7.5. Placeholders conservative; TODO: replace with measured limits
+# from STM32F407 control loop.
+joint_limits:
+  base_pan_joint:
+    has_velocity_limits: true
+    max_velocity: 5.0
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  shoulder_pitch_joint:
+    has_velocity_limits: true
+    max_velocity: 3.0
+    has_acceleration_limits: true
+    max_acceleration: 6.0
+  wrist_pitch_joint:
+    has_velocity_limits: true
+    max_velocity: 3.0
+    has_acceleration_limits: true
+    max_acceleration: 6.0
+  # elbow_pitch_joint / wrist_roll_joint: inherit group defaults below

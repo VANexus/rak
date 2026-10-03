@@ -1,0 +1,7 @@
+# ompl_planning.yaml - OMPL planner config.
+# Spec section 7.5: RRTConnect default, RRTstar for optimization requests.
+arm_with_base:
+  planner_configs:
+    - RRTConnectkConfigDefault
+  projection_evaluator: joints(base_pan_joint,shoulder_pitch_joint,elbow_pitch_joint)
+  longest_valid_segment_fraction: 0.05
