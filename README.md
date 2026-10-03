@@ -119,6 +119,17 @@ file owned by `gdm`/`xrak` even when run as root — that is what makes
 
 ### Files and operations
 
+The wrapper and its unit are version-controlled in `scripts/` — deploy them
+onto a fresh board with:
+
+```bash
+sudo install -m 755 scripts/x11vnc-share    /usr/local/sbin/x11vnc-share
+sudo install -m 644 scripts/x11vnc.service  /etc/systemd/system/x11vnc.service
+sudo systemctl daemon-reload && sudo systemctl enable --now x11vnc
+```
+
+Runtime paths:
+
 ```bash
 /usr/local/sbin/x11vnc-share        # wrapper: probe display + cookie, exec x11vnc
 /etc/systemd/system/x11vnc.service  # Restart=always, After=display-manager (no Wants,

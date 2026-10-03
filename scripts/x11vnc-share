@@ -1,0 +1,57 @@
+#!/bin/bash
+# x11vnc-share —— 共享当前活跃的真实 X display（不创建虚拟屏）
+#
+# 背景：GDM 在 greeter(:0) 与用户会话(:1) 之间切换时会重启 Xorg，
+# 并更换 Xauthority（/run/user/<uid>/gdm/Xauthority）。所以这里每次
+# 启动都重新探测 display 号和 cookie；X server 断开时 x11vnc 自行退出，
+# 由 systemd 的 Restart=always 拉起本脚本再次探测。
+set -u
+
+AUTH_COPY=/run/x11vnc.xauth
+PORT=5900
+
+log() { echo "x11vnc-share: $*" >&2; }
+
+# 输出可用的 display 号，失败返回非 0
+discover() {
+    local pid auth sock disp
+    for pid in $(pgrep -x Xorg 2>/dev/null); do
+        auth=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null \
+            | awk '$0 == "-auth" { getline; print; exit }')
+        [ -r "$auth" ] || continue
+        # xauth 会给源文件加锁，root 读 gdm/xrak 属主的文件会失败，
+        # 因此复制一份 root 拥有的副本供 x11vnc 使用
+        cp -f "$auth" "$AUTH_COPY" 2>/dev/null || continue
+        chmod 600 "$AUTH_COPY"
+        # display 号取 mtime 最新的 X socket（切换瞬间可能短暂并存）
+        for sock in $(ls -t /tmp/.X11-unix/X[0-9]* 2>/dev/null); do
+            [ -S "$sock" ] || continue
+            disp=${sock##*/X}
+            if DISPLAY=":$disp" XAUTHORITY="$AUTH_COPY" xset q >/dev/null 2>&1; then
+                printf '%s\n' "$disp"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+while true; do
+    if disp=$(discover); then
+        log "sharing display :$disp"
+        exec x11vnc \
+            -display ":$disp" \
+            -auth "$AUTH_COPY" \
+            -rfbport "$PORT" \
+            -rfbauth /etc/x11vnc.pass \
+            -shared \
+            -forever \
+            -ncache 0 \
+            -xdamage \
+            -repeat
+    fi
+    # headless 模式（rak-mode.sh headless，gdm 被 mask）下会长期停在这里：
+    # 10s 一次，日志噪音可控，且几乎不占内存
+    log "no usable X display yet, retrying in 10s"
+    sleep 10
+done

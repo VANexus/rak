@@ -1,0 +1,17 @@
+[Unit]
+Description=x11vnc - share the real X display (no virtual screen)
+Documentation=man:x11vnc(1)
+# 只 After 不 Wants：rak-mode.sh headless 会 mask gdm3，
+# 此时 display-manager.service 拉不起来，但 x11vnc 仍应启动并安静等待
+After=display-manager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/x11vnc-share
+# Xorg 退出（登录/登出、rak-mode.sh headless）时 x11vnc 跟着退出，
+# 这里拉起 wrapper 重新探测 display 号与 cookie
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
