@@ -66,6 +66,75 @@ The eye capture node sustains a full 30 fps end-to-end. Two things make that hap
    (`V4L2_CID_EXPOSURE_DYNAMIC_FRAMERATE`). The node disables this control at
    startup so the camera actually delivers the 30 fps requested via `S_PARM`.
 
+## Remote desktop (VNC)
+
+The touchscreen is shared, not re-created: `x11vnc` attaches to whatever X
+display GDM is currently running (`:0` at the greeter, `:1` once someone logs
+in) and streams that exact framebuffer. There is no `Xvfb`/`Xvnc`, no second
+compositor and no extra window manager — the whole server costs **11.6 MiB RSS**
+and touches 0 CMA.
+
+| Network | Address |
+|---------|---------|
+| LAN | `orin.xrak:5900` (i.e. `192.168.5.215`, wired `192.168.5.108`) |
+| Public (netmaker) | `100.121.213.15:5900` |
+
+Password: `kali` (the team default — same as sudo).
+
+Any stock RFB client works, because this is plain VNC and not a vendor
+protocol: macOS **Screen Sharing** (`vnc://orin.xrak:5900`), Linux
+(`remmina`, `tigervnc-viewer`, `virt-viewer`), Windows (RealVNC / TightVNC /
+UltraVNC, or Remmina). `-ncache 0` is set on purpose — client-side caching
+makes macOS Screen Sharing and several Windows viewers render the desktop wrong.
+
+### VNC vs. the camera — read before you log in
+
+Sharing the *logged-in* session is exactly what starves `eye`, and that trade is
+already recorded in `scripts/rak-mode.sh`: a logged-in GNOME session drives
+`CmaFree` to **0 kB** of the 256 MiB pool (measured again during this setup:
+800 kB), and `eye` needs that pool for 4 `V4L2_MEMORY_MMAP` buffers, so capture
+fails at `VIDIOC_REQBUFS`. **x11vnc is not part of that cost** — it holds no CMA
+and no GPU memory; the desktop is what costs. So:
+
+- Camera / SLAM / nav2 work → `sudo scripts/rak-mode.sh headless`. gdm gets
+  masked, the X server goes away, and x11vnc just idles (one log line per 10 s,
+  ~0 memory) refusing connections until the display comes back.
+- Need the screen → `sudo scripts/rak-mode.sh desktop`, type the password once
+  at the touchscreen (autologin is deliberately off), log in, and VNC resumes on
+  its own against the new `:1`.
+
+So "VNC is down" after a `headless` is the expected state, not a fault.
+
+### Why a wrapper script
+
+GDM does not keep one stable display: logging in or out tears down the X server
+and starts a new one with a different number **and** a different
+`Xauthority` (`/run/user/<uid>/gdm/Xauthority`). A service pointing at a fixed
+`:0` therefore dies silently the first time someone logs in. `/usr/local/sbin/x11vnc-share`
+re-derives both from the live `Xorg` process on every start; `x11vnc` exits when
+its X server does, and systemd's `Restart=always` re-runs the probe. It also
+copies the cookie to `/run/x11vnc.xauth` first, because `xauth` refuses to lock a
+file owned by `gdm`/`xrak` even when run as root — that is what makes
+`-auth guess` fail with `error in locking authority file`.
+
+### Files and operations
+
+```bash
+/usr/local/sbin/x11vnc-share        # wrapper: probe display + cookie, exec x11vnc
+/etc/systemd/system/x11vnc.service  # Restart=always, After=display-manager (no Wants,
+                                    #  so a masked gdm does not wedge it)
+/etc/x11vnc.pass                   # VNC password, root 600
+
+sudo systemctl status|restart x11vnc
+journalctl -u x11vnc -f
+sudo x11vnc -storepasswd <pw> /etc/x11vnc.pass   # to rotate the password
+```
+
+To check it without a GUI client, the handshake plus auth can be driven from the
+command line (openssl's legacy provider does the VNC DES): the server should
+answer `RFB 003.008`, offer security type `2`, accept `kali`, and return a
+`1024x600` `ServerInit` with desktop name `xrak:1`.
+
 ## Hardware target
 
 Jetson Orin Nano, JetPack 7.2 (CUDA 13.2, TensorRT 10.16, VPI 4.1.4).
