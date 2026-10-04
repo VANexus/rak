@@ -40,7 +40,7 @@ ROS 消息的包名前缀是类型身份的一部分。即使字段相同，
 | 新包/接口 | 当前职责与边界 |
 |---|---|
 | `rak_task_executor` | `/task/execute` Action、`/task/control` Service、`/task/status`；唯一拥有导航任务与 Nav2 goal 生命周期 |
-| `rak_base_driver` | Jetson 到底盘 F407 的 UART v1 host codec/节点；默认无端口、禁用硬件、速度限值为零、DISARMED |
+| `rak_base_driver` | Jetson 到底盘 F407 的 UART v1 host codec/节点；节点默认无端口、禁用硬件、速度限值为零、DISARMED |
 | `rak_arm_simulation` | 六轴夹具使用的软件轨迹/夹爪 Action server；不含 physics 或 ros2_control 硬件接口 |
 | `rak_interfaces` 新类型 | `ExecuteTask`、`TaskControl`、`TaskStatus`、`BaseTelemetry`；是加法接口，不取代旧决策消息 |
 
@@ -49,7 +49,9 @@ ROS 消息的包名前缀是类型身份的一部分。即使字段相同，
 `task_simulation.launch.py` 使用 fake Nav2 与命令运动估算，不表示真实底盘反馈。
 
 Nav2 新链为 Omni MPPI → velocity smoother → collision monitor → 最终 `/cmd_vel`
-适配器。`task_navigation.launch.py` 只提供 sim/stub 末端，不提供硬件后端。
+适配器。当前工作区的 `task_navigation.launch.py` 还增加了 `hardware` 末端选项，
+在顶层 bringup 连接 UART 主机节点；launch 默认仍为 `sim`，硬件开关默认关闭。
+该路径已通过安装态 launch 解析和模式映射检查，但没有真实设备运行验证。
 UART v1 的主机格式见 [协议文档](protocol/jetson_f407_uart_v1.md)；仓库没有匹配的
 F407 固件，因此规范、codec 与 PTY 验证不构成实机兼容声明。
 
@@ -135,7 +137,12 @@ launch 检查使用 `--show-args`，不会打开设备或发出运动命令。
   速度缩放和过期输入撤销；独立 PTY 工具 100 Hz 发送 DISARMED 零速度。
 - fake Nav2 测试覆盖导航成功、重复 request ID、暂停确认、恢复重规划、服务取消和
   Action 协议取消；fake arm action client 验证六关节轨迹与独立夹爪。
-- 遗留 CRC-8 物理串口工具已改为拒绝执行，避免它发送与 UART v1 不兼容的运动帧。
+- 遗留 CRC-8 物理串口工具拒绝执行，避免发送与 UART v1 不兼容的运动帧。
 
 这些都是软件/仿真结果；未连接 F407、雷达、相机或真实机械臂，未进行物理运动、
 E-stop、碰撞停止距离或固件互操作验收。
+
+本次收尾重新构建 17 个包，安装态 checker 检查 14 个自有包和 13 个 launch；
+CTest 21 项、任务/机械臂 pytest 4 项、UART pytest 13 项以及两组 brain 测试通过。
+硬件 backend 的安装态解析和模式映射通过，但未启动导航运行时或连接设备。
+最新能力和未关闭的验收项见[项目总体状态](project_status.md)。

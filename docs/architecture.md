@@ -1,9 +1,10 @@
 # 分层具身智能架构
 
 状态：2026-10-04 统一包迁移与软件任务闭环已实现。文字任务、fake Nav2
-暂停/恢复/取消、UART v1 主机端和隔离六轴动作夹具均有实现；尚未完成真实传感器
-Nav2 运行验收、匹配 F407 固件联调或任何整车安全验收。README 是工程入口，
-本文件记录边界、剩余缺口和验收顺序。
+暂停/恢复/取消、UART v1 主机端和隔离六轴动作夹具均有实现。硬件 backend launch
+已通过安装态解析和模式映射检查，但未做设备运行验证；真实传感器 Nav2、F407 固件
+互操作和整车安全验收仍未完成。README 是工程入口，当前进度汇总见
+[项目总体状态](project_status.md)。
 
 ## 1. 目标与硬件事实
 
@@ -163,6 +164,15 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 和显式 ARM 服务，但默认不打开串口、零速度限值且 DISARMED。仓库没有相匹配的
 F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留在 MCU，MCU 必须独立
 实现命令租约、断联停止、E-stop 和故障锁存。
+
+顶层 `rak_bringup` 的 launch 提供 `motion_backend:=hardware`，并在 bringup 层启动 UART
+节点；`rak_navigation` 不依赖上层 bringup。该路径已通过安装态解析和模式映射检查，
+但没有运行 Nav2 或连接设备。组合 launch 默认 `sim`；
+硬件路径的 `hardware_enable` 默认 false，节点不会打开已配置的串口。直接启动
+`BaseUartNode` 时默认无端口；bringup launch 则默认传入稳定别名
+`/dev/wheel_motor`，但在硬件开关关闭时不会访问设备。驱动的三个速度限值必须都是
+有限正数才允许 ARM；`0.0` 不是不限速或透传。
+
 机械臂推荐对接 `ros2_control` 的硬件接口与轨迹控制器，
 但插值位置、刷新率和反馈协议必须按实际固件确定，不能把 25 kHz 电机环搬到 ROS。
 夹爪使用独立执行接口；失联时的保持/制动按机械安全设计处理，不能统一断电。
@@ -199,8 +209,8 @@ F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留�
 |---|---|---|
 | A：包迁移 | 已完成，详见 `docs/migration.md` | 全工作区构建、安装检查、旧 AI 回归 |
 | B：任务内核 | 软件实现；fake Nav2 覆盖成功、重复请求、暂停/确认/恢复、服务取消和 Action 取消 | 到达/暂停竞态、各种超时、慢规划迟到、重启等剩余竞态仍需扩测 |
-| C：Nav2 接入 | Action、waypoint 和全向参数已接入 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链 |
-| D：硬件闭环 | UART v1 host codec/driver 已实现，固件未实现/未核验 | F407 匹配、断联/E-stop、里程计/IMU、限速与人工监督低速测试 |
+| C：Nav2 接入 | Action、waypoint 和全向参数已接入；hardware 末端 launch 静态检查通过 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链；确认每种 backend 单写者 |
+| D：硬件闭环 | UART v1 host codec/driver 已实现，F407 固件未实现/未核验 | F407 匹配、断联/E-stop、里程计/IMU、限速与人工监督低速测试 |
 | E：语音与智能体 | 文字 CLI 已有；ASR/TTS、task 与 S1/Harness 仲裁未接入 | 无网络本地打断、旧提案拒绝、误识别处理与端到端延迟 |
 | F：机械臂 | 六轴隔离夹具和软件动作服务器已实现 | 真实几何/限位/映射/失联策略确认后再做实机适配 |
 
@@ -214,6 +224,8 @@ F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留�
 - 相机标定、深度与彩色对齐、硬件 TF、真实里程计质量都需要工程验证。
 - 六轴模型尺寸/限位是测试夹具占位值；没有真实六轴实机支持。
 - `rak_task_executor` 的慢规划是可选 RAI 地点选择，不是当前 Jev/Harness 的统一任务推理。
+- `scripts/serial_link_test.py` 是拒绝执行旧 CRC-8 实体串口协议的兼容入口；
+  UART v1 PTY-only 测试入口是 `scripts/serial_100hz.py`。
 
 这些缺口必须在对应阶段关闭；不能以构建、launch 可解析或仿真测试通过作为实车安全证明。
 具体门槛见 [硬件验收清单](hardware_acceptance.md)。

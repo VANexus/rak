@@ -4,8 +4,8 @@
 目标是 Jev（本地 Laya）快速选择、云端 LLM + Harness 理解任务，
 通过 Nav2、MoveIt2 和 F407 控制底盘与机械臂，而不是让模型直接控制电机。
 
-设计入口：[整体架构](docs/architecture.md) · [统一迁移说明](docs/migration.md) ·
-[硬件验收门槛](docs/hardware_acceptance.md)。
+设计入口：[项目总体状态](docs/project_status.md) · [整体架构](docs/architecture.md) ·
+[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md)。
 包重命名不代表硬件已工程化；下面明确区分现有功能和后续规划。
 
 ## 工程布局
@@ -39,8 +39,8 @@ pip 工作流不随 ROS 包名迁移。`colcon` 同时发现 `src/` 与 `brain/`
 文字 CLI -> rak_task_executor -> NavigateToPose Action -> Nav2
                            ├-> 暂停：取消确认 + 新鲜静止遥测
                            └-> 恢复：重发 map 目标并重新规划
-Nav2 -> MPPI Omni -> smoother -> collision monitor -> /cmd_vel -> sim/stub
-UART v1 -> F407 底盘（主机驱动已实现；匹配固件缺失，硬件默认锁定）
+Nav2 -> MPPI Omni -> smoother -> collision monitor -> /cmd_vel -> sim/stub/hardware adapter
+UART v1 -> F407 底盘（主机驱动已实现；匹配固件缺失，未做实机验收）
 六轴 MoveIt fixture -> 软件轨迹/夹爪 Action server（仅仿真测试）
 ```
 
@@ -48,6 +48,10 @@ UART v1 -> F407 底盘（主机驱动已实现；匹配固件缺失，硬件默�
 waypoint 白名单中选别名，不能输出坐标或运动命令。当前 `rak_agent` 的 Laya/Jev
 System 1 并未被改造成任务规划器，Harness 也不直接控制执行器。仿真任务入口用
 fake Nav2 和“运动估算”遥测，不代表真实里程计或底盘反馈。
+组合入口 `task_navigation.launch.py` 提供 `motion_backend:=hardware` 选项，并通过安装态
+launch 解析与模式映射检查；默认仍为 `sim`。即使选择 `hardware`，`hardware_enable`
+默认 false，UART 节点不会打开设备；默认零速度限值也不允许 ARM。不要把 launch 选项
+当作固件兼容或安全验收。
 
 机械臂目标仍是六个定位关节加独立夹爪。六轴 URDF/MoveIt 配置是明确隔离的测试夹具，
 旧五轴模型仍是历史 demo；真实 CAD、标定、固件映射与反馈未提供。
@@ -94,7 +98,7 @@ ros2 launch rak_navigation nav2.launch.py
 ros2 launch rak_task_executor task_simulation.launch.py
 ros2 run rak_task_executor task_cli
 ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim
-ros2 launch rak_bringup base_uart.launch.py  # allow_hardware=false，speed limits=0
+ros2 launch rak_bringup base_uart.launch.py  # hardware_enable=false；默认端口不会被打开
 ros2 run rak_base_driver base_uart_node
 ros2 launch rak_moveit_config demo.launch.py
 ros2 launch rak_moveit_config six_axis_sim.launch.py
@@ -104,12 +108,14 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 ```
 
 `task_simulation.launch.py` 是无传感器的任务状态机 fixture；`task_navigation.launch.py`
-组合真实 SLAM/Nav2 软件栈，但底盘输出默认仅为仿真估算，且仍需要有效雷达/定位输入。
+组合真实 SLAM/Nav2 软件栈，默认底盘后端为仿真估算，且仍需要有效雷达/定位输入。
+硬件后端 wiring 已通过静态 launch 检查，但尚未在真实传感器或 F407 上运行验收；
+只有经过硬件负责人确认端口、固件协议和测得的限速后，才可显式打开。
 `task_cli` 支持“go to <已配置别名>”及“暂停/继续/取消”。配置 `slow_planner:=rai`
 时还需明确传入 LLM 配置；默认 `local` 不依赖云服务。六轴启动项没有物理仿真器，
 只提供 MoveIt 与动作接口测试。不要同时运行多个 Nav2 或多个 `/cmd_vel` 末端适配器。
-硬件验收前先阅读[硬件接入门槛](docs/hardware_acceptance.md)；组合导航 launch 不提供
-硬件底盘后端。
+硬件验收前先阅读[硬件接入门槛](docs/hardware_acceptance.md)。组合 launch 的硬件
+UART adapter 已通过静态解析，但没有设备运行验证；默认仍使用 sim，硬件开关默认关闭。
 操作脚本见 [rak_bringup/scripts](src/rak_bringup/scripts/README.md)。
 
 ## 性能与硬件约束
@@ -122,6 +128,8 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 - `brain/rak_ai/types.py` 和 episode 的 `state_text` 不变；新任务协议另行版本化。
 - CAN 为 classic CAN 2.0A 1 Mbps，禁止 `fd on`。协议以叶节点仓库为准，不能猜测六轴固件映射。
 - UART v1 文档与主机驱动不证明 F407 固件兼容；`serial_100hz.py` 是 PTY-only。
+- `scripts/serial_link_test.py` 是 refusal-only 兼容入口，拒绝运行旧 CRC-8 实体串口
+  协议；不要恢复为可发送版本。`scripts/serial_100hz.py` 才是 UART v1 的 PTY-only 测试。
 - collision monitor/Nav2 配置与软件测试不等于安全认证或物理急停。
 - 桌面与相机竞争 CMA；不要为跑可视化而默认开启桌面。下面保留本机已有运维记录。
 

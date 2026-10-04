@@ -71,6 +71,7 @@ Text navigation smoke test: source `install/architecture/local_setup.bash`, then
 `ros2 run rak_task_executor task_cli`. This fixture uses fake Nav2 and explicitly estimated
 base telemetry; it does not use sensors or represent physical feedback. For sensor-backed
 Nav2 composition use `ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim`.
+Current progress and acceptance gaps are tracked in `docs/project_status.md`.
 
 Build `rak_interfaces` before `rak_agent`, and `rak_gpu` before `rak_stereo_driver`;
 colcon knows the order from package manifests. Treat `colcon build` +
@@ -95,9 +96,12 @@ colcon knows the order from package manifests. Treat `colcon build` +
   Nav2 cancellation is confirmed and fresh repeated stationary telemetry arrives; resume
   submits the semantic map goal again. Its default parser is local; optional RAI planning
   may only choose a configured waypoint alias and never issues velocity/joint commands.
-- `rak_base_driver` defaults to no port, no hardware access, zero speed limits and DISARMED.
-  UART v1 is a proposed host protocol; this repository has no matching F407 firmware.
-  PTY tests do not prove device compatibility. Never change defaults to ARM as a shortcut.
+- `BaseUartNode` defaults to no port, no hardware access, zero speed limits and DISARMED.
+  The bringup launch currently supplies `/dev/wheel_motor`, but `hardware_enable=false`
+  means the node does not open it. All three finite positive speed limits are required
+  before ARM; zero is not pass-through. UART v1 is a proposed host protocol; this repository
+  has no matching F407 firmware. PTY tests do not prove device compatibility.
+  Never change defaults to ARM as a shortcut.
 - The six-axis MoveIt fixture and `rak_arm_simulation` action servers are software-only.
   They contain test geometry/limits and must not be connected to hardware.
 - LLM key comes from `OPENAI_API_KEY`; `brain/config.toml` points `[openai]` at
@@ -133,8 +137,8 @@ colcon knows the order from package manifests. Treat `colcon build` +
   stops and disables gdm (~1.8 -> ~2.3 GiB available, 75-160 MiB CMA back).
   GUI launchers require `desktop`; migrated sensor/navigation wrappers do not
   require DISPLAY. Autologin is off, so returning to the desktop requires login.
-- `scripts/serial_100hz.py` is PTY-only. `scripts/serial_link_test.py` is a refusal-only
-  compatibility stub for the retired CRC-8 physical-port utility; keep physical I/O out of it.
+- `scripts/serial_100hz.py` is the PTY-only UART v1 test. `scripts/serial_link_test.py`
+  is refusal-only for the retired CRC-8 physical-port utility; keep it that way.
 - Simulation task telemetry is a command-motion estimate, not measured odometry. A
   successful software pause/resume test is not hardware acceptance; see
   `docs/hardware_acceptance.md`.

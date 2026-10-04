@@ -30,22 +30,33 @@ All items below are prerequisites, not actions performed automatically by ROS:
   quality, footprint, acceleration and conservative velocity limits are measured.
 - The operator identifies the USB device by stable hardware identity. Do not infer
   device identity from `/dev/ttyUSB0`; lidar adapters may also use serial devices.
+- The current bringup launch uses `/dev/wheel_motor` as its port argument, but this
+  is only a configured alias, not evidence that the connected device is the F407.
+  `hardware_enable` remains false by default, so the driver does not open the port.
 - The robot is mechanically supported with wheels clear of the floor for initial
   motor tests. An operator remains at the E-stop with a clear test area.
-- A reviewed launch configuration supplies finite positive measured limits. The
-  defaults of no port, `allow_hardware=false`, zero limits and DISARMED remain in
-  force until an operator deliberately changes them.
+- A reviewed launch configuration supplies finite positive measured limits. Direct
+  `BaseUartNode` defaults are no port, `allow_hardware=false`, zero limits and
+  DISARMED. The bringup launch supplies `/dev/wheel_motor` but still defaults to
+  `hardware_enable=false` and zero limits. The driver requires all three limits to
+  be finite and positive before ARM; zero is not pass-through.
 
 The `rak_base_driver` node publishes telemetry and accepts an explicit ARM service
 request only after the port, protocol handshake, valid fresh feedback, clear faults
 and positive configured limits are present. A launch argument alone is not proof
 that the firmware or mechanical system is safe.
 
+The top-level bringup contains a `motion_backend:=hardware` launch route. It has
+passed installed launch parsing and backend-mapping checks, but has not been run
+with Nav2 sensors or an F407. It does not provide F407 firmware. The navigation
+launch defaults to `motion_backend:=sim`; keep that default for software validation
+until the hardware owner has completed the prerequisites above.
+
 ## Staged Base Test
 
 After the prerequisites are signed off by the hardware owner:
 
-1. Run the PTY regression first:
+1. Run the UART v1 PTY regression first:
 
    ```bash
    PYTHONPATH=src/rak_base_driver python3 scripts/serial_100hz.py --sec 3
@@ -71,6 +82,10 @@ After the prerequisites are signed off by the hardware owner:
 
 Do not connect the arm control path as part of base UART acceptance. The base-to-arm
 CAN contract and arm firmware must be reviewed separately.
+
+`scripts/serial_link_test.py` is a refusal-only compatibility stub for the retired
+CRC-8 protocol; keep it disabled. Use only the documented PTY-only UART v1 tool
+until the F407 protocol has been reviewed.
 
 ## Arm Unlock Gates
 
