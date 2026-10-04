@@ -130,11 +130,11 @@ def test_pause_resume_cancel_lifecycle(tmp_path):
         assert wrapped_result.status == GoalStatus.STATUS_ABORTED
     finally:
         executor.shutdown()
+        spin_thread.join(timeout=2.0)
         for node in (probe, executor_node, fake_nav):
             executor.remove_node(node)
             node.destroy_node()
         rclpy.shutdown()
-        spin_thread.join(timeout=2.0)
 
 
 def test_navigation_success(tmp_path):
@@ -182,8 +182,61 @@ def test_navigation_success(tmp_path):
         assert result.terminal_state == TaskStatus.SUCCEEDED
     finally:
         executor.shutdown()
+        spin_thread.join(timeout=2.0)
         for node in (probe, executor_node, fake_nav):
             executor.remove_node(node)
             node.destroy_node()
         rclpy.shutdown()
+
+
+def test_action_protocol_cancel(tmp_path):
+    rclpy.init()
+    waypoint_file = tmp_path / "waypoints.yaml"
+    waypoint_file.write_text(
+        "schema_version: 1\nframe_id: map\nwaypoints:\n"
+        "  simulation_origin: {x: 0.0, y: 0.0}\n",
+        encoding="utf-8",
+    )
+    fake_nav = FakeNavigation()
+    executor_node = TaskExecutor(parameter_overrides=[
+        Parameter("waypoints_file", value=str(waypoint_file)),
+        Parameter("cancel_timeout_sec", value=2.0),
+    ])
+    probe = TaskProbe()
+    executor = MultiThreadedExecutor(num_threads=6)
+    executor.add_node(fake_nav)
+    executor.add_node(executor_node)
+    executor.add_node(probe)
+    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
+
+    try:
+        assert probe.action.wait_for_server(timeout_sec=3.0)
+        goal = ExecuteTask.Goal()
+        goal.request_id = "action-cancel-test-1"
+        goal.text = "go to simulation_origin"
+        goal.has_pose = False
+        goal_handle = _wait_action_future(probe.action.send_goal_async(goal))
+        assert goal_handle.accepted
+        navigating = probe.wait_state(TaskStatus.NAVIGATING)
+
+        cancel_response = _wait_action_future(goal_handle.cancel_goal_async())
+        assert len(cancel_response.goals_canceling) == 1
+        probe.wait_state(TaskStatus.CANCELED, revision=navigating.revision + 1)
+        wrapped_result = _wait_action_future(goal_handle.get_result_async())
+        assert wrapped_result.status == GoalStatus.STATUS_CANCELED
+        assert wrapped_result.result.terminal_state == TaskStatus.CANCELED
+    finally:
+        executor.shutdown()
         spin_thread.join(timeout=2.0)
+        for node in (probe, executor_node, fake_nav):
+            executor.remove_node(node)
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def _wait_action_future(future, timeout=5.0):
+    done = threading.Event()
+    future.add_done_callback(lambda _: done.set())
+    assert done.wait(timeout), "action operation timed out"
+    return future.result()

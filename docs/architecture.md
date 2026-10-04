@@ -1,8 +1,9 @@
 # 分层具身智能架构
 
-状态：2026-10-04 确认统一包迁移。当前完成范围是工程边界与依赖整理，
-不是已实现语音导航或可安全运行的整机系统。README 是工程入口，
-本文件记录职责、后续接口和验收顺序；历史 `docs/superpowers/` 文档不再定义当前包布局。
+状态：2026-10-04 统一包迁移与软件任务闭环已实现。文字任务、fake Nav2
+暂停/恢复/取消、UART v1 主机端和隔离六轴动作夹具均有实现；尚未完成真实传感器
+Nav2 运行验收、匹配 F407 固件联调或任何整车安全验收。README 是工程入口，
+本文件记录边界、剩余缺口和验收顺序。
 
 ## 1. 目标与硬件事实
 
@@ -44,15 +45,18 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 
 | 包 | 拥有的内容 | 不应承担 |
 |---|---|---|
-| `rak_interfaces` | 感知和决策 ROS 消息 | 模型、CUDA、总线私有帧格式 |
+| `rak_interfaces` | 感知/决策消息、任务 Action/Service、底盘遥测 | 模型、CUDA、总线私有帧格式 |
 | `rak_gpu` | GPU RAII、TRT/VPI 工具 | 消息生成、机器人策略 |
 | `rak_stereo_driver` | V4L2、nvJPEG、图像发布 | 目标识别、导航目标选择 |
 | `rak_astra_driver` | Astra SDK 与 ROS 数据转换 | 世界状态、抓取规划 |
 | `rak_sensor_bringup` | 设备启动、滤波和设备参数 | 任务策略、整机状态机 |
 | `rak_description` | URDF、几何、惯量与可视化 | 导航参数、模型策略 |
-| `rak_navigation` | SLAM、里程计来源、Nav2 配置 | 对话理解、LLM 调用 |
-| `rak_moveit_config` | SRDF、IK、关节限制与规划配置 | 电机闭环、语音意图 |
-| `rak_motion_stub` | 明确标注的测试转发 | 硬件驱动、安全保证 |
+| `rak_navigation` | SLAM、全向 MPPI、smoother/collision-monitor 配置 | 对话理解、LLM 调用 |
+| `rak_task_executor` | 单一任务状态机、文字意图、Nav2 Action 生命周期 | 原始底盘/关节命令、感知算法 |
+| `rak_base_driver` | Jetson-F407 UART v1 编解码、遥测与显式使能门控 | F407 固件、下游 CAN、硬实时安全 |
+| `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |
+| `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
+| `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
 | `rak_agent` | 当前 S1/S2 认知原型 | 电机驱动、同步等待云端后控制 |
 | `rak_bringup` | 整机组合、DDS、操作入口 | 通用算法或传感器 SDK |
 
@@ -61,7 +65,10 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 ```text
 rak_agent ------------> rak_interfaces ---> 标准 ROS 消息
 rak_stereo_driver ----> rak_gpu ----------> JetPack SDK
-rak_moveit_config ----> rak_description
+rak_task_executor ----> rak_interfaces / rak_agent(task intent) / Nav2 Action
+rak_base_driver -----> rak_interfaces / serial
+rak_arm_simulation --> standard trajectory/gripper actions
+rak_moveit_config ----> rak_description / rak_arm_simulation (simulation only)
 rak_navigation -------> rak_sensor_bringup / rak_motion_stub / Nav2 / SLAM
 rak_sensor_bringup ----> 自有相机驱动 / 上游雷达 / laser_filters
 rak_bringup ----------> 各能力的启动入口
@@ -71,16 +78,16 @@ rak_bringup ----------> 各能力的启动入口
 Python import 为 `rak_ai`。保持已有 venv 和 episode 路径，避免移动虚拟环境后 shebang、
 editable install 和数据定位同时失效。今后若统一物理位置，应独立迁移数据目录与部署环境。
 
-## 4. 目标运行架构（尚未全部实现）
+## 4. 运行架构与实现状态
 
 ```text
 设备数据 / 语音 / 执行反馈
           |
      状态与事件层
           |
-   rak_agent：Jev 快选择 <-> LLM + Harness 慢理解
-          | 目标、建议、约束，不是电机命令
-     任务执行管理器
+   rak_agent：现有 Jev/S1 与 RAI/S2 原型
+          | (尚未接入 task executor 的 S1 任务仲裁)
+  rak_task_executor：本地文字解析 / 可选 RAI 地点选择
           | 技能调用、取消、进度、结果
    Nav2 / MoveIt / 对话 / 表达
           |
@@ -99,18 +106,24 @@ Harness 只在慢路径管理任务上下文、工具白名单、预算、超时
 持续思考由任务进展、失败和环境变化触发，并合并重复事件；
 不是每帧调用云端，也不让一条迟到回复覆盖更新的用户意图。
 
+当前实现边界：`rak_task_executor` 默认只做本地命令解析和已配置地点别名查找；
+未知地点可选调用 RAI 结构化输出，但结果必须是 waypoint 白名单成员。该慢路径
+不是 Laya/Jev 的 System 1，也没有 Harness 持续任务调度。现有 `rak_agent` 与
+task executor 尚未通过共享任务仲裁接口联动；不能描述为完整的 Jev + Harness VLA。
+
 先保留 `rak_ai` 的现有文件，不在本次包迁移中改写 `resolve()` 或训练契约。
 未来可在该 Python 包内逐步分出 `state`、`policy`、`harness` 模块，
 只有独立部署或资源隔离确有必要时才新增进程。
 
 ### 执行侧
 
-后续新增 `rak_task_executor`，拥有任务生命周期和底盘/机械臂控制权。
-使用 Nav2 Action、MoveIt 规划执行接口及明确的技能适配器，
-不要由 LLM 和 Jev 各自运行一套任务状态机。
+`rak_task_executor` 已拥有单一导航任务生命周期，通过 `/task/execute` Action、
+`/task/control` Service、`/task/status` 状态和 Nav2 `NavigateToPose` Action 工作。
+当前不拥有机械臂任务执行，也不直接发速度或关节命令。
 
 每个技能必须定义前置条件、输入、反馈、完成条件、超时、取消和失败语义。
-初期导航技能至少包括前往命名地点、暂停、恢复、取消和查询状态。
+初期导航技能包括前往配置地点或 map-frame pose、暂停、恢复和取消；状态通过
+`/task/status` 发布，控制台提供文字入口。
 底盘同一时刻只有一个有效控制权持有者，手动接管和急停必须能撤销自治许可。
 
 任务协议另行定义版本，至少包含：
@@ -133,7 +146,8 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 ```
 
 “暂停”不是直接保存上一条 `cmd_vel`：
-请求取消当前 Nav2 goal，确认取消/终态，并确认底盘停止后才报告 PAUSED。
+请求取消当前 Nav2 goal，确认取消/终态，并在新鲜、有效、无故障的底盘遥测上连续
+观察到静止后才报告 PAUSED。fake Nav2 fixture 的反馈是命令运动估算，不是真实遥测。
 超时进入失败或安全阻断，不伪报暂停成功。
 “恢复”保留任务语义目标，从当前位姿重新规划；重新检查地图、定位、障碍、
 用户意图版本和安全许可，不回放旧速度或旧轨迹。
@@ -145,8 +159,10 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 当前 `brain` 回调先推理再 resolve，不能作为实时防碰撞保证。
 安全许可应落实到命令出口，MCU 还要独立处理断联、使能和超时。
 
-未来的 `rak_hardware` 负责总线编码、100 Hz 命令刷新、反馈、健康状态和看门狗；
-不是简单将 `rak_motion_stub` 改名。底盘运动学仍留在 MCU。
+`rak_base_driver` 已实现提议中的 UART v1 主机端编解码、100 Hz 命令节拍、状态发布
+和显式 ARM 服务，但默认不打开串口、零速度限值且 DISARMED。仓库没有相匹配的
+F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留在 MCU，MCU 必须独立
+实现命令租约、断联停止、E-stop 和故障锁存。
 机械臂推荐对接 `ros2_control` 的硬件接口与轨迹控制器，
 但插值位置、刷新率和反馈协议必须按实际固件确定，不能把 25 kHz 电机环搬到 ROS。
 夹爪使用独立执行接口；失联时的保持/制动按机械安全设计处理，不能统一断电。
@@ -156,7 +172,7 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 
 ### 对话与表达侧
 
-未来 `rak_dialogue` 负责流式 ASR/TTS、端点检测、回声处理、打断和轮次状态；
+未来对话适配器负责流式 ASR/TTS、端点检测、回声处理、打断和轮次状态；
 导航任务提交给执行器，对话不能声称执行器尚未确认的成功。
 普通打断语音需要快速本地识别路径，不等待云端完整推理；它仍不是硬件急停替代品。
 
@@ -179,22 +195,25 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 
 ## 6. 分阶段验收
 
-| 阶段 | 交付 | 必须通过 |
+| 阶段 | 状态与交付 | 必须通过 |
 |---|---|---|
-| A：本次 | 包职责、构建依赖、启动资源和迁移说明 | 新目录构建、包发现、消息序列化、launch 解析、现有 AI 测试 |
-| B：任务内核 | 文字命令 + 假导航适配器 + 执行状态机 | 打断/到达竞态、重复命令、迟到结果、超时、重启策略 |
-| C：导航接入 | Nav2 Action 适配器与地点解析 | 仿真或静态安全平台验证暂停确认、重新规划和失败反馈 |
-| D：实车闭环 | 通信、里程计/IMU、速度限制、真实安全出口 | 断联停止、失效数据阻断、人工接管、受控低速测试 |
-| E：语音与智能体 | 对话打断、Jev 与 Harness 协同 | 无网络可打断、旧 LLM 结果无效、误识别处理、延迟统计 |
-| F：机械臂与表达 | 真实六轴模型、独立夹爪、轨迹反馈 | 标定/限位/碰撞/断联保持验证后，再增加移动操作与表达 |
+| A：包迁移 | 已完成，详见 `docs/migration.md` | 全工作区构建、安装检查、旧 AI 回归 |
+| B：任务内核 | 软件实现；fake Nav2 覆盖成功、重复请求、暂停/确认/恢复、服务取消和 Action 取消 | 到达/暂停竞态、各种超时、慢规划迟到、重启等剩余竞态仍需扩测 |
+| C：Nav2 接入 | Action、waypoint 和全向参数已接入 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链 |
+| D：硬件闭环 | UART v1 host codec/driver 已实现，固件未实现/未核验 | F407 匹配、断联/E-stop、里程计/IMU、限速与人工监督低速测试 |
+| E：语音与智能体 | 文字 CLI 已有；ASR/TTS、task 与 S1/Harness 仲裁未接入 | 无网络本地打断、旧提案拒绝、误识别处理与端到端延迟 |
+| F：机械臂 | 六轴隔离夹具和软件动作服务器已实现 | 真实几何/限位/映射/失联策略确认后再做实机适配 |
 
 ## 7. 未因本次重构而解决的问题
 
 - 深度/检测/跟踪融合尚未形成实际 `TrackedObjects` 生产链。
 - 旧 S2 `_drain()` 的 `applied` 是日志标记，没有真正应用到执行器。
-- Nav2 横移为零，collision monitor 配置为不干预，stub 禁用仅丢弃消息。
+- Nav2 Omni、速度平滑器和 collision monitor 配置已更新，但真实 LaserScan 停止响应、
+  lifecycle 与末端单写者尚未做运行验收；`sim` 输出只记录估算。
 - 当前 `odom_source:=ekf` 预留选项不会自动启动 EKF；仍需外部提供有效 TF。
 - 相机标定、深度与彩色对齐、硬件 TF、真实里程计质量都需要工程验证。
-- MoveIt demo 与五轴简化模型只能验证旧示例，不是六轴实机支持。
+- 六轴模型尺寸/限位是测试夹具占位值；没有真实六轴实机支持。
+- `rak_task_executor` 的慢规划是可选 RAI 地点选择，不是当前 Jev/Harness 的统一任务推理。
 
-这些缺口必须在对应阶段关闭；不能以重命名、launch 可解析或单元测试通过作为实车安全证明。
+这些缺口必须在对应阶段关闭；不能以构建、launch 可解析或仿真测试通过作为实车安全证明。
+具体门槛见 [硬件验收清单](hardware_acceptance.md)。

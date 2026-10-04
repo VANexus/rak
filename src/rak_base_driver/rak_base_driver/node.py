@@ -42,8 +42,10 @@ except ImportError:  # Import remains optional for offline codec use.
 
 
 class BaseUartNode(Node):
-    def __init__(self):
-        super().__init__("base_uart_driver")
+    def __init__(self, *, parameter_overrides=None):
+        super().__init__(
+            "base_uart_driver", parameter_overrides=parameter_overrides
+        )
         self.declare_parameter("port", "")
         self.declare_parameter("baud", 921600)
         self.declare_parameter("allow_hardware", False)

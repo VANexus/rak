@@ -17,9 +17,10 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
-    "rak_agent", "rak_astra_driver", "rak_bringup", "rak_description", "rak_gpu",
-    "rak_interfaces", "rak_motion_stub", "rak_moveit_config", "rak_navigation",
-    "rak_sensor_bringup", "rak_stereo_driver",
+    "rak_agent", "rak_arm_simulation", "rak_astra_driver", "rak_base_driver",
+    "rak_bringup", "rak_description", "rak_gpu", "rak_interfaces",
+    "rak_motion_stub", "rak_moveit_config", "rak_navigation", "rak_sensor_bringup",
+    "rak_stereo_driver", "rak_task_executor",
 }
 OLD_NAMES = {"core", "eye", "boot", "brain", "motor_stub", "astra_bridge"}
 
@@ -67,6 +68,9 @@ def check_boundaries(found) -> None:
     assert "rak_gpu" not in found["rak_agent"][1]
     assert not found["rak_description"][1] & EXPECTED
     assert "rak_description" in found["rak_moveit_config"][1]
+    assert "rak_interfaces" in found["rak_base_driver"][1]
+    assert "rak_agent" in found["rak_task_executor"][1]
+    assert "rak_interfaces" in found["rak_task_executor"][1]
     assert "rak_gpu" in found["rak_stereo_driver"][1]
     assert "rak_interfaces" not in found["rak_stereo_driver"][1]
 
@@ -116,11 +120,34 @@ def check_installed(found) -> None:
     msgs = importlib.import_module("rak_interfaces.msg")
     from rclpy.serialization import deserialize_message, serialize_message
 
-    for message_type in (msgs.Action, msgs.Decision, msgs.TrackedObject, msgs.TrackedObjects):
+    for message_type in (
+        msgs.Action,
+        msgs.BaseTelemetry,
+        msgs.Decision,
+        msgs.TaskStatus,
+        msgs.TrackedObject,
+        msgs.TrackedObjects,
+    ):
         message = message_type()
         assert deserialize_message(serialize_message(message), message_type) == message
+    from rak_interfaces.action import ExecuteTask
+
+    goal = ExecuteTask.Goal()
+    assert deserialize_message(serialize_message(goal), ExecuteTask.Goal) == goal
     importlib.import_module("rak_motion_stub.cmd_vel_stub")
     from ament_index_python.packages import get_package_prefix
+
+    modules = (
+        ("rak_ai.task_intent", "rak_agent"),
+        ("rak_arm_simulation.controllers", "rak_arm_simulation"),
+        ("rak_base_driver.node", "rak_base_driver"),
+        ("rak_task_executor.node", "rak_task_executor"),
+    )
+    for module_name, package_name in modules:
+        module = importlib.import_module(module_name)
+        prefix = Path(get_package_prefix(package_name)).resolve()
+        module_path = Path(module.__file__).resolve()
+        assert prefix in module_path.parents, f"{module_name} imported outside install: {module_path}"
 
     bootstrap_path = Path(get_package_prefix("rak_agent")) / "lib/rak_agent/agent_node"
     bootstrap = runpy.run_path(str(bootstrap_path))

@@ -32,6 +32,30 @@ ROS 消息的包名前缀是类型身份的一部分。即使字段相同，
 外部节点必须更新依赖、重新构建；旧 rosbag 需要显式类型迁移或旧环境回放，
 不能假设新节点能直接订阅旧类型。JSONL episode 数据没有改动。
 
+## 2026-10-04 软件任务与硬件适配增量
+
+统一重命名之后新增了以下边界；这些增量没有修改冻结的
+`brain/rak_ai/types.py`、episode `state_text` 或第三方 vendor 包：
+
+| 新包/接口 | 当前职责与边界 |
+|---|---|
+| `rak_task_executor` | `/task/execute` Action、`/task/control` Service、`/task/status`；唯一拥有导航任务与 Nav2 goal 生命周期 |
+| `rak_base_driver` | Jetson 到底盘 F407 的 UART v1 host codec/节点；默认无端口、禁用硬件、速度限值为零、DISARMED |
+| `rak_arm_simulation` | 六轴夹具使用的软件轨迹/夹爪 Action server；不含 physics 或 ros2_control 硬件接口 |
+| `rak_interfaces` 新类型 | `ExecuteTask`、`TaskControl`、`TaskStatus`、`BaseTelemetry`；是加法接口，不取代旧决策消息 |
+
+文字任务默认使用本地解析与配置的 waypoint allow-list；可选 RAI 慢规划只能选
+白名单别名。暂停需要 Nav2 取消确认及新鲜静止遥测；恢复重新提交地图目标。
+`task_simulation.launch.py` 使用 fake Nav2 与命令运动估算，不表示真实底盘反馈。
+
+Nav2 新链为 Omni MPPI → velocity smoother → collision monitor → 最终 `/cmd_vel`
+适配器。`task_navigation.launch.py` 只提供 sim/stub 末端，不提供硬件后端。
+UART v1 的主机格式见 [协议文档](protocol/jetson_f407_uart_v1.md)；仓库没有匹配的
+F407 固件，因此规范、codec 与 PTY 验证不构成实机兼容声明。
+
+`rak_description` 中新增的六轴模型、MoveIt SRDF 和限位仅为测试 fixture，独立于
+原五轴 demo。不得将 fixture 尺寸、限位或动作服务器用于真实机械臂。
+
 ## 构建与环境
 
 旧 `build/`、`install/` 不删除。新的输出使用：
@@ -85,7 +109,7 @@ launch 检查使用 `--show-args`，不会打开设备或发出运动命令。
 不变项：第三方代码、固件协议、模型推理策略、真实运动行为、模型权重、episode。
 现存安全/模型缺口见 [架构文档](architecture.md)，不能把迁移测试当作硬件验收。
 
-## 本次验证记录（2026-10-04）
+## 统一迁移验证记录（2026-10-04）
 
 - 本机 aarch64 全工作区构建：14 个包完成，命令退出码 0。
 - 结构检查：11 个自有包，依赖图无环，显式 launch 依赖已声明。
@@ -99,3 +123,19 @@ launch 检查使用 `--show-args`，不会打开设备或发出运动命令。
 安装检查日志使用临时目录。该设置会产生 setuptools 的禁用字节码告警。
 首次编译仍显示既有 C++ / 第三方告警，本次没有把它们当作迁移问题修改。
 未运行真实传感器、底盘、机械臂运动测试，也未重跑 GPU 模型精度或性能测试。
+
+## 任务与硬件适配增量验证（2026-10-04）
+
+- 全工作区增量构建：17 个包完成；其中 14 个自有包，3 个 vendor 包。
+- 安装态 checker：14 个自有包依赖无环，13 个 launch 可解析，新旧接口序列化通过，
+  并从安装 overlay 导入 task intent、UART、task executor 和 arm simulation 模块。
+- CTest 与 Python ROS 包测试：21 项通过，0 errors / failures / skipped。
+- `brain/tests/test_ai.py` 和 `brain/tests/test_task_intent.py` 通过。
+- UART driver 的 ROS 节点直接通过 PTY peer 验证 handshake、DISARMED、明确 ARM、
+  速度缩放和过期输入撤销；独立 PTY 工具 100 Hz 发送 DISARMED 零速度。
+- fake Nav2 测试覆盖导航成功、重复 request ID、暂停确认、恢复重规划、服务取消和
+  Action 协议取消；fake arm action client 验证六关节轨迹与独立夹爪。
+- 遗留 CRC-8 物理串口工具已改为拒绝执行，避免它发送与 UART v1 不兼容的运动帧。
+
+这些都是软件/仿真结果；未连接 F407、雷达、相机或真实机械臂，未进行物理运动、
+E-stop、碰撞停止距离或固件互操作验收。

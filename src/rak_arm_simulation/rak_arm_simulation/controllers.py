@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 import threading
 import time
@@ -109,7 +108,7 @@ class FakeJointControllers(Node):
     def _cancel_goal(_goal_handle):
         return CancelResponse.ACCEPT
 
-    async def _execute_arm(self, goal_handle):
+    def _execute_arm(self, goal_handle):
         trajectory = goal_handle.request.trajectory
         names = tuple(trajectory.joint_names)
         with self._lock:
@@ -130,7 +129,7 @@ class FakeJointControllers(Node):
             previous_positions = positions
 
         started = time.monotonic()
-        duration = points[-1][0]
+        duration = points[-1][1]
         while True:
             elapsed = min(time.monotonic() - started, duration)
             desired = self._sample(points, elapsed)
@@ -152,7 +151,7 @@ class FakeJointControllers(Node):
                 result.error_string = ""
                 goal_handle.succeed()
                 return result
-            await asyncio.sleep(0.02)
+            time.sleep(0.02)
 
     @staticmethod
     def _sample(points, elapsed):

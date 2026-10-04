@@ -48,6 +48,9 @@ def generate_launch_description():
             default_planning_pipeline="ompl",
         )
         .pilz_cartesian_limits(file_path=os.path.join(pkg, "config", "pilz_cartesian_limits.yaml"))
+        .trajectory_execution(
+            file_path=os.path.join(pkg, "config", "fake_controllers.yaml")
+        )
         .to_moveit_configs()
     )
 

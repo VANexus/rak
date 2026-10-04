@@ -9,14 +9,18 @@ changing behavior; it records decisions that are not obvious from the code.
 The 2026-10-04 unified migration supersedes the old package layout.
 Read `docs/architecture.md` and `docs/migration.md` before moving package boundaries.
 
-- `src/rak_interfaces`: messages only, no GPU/model dependencies.
+- `src/rak_interfaces`: messages/actions/services only, no GPU/model dependencies.
 - `src/rak_gpu`: JetPack library, exported target `rak_gpu::gpu`, namespace `rak::gpu`.
 - `src/rak_stereo_driver`: plugin `rak::stereo_driver::CaptureNode`, executable `stereo_node`.
 - `src/rak_astra_driver`: tested depth camera adapter, executable `astra_node`.
 - `src/rak_sensor_bringup`: camera/lidar launch and device configuration.
 - `src/rak_description`: geometry and visualization, still a legacy five-axis demo.
-- `src/rak_moveit_config`: SRDF, IK, planning configuration; no real arm execution.
-- `src/rak_navigation`: SLAM and Nav2; `src/rak_motion_stub` is a test relay, not hardware.
+- `src/rak_moveit_config`: SRDF, IK and planning configuration; six-axis fixture is simulation-only.
+- `src/rak_motion_stub`: test relay/estimate, not a hardware driver.
+- `src/rak_navigation`: SLAM, omnidirectional Nav2 and velocity safety chain.
+- `src/rak_task_executor`: sole owner of text-navigation task and Nav2 goal lifecycle.
+- `src/rak_base_driver`: Jetson-to-F407 UART v1 host driver; hardware disabled by default.
+- `src/rak_arm_simulation`: software-only six-axis trajectory/gripper action fixture.
 - `src/rak_bringup`: composition, DDS configuration and operator scripts.
 - `src/vendor`: third-party code, read-only.
 - `brain/`: ROS package `rak_agent`, Python module `rak_ai`, pip project `rak-brain`.
@@ -37,6 +41,8 @@ colcon build --base-paths src brain --executor sequential --build-base build/arc
 source install/architecture/local_setup.bash
 python3 scripts/check_workspace.py --installed
 colcon test --build-base build/architecture --packages-select rak_description rak_moveit_config
+python3 -m pytest src/rak_task_executor/test src/rak_arm_simulation/test
+PYTHONPATH=src/rak_base_driver python3 -m pytest src/rak_base_driver/test
 ros2 run rak_stereo_driver stereo_node
 ros2 launch rak_sensor_bringup lidar.launch.py
 
@@ -60,6 +66,12 @@ ROS unconditionally and injects `/opt/ros/jazzy/.../site-packages` into the venv
 defeating its isolation. It does **not** apply to `ros2 run`/`ros2 launch`, which need
 that same PYTHONPATH to find `rclpy` and the install space.
 
+Text navigation smoke test: source `install/architecture/local_setup.bash`, then run
+`ros2 launch rak_task_executor task_simulation.launch.py` and in another terminal run
+`ros2 run rak_task_executor task_cli`. This fixture uses fake Nav2 and explicitly estimated
+base telemetry; it does not use sensors or represent physical feedback. For sensor-backed
+Nav2 composition use `ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim`.
+
 Build `rak_interfaces` before `rak_agent`, and `rak_gpu` before `rak_stereo_driver`;
 colcon knows the order from package manifests. Treat `colcon build` +
 `tests/test_ai.py` as the two checks to pass before claiming done.
@@ -79,6 +91,15 @@ colcon knows the order from package manifests. Treat `colcon build` +
 - `--decider stub` is the default and stays runnable without torch or a model — torch on
   aarch64/JetPack is a real install risk. Do not make `laya`/`rai` hard dependencies
   (both are optional extras in `brain/pyproject.toml`).
+- `rak_task_executor` is the only task/goal lifecycle owner. Pause is not reported until
+  Nav2 cancellation is confirmed and fresh repeated stationary telemetry arrives; resume
+  submits the semantic map goal again. Its default parser is local; optional RAI planning
+  may only choose a configured waypoint alias and never issues velocity/joint commands.
+- `rak_base_driver` defaults to no port, no hardware access, zero speed limits and DISARMED.
+  UART v1 is a proposed host protocol; this repository has no matching F407 firmware.
+  PTY tests do not prove device compatibility. Never change defaults to ARM as a shortcut.
+- The six-axis MoveIt fixture and `rak_arm_simulation` action servers are software-only.
+  They contain test geometry/limits and must not be connected to hardware.
 - LLM key comes from `OPENAI_API_KEY`; `brain/config.toml` points `[openai]` at
   SiliconFlow and must never contain the key.
 
@@ -112,6 +133,11 @@ colcon knows the order from package manifests. Treat `colcon build` +
   stops and disables gdm (~1.8 -> ~2.3 GiB available, 75-160 MiB CMA back).
   GUI launchers require `desktop`; migrated sensor/navigation wrappers do not
   require DISPLAY. Autologin is off, so returning to the desktop requires login.
+- `scripts/serial_100hz.py` is PTY-only. `scripts/serial_link_test.py` is a refusal-only
+  compatibility stub for the retired CRC-8 physical-port utility; keep physical I/O out of it.
+- Simulation task telemetry is a command-motion estimate, not measured odometry. A
+  successful software pause/resume test is not hardware acceptance; see
+  `docs/hardware_acceptance.md`.
 - nvpmodel sits in the **10W** mode on this board (6 cores, capped EMC bandwidth),
   so the ~158 ms/predict figure and eye's 30 fps are both measured under that cap.
   Raising it (`sudo nvpmodel -m 0 && sudo jetson_clocks`) is root and changes the
