@@ -12,9 +12,9 @@ behind a topic or a service would put a cross-process boundary on the fast
 path, which the architecture forbids.
 
 ROS must be sourced before this module is imported -- `rclpy` comes from
-/opt/ros/jazzy and `core.msg` from the colcon install space.
+/opt/ros/jazzy and `rak_interfaces.msg` from the colcon install space.
 
-    ros2 run brain brain_node --ros-args -p decider:=laya -p sim:=true
+    ros2 run rak_agent agent_node --ros-args -p decider:=laya -p sim:=true
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
-from core.msg import Action as ActionMsg
-from core.msg import Decision as DecisionMsg
-from core.msg import TrackedObject
-from core.msg import TrackedObjects
+from rak_interfaces.msg import Action as ActionMsg
+from rak_interfaces.msg import Decision as DecisionMsg
+from rak_interfaces.msg import TrackedObject
+from rak_interfaces.msg import TrackedObjects
 
 from .body import MockBody
 from .loop import Logger, _drain  # noqa: PLC2701 -- same package, one tick pipeline
@@ -43,7 +43,7 @@ DECISION_TOPIC = "/brain/decision"
 
 
 def _action_to_msg(a: Action) -> ActionMsg:
-    """types.Action -> core/msg/Action. The pydantic model stays authoritative."""
+    """types.Action -> rak_interfaces/msg/Action. The pydantic model stays authoritative."""
     m = ActionMsg()
     m.kind = a.kind
     m.has_target = a.target_id is not None
@@ -53,7 +53,7 @@ def _action_to_msg(a: Action) -> ActionMsg:
 
 
 def _state_from_msg(msg: TrackedObjects, scene: str, flags: list[str]) -> SceneState:
-    """core/msg/TrackedObjects -> SceneState.
+    """rak_interfaces/msg/TrackedObjects -> SceneState.
 
     Raises on anything that would silently corrupt a decision: a non-finite
     coordinate reads as False in every comparison `guard()` makes, so a NaN from
@@ -86,7 +86,7 @@ def _state_from_msg(msg: TrackedObjects, scene: str, flags: list[str]) -> SceneS
 
 
 def _state_to_msg(state: SceneState, clock, frame_id: str) -> TrackedObjects:
-    """SceneState -> core/msg/TrackedObjects. Used by the built-in simulator."""
+    """SceneState -> rak_interfaces/msg/TrackedObjects. Used by the built-in simulator."""
     msg = TrackedObjects()
     msg.header.stamp = clock.now().to_msg()
     msg.header.frame_id = frame_id
@@ -467,7 +467,7 @@ def _episode_dir(out: str):
     """Where the corpus is appended. `out` wins; "" means "the one corpus".
 
     The package-relative default is the source tree when the brain runs
-    editable -- the CLI loop. `ros2 run brain brain_node` runs the *installed*
+    editable -- the CLI loop. `ros2 run rak_agent agent_node` runs the *installed*
     copy, where `__file__` sits under `<ws>/install/`, a disposable tree that
     `rm -rf install` would take the corpus with. From there walk back out to
     the workspace and use `brain/data/episodes`: the same directory the CLI

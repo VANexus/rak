@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Bootstrap: re-exec the brain node with an interpreter that has its deps.
+
+colcon builds console scripts with the interpreter that ran `setup.py`, and
+colcon itself runs under system python3 -- which has no `pydantic`, and no
+`torch` for `--decider laya`. Rather than fight the shebang, this stays
+stdlib-only and hands off to an interpreter that can actually import the brain.
+
+Resolution order, first interpreter that can `import pydantic` wins:
+
+  1. $RAK_BRAIN_PYTHON              -- explicit override
+  2. a venv this script lives in    -- `pip install -e .` puts it in <venv>/bin
+  3. <repo>/brain/.venv/bin/python  -- the usual in-tree colcon build
+  4. ./brain/.venv/bin/python       -- run from the repo root
+  5. sys.executable                 -- whatever started us
+
+Failing loudly beats starting and dying on `ModuleNotFoundError` three frames
+into a spin.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+VENV_RELATIVE = ("brain", ".venv", "bin", "python")
+
+
+def _candidates() -> list[Path]:
+    out: list[Path] = []
+    if os.environ.get("RAK_BRAIN_PYTHON"):
+        out.append(Path(os.environ["RAK_BRAIN_PYTHON"]))
+
+    here = Path(__file__).resolve().parent
+    if (here.parent / "pyvenv.cfg").exists():  # installed into <venv>/bin
+        out.append(here / "python")
+    # Support both the default install space and a clean migration overlay.
+    for parent in here.parents:
+        if (parent / "brain" / "pyproject.toml").is_file():
+            out.append(parent.joinpath(*VENV_RELATIVE))
+    out.append(Path.cwd().joinpath(*VENV_RELATIVE))
+    out.append(Path(sys.executable))
+    return out
+
+
+def _usable(py: Path) -> bool:
+    if not py.is_file() or not os.access(py, os.X_OK):
+        return False
+    try:
+        return subprocess.run(  # noqa: S603 -- fixed argv, no shell
+            [str(py), "-c", "import pydantic"], capture_output=True, timeout=30, check=False
+        ).returncode == 0
+    except OSError:
+        return False
+
+
+def main() -> int:
+    seen: set[Path] = set()
+    for py in _candidates():
+        if py in seen:
+            continue
+        seen.add(py)
+        if _usable(py):
+            os.execv(str(py), [str(py), "-m", "rak_ai.node", *sys.argv[1:]])
+
+    tried = "\n  ".join(str(p) for p in seen) or "(none)"
+    sys.stderr.write(
+        "agent_node: no interpreter that can `import pydantic` was found.\n"
+        f"  tried:\n  {tried}\n"
+        "  create the brain venv (see README) or set RAK_BRAIN_PYTHON.\n"
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

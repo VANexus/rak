@@ -1,45 +1,51 @@
 # AGENTS.md
 
-AI-native stereo vision system for Jetson Orin Nano (JetPack 7.2). C++/ROS 2 (Jazzy) + a
+Layered embodied robot system for Jetson Orin Nano (JetPack 7.2). C++/ROS 2 (Jazzy) + a
 plain-Python decision layer. `README.md` is the primary design doc — read it before
 changing behavior; it records decisions that are not obvious from the code.
 
 ## Layout
 
-- `src/` — colcon workspace (`colcon build` runs from repo root and picks this up **and**
-  `brain/`):
-  - `core/` — custom msgs (`TrackedObject(s)`, `Action`, `Decision`) + shared
-    CUDA/TensorRT/VPI library `core_lib`. `eye` links `core::core_lib` and `brain` imports
-    `core.msg`; msg changes require rebuilding `core` first.
-  - `eye/` — stereo capture node. Plugin `rak::eye::CaptureNode`, built as executable
-    `eye_capture` from component `capture_component`.
-  - `boot/` — launch files + config only (lidar bringup, SLAM, brain). No code.
-  - `vendor/` — vendored third-party (`rf2o_laser_odometry`, `lslidar_*`). Treat as
-    read-only; do not reformat or "fix" it.
-- `brain/` — Python package `rak_ai` (System 1 / System 2 decision layer), **also an
-  `ament_python` ROS 2 package** (`package.xml`, `setup.py`, `resource/brain`) so
-  `colcon build` installs it and `ros2 run brain brain_node` works. `brain/COLCON_IGNORE`
-  is gone on purpose — do not re-add it. It is still pip-installable (`pip install -e .`)
-  and the CLI loop still runs with ROS unsourced.
+The 2026-10-04 unified migration supersedes the old package layout.
+Read `docs/architecture.md` and `docs/migration.md` before moving package boundaries.
+
+- `src/rak_interfaces`: messages only, no GPU/model dependencies.
+- `src/rak_gpu`: JetPack library, exported target `rak_gpu::gpu`, namespace `rak::gpu`.
+- `src/rak_stereo_driver`: plugin `rak::stereo_driver::CaptureNode`, executable `stereo_node`.
+- `src/rak_astra_driver`: tested depth camera adapter, executable `astra_node`.
+- `src/rak_sensor_bringup`: camera/lidar launch and device configuration.
+- `src/rak_description`: geometry and visualization, still a legacy five-axis demo.
+- `src/rak_moveit_config`: SRDF, IK, planning configuration; no real arm execution.
+- `src/rak_navigation`: SLAM and Nav2; `src/rak_motion_stub` is a test relay, not hardware.
+- `src/rak_bringup`: composition, DDS configuration and operator scripts.
+- `src/vendor`: third-party code, read-only.
+- `brain/`: ROS package `rak_agent`, Python module `rak_ai`, pip project `rak-brain`.
+  Preserve its physical location, `.venv`, data and pip workflow. Do not add COLCON_IGNORE.
+
+Target arm: six positioning joints plus an independent gripper. Never invent the
+missing axis or calibration from the legacy URDF. Models, topics and episode schemas
+were not redesigned during the package migration.
 
 ## Commands
 
-No CI, no linter/formatter config, no pre-commit. The whole verification surface is:
+No CI, no linter/formatter config, no pre-commit. Verification commands:
 
 ```bash
 # C++ / ROS 2
 source /opt/ros/jazzy/setup.bash
-colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release   # from repo root; builds brain too
-source install/setup.bash
-ros2 run eye eye_capture
-ros2 launch boot lidar.launch.py
+colcon build --base-paths src brain --executor sequential --build-base build/architecture --install-base install/architecture --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/architecture/local_setup.bash
+python3 scripts/check_workspace.py --installed
+colcon test --build-base build/architecture --packages-select rak_description rak_moveit_config
+ros2 run rak_stereo_driver stereo_node
+ros2 launch rak_sensor_bringup lidar.launch.py
 
 # Memory/DMA mode of the board itself (needs sudo; see Gotchas)
 sudo scripts/rak-mode.sh status | headless | desktop
 
 # The brain as a node (model + deps come from brain/.venv, resolved at run time)
-ros2 launch boot brain.launch.py decider:=laya sim:=true
-ros2 run brain brain_node --ros-args -p sim:=true -p decider:=stub
+ros2 launch rak_bringup agent.launch.py decider:=laya sim:=true
+ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 # -p s1_weights:=fp32 is the escape hatch if a decision ever looks wrong; see Gotchas.
 
 # Python decision layer, no ROS (from brain/)
@@ -54,8 +60,8 @@ ROS unconditionally and injects `/opt/ros/jazzy/.../site-packages` into the venv
 defeating its isolation. It does **not** apply to `ros2 run`/`ros2 launch`, which need
 that same PYTHONPATH to find `rclpy` and the install space.
 
-Run order that matters: build `core` before `eye` and `brain` (msg dependency, though
-colcon already knows this from `package.xml`). Treat `colcon build` +
+Build `rak_interfaces` before `rak_agent`, and `rak_gpu` before `rak_stereo_driver`;
+colcon knows the order from package manifests. Treat `colcon build` +
 `tests/test_ai.py` as the two checks to pass before claiming done.
 
 ## Constraints that are easy to break
@@ -82,11 +88,12 @@ colcon already knows this from `package.xml`). Treat `colcon build` +
   `nvjpeg-13.2`, CUDA headers at `/usr/local/cuda-13.2/targets/sbsa-linux/include`.
   This workspace only builds on the Jetson (aarch64); do not "portable-ize" casually
   without an x86 alternative to verify against.
-- C++ is C++17 with `-Wall -Wextra -Wpedantic` (both `core` and `eye`). `eye` runs
-  `ament_lint_auto` under `BUILD_TESTING`; `core` has no tests.
+- C++ is C++17 with `-Wall -Wextra -Wpedantic` in GPU/stereo packages. Stereo runs
+  `ament_lint_auto` under `BUILD_TESTING`; GPU has no functional tests.
 - System 2 latency is 12–30 s per call (measured), so S2 is fire-and-forget in a thread
-  and replies are applied on a later tick. Stale replies being discarded (~half in a real
-  run) and a bounded run taking an extra S2 latency at flush are expected, not bugs.
+  and replies are checked on a later tick. Currently `_drain()` only records replies;
+  it does not execute them. The S1 callback also precedes safety resolution, so the
+  prototype is not an independent real-time safety path. See architecture.md.
 - `brain/data/`, `brain/.venv/`, `build/`, `install/`, `log/` are gitignored. Stray
   `frames_*.gv` / `frames_*.pdf` at the root are debugging artifacts, not deliverables.
 - `brain/pyproject.toml` says `dynamic = ["requires-python"]` and `setup.py` supplies the
@@ -94,7 +101,7 @@ colcon already knows this from `package.xml`). Treat `colcon build` +
   `SpecifierSet` object, and colcon reads the setup.py distribution through
   `ast.literal_eval`, so moving it back under `[project]` makes `colcon build` fail with
   `SyntaxError: invalid syntax (<unknown>, line 1)`.
-- `brain/scripts/brain_node` is a stdlib-only bootstrap, not a `console_scripts` entry
+- `brain/scripts/agent_node` is a stdlib-only bootstrap, not a `console_scripts` entry
   point: colcon builds scripts with its own system `python3`, which cannot `import
   pydantic`. It re-execs `$RAK_BRAIN_PYTHON` or `<repo>/brain/.venv/bin/python`, so the
   venv never needs to be activated at build time.
@@ -102,9 +109,9 @@ colcon already knows this from `package.xml`). Treat `colcon build` +
   GNOME session drives `CmaFree` to **0 kB** of the 256 MiB CMA area, and `eye`
   asks that pool for 4 `V4L2_MEMORY_MMAP` buffers -- so capture fails in a way that
   looks like a camera bug but is a memory decision. `scripts/rak-mode.sh headless`
-  stops and disables gdm (~1.8 -> ~2.3 GiB available, 75-160 MiB CMA back); it also
-  kills every `DISPLAY=:1` launch script until `desktop`, and because autologin is
-  off here, coming back means typing the password at the touchscreen once.
+  stops and disables gdm (~1.8 -> ~2.3 GiB available, 75-160 MiB CMA back).
+  GUI launchers require `desktop`; migrated sensor/navigation wrappers do not
+  require DISPLAY. Autologin is off, so returning to the desktop requires login.
 - nvpmodel sits in the **10W** mode on this board (6 cores, capped EMC bandwidth),
   so the ~158 ms/predict figure and eye's 30 fps are both measured under that cap.
   Raising it (`sudo nvpmodel -m 0 && sudo jetson_clocks`) is root and changes the
@@ -129,7 +136,7 @@ colcon already knows this from `package.xml`). Treat `colcon build` +
 - If it does not fit, `laya` catches the CUDA OOM itself and drops to CPU at
   ~1.6 s/predict -- slower than the sensor rate, with no exception raised.
   `LayaDecider.device/.weights/.place_error` and the node's `s1_device=`/`s1_weights=`
-  startup fields say which one you got, and `brain_node` warns on CPU; keep baseline
+  startup fields say which one you got, and `agent_node` warns on CPU; keep baseline
   RAM low before running `decider:=laya`.
 - The fp16/bf16 cast is verified, not assumed: `tests/test_laya_fp16_parity.py`
   compares fp32 against the cast over 90 states and asserts on what `resolve()`

@@ -1,0 +1,101 @@
+# 统一包迁移说明
+
+本次采用统一迁移，不提供旧包兼容别名。算法、话题名、节点默认名、
+QoS、消息字段和 `brain/rak_ai/types.py` 的序列化格式保持不变。
+
+## 包与 API 映射
+
+| 旧入口 | 新入口 |
+|---|---|
+| `core/msg/*` / `from core.msg` | `rak_interfaces/msg/*` / `from rak_interfaces.msg` |
+| `core::core_lib` | CMake 导出目标 `rak_gpu::gpu` |
+| `<core/*.hpp>` / `rak::core` | `<rak_gpu/*.hpp>` / `rak::gpu` |
+| `eye` / `eye_capture` | `rak_stereo_driver` / `stereo_node` |
+| `<eye/capture_node.hpp>` / `rak::eye::CaptureNode` | `<rak_stereo_driver/capture_node.hpp>` / `rak::stereo_driver::CaptureNode` |
+| `astra_bridge` / `astra_bridge_node` | `rak_astra_driver` / `astra_node` |
+| `motor_stub` / Python `motor_stub` | `rak_motion_stub` / Python `rak_motion_stub` |
+| `brain` / `brain_node` | `rak_agent` / `agent_node`；源码仍在 `brain/` |
+| `boot lidar.launch.py` | `rak_sensor_bringup lidar.launch.py` |
+| `boot slam.launch.py` / `nav2.launch.py` | `rak_navigation` 下同名 launch |
+| `boot demo.launch.py` | `rak_moveit_config demo.launch.py` |
+| `boot view_urdf.launch.py` / `display.launch.py` | `rak_description` 下同名 launch |
+| `boot brain.launch.py` | `rak_bringup agent.launch.py` |
+| `boot/config/cyclonedds.xml` | `rak_bringup/config/cyclonedds.xml` |
+| `boot/urdf/rak.srdf` | `rak_moveit_config/config/rak.srdf` |
+
+新增相机入口：`rak_sensor_bringup astra.launch.py` 和 `stereo.launch.py`。
+`cmd_vel_stub` 可执行文件及 `/cmd_vel_stub/enable` 服务名不变；
+旧文档中的 `/motor_stub/enable` 与实际私有服务解析不符，本次修正文档。
+
+ROS 消息的包名前缀是类型身份的一部分。即使字段相同，
+`core/msg/Decision` 与 `rak_interfaces/msg/Decision` 也不能直接互通。
+外部节点必须更新依赖、重新构建；旧 rosbag 需要显式类型迁移或旧环境回放，
+不能假设新节点能直接订阅旧类型。JSONL episode 数据没有改动。
+
+## 构建与环境
+
+旧 `build/`、`install/` 不删除。新的输出使用：
+
+```text
+build/architecture/
+install/architecture/
+```
+
+完整命令见 README。必须从只加载 `/opt/ros/jazzy` 的环境构建，
+否则 colcon 生成的 setup 文件可能记录旧 overlay。既有 shell 已加载旧安装时，
+可在仓库根目录显式清除继承的包搜索路径：
+
+```bash
+env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH \
+  -u PYTHONPATH -u LD_LIBRARY_PATH -u ROS_PACKAGE_PATH \
+  CMAKE_BUILD_PARALLEL_LEVEL=2 bash --noprofile --norc -c \
+  'source /opt/ros/jazzy/setup.bash && colcon build --base-paths src brain \
+    --build-base build/architecture --install-base install/architecture \
+    --executor sequential --cmake-args -DCMAKE_BUILD_TYPE=Release'
+```
+
+运行时先加载 ROS，再加载 `install/architecture/local_setup.bash`。
+不要继续加载旧 `install/setup.bash`；本次不自动修改个人 `.bashrc`。
+当前 IDE 的包搜索路径同步到新安装目录，IDE 配置仍为本机未跟踪文件。
+
+## Python 与操作脚本
+
+- `brain/.venv`、`brain/data`、pip 项目名 `rak-brain` 和 `rak_ai` 导入不变。
+- ROS 引导脚本更名为 `agent_node`，支持在仓库外启动及嵌套安装目录；
+  `RAK_BRAIN_PYTHON` 仍可指定解释器。
+- Laya/RAI 仍是可选依赖，stub 不需要 torch。
+- `agent.launch.py` 现在显式透传 `s1_weights`，默认仍为 `auto`。
+- 操作脚本迁移至 `src/rak_bringup/scripts/`，共享 `environment.sh`。
+- `RAK_WORKSPACE`、`RAK_INSTALL_PREFIX`、DDS 配置与 ROS domain 可覆盖；
+  默认安装目录是 `install/architecture`，不再手工补 Python 包前缀。
+- 无 GUI 的雷达、SLAM、Nav2 脚本不再强制设置 DISPLAY；
+  RViz/MoveIt demo 才检查可读的 Xauthority 文件。
+- 不要单独复制一个 `run_*.sh` 到 `/tmp`，它现在需要同目录的 `environment.sh`。
+
+## 检查与限制
+
+`scripts/check_workspace.py` 校验包命名、构建类型、资源标记、依赖图和
+launch 的显式运行依赖。`--installed` 还校验安装资源与源码一致，
+逐个解析 launch、序列化消息并从仓库外验证智能体引导入口。
+launch 检查使用 `--show-args`，不会打开设备或发出运动命令。
+
+描述与 MoveIt 的旧结构测试接入 CTest，缺少资源时失败而不是静默跳过。
+完整回归仍包括 `brain/tests/test_ai.py`。
+
+不变项：第三方代码、固件协议、模型推理策略、真实运动行为、模型权重、episode。
+现存安全/模型缺口见 [架构文档](architecture.md)，不能把迁移测试当作硬件验收。
+
+## 本次验证记录（2026-10-04）
+
+- 本机 aarch64 全工作区构建：14 个包完成，命令退出码 0。
+- 结构检查：11 个自有包，依赖图无环，显式 launch 依赖已声明。
+- 安装态：9 个 launch 可解析，资源路径与源码一致，四种消息序列化往返通过。
+- ROS 模拟链路：独立测试 domain 上验证至少三次决策输出，不调用真实运动接口。
+- CTest：3 项测试通过，无失败、无跳过；现有 `brain/tests/test_ai.py` 通过。
+- 新可执行入口和 `rak::stereo_driver::CaptureNode` 组件注册检查通过。
+- 消息字段、冻结的 AI 类型/策略、Nav2 参数与第三方源码已核对未变。
+
+受限环境中构建设置 `PYTHONDONTWRITEBYTECODE=1`，避免向系统 ROS 目录写缓存；
+安装检查日志使用临时目录。该设置会产生 setuptools 的禁用字节码告警。
+首次编译仍显示既有 C++ / 第三方告警，本次没有把它们当作迁移问题修改。
+未运行真实传感器、底盘、机械臂运动测试，也未重跑 GPU 模型精度或性能测试。
