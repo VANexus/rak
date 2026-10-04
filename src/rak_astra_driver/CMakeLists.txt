@@ -12,8 +12,6 @@ find_path(ORBBecSDK_INC NAMES "libobsensor/ObSensor.hpp"
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(geometry_msgs REQUIRED)
 
 message(STATUS "Using Orbbec SDK 1.10.18 include: ${ORBBecSDK_INC}")
 
@@ -21,7 +19,7 @@ include_directories(BEFORE ${ORBBecSDK_INC})
 
 add_executable(astra_node src/astra_bridge_node.cpp)
 target_link_libraries(astra_node ${OrbbecSDK_LIB_ABS})
-ament_target_dependencies(astra_node rclcpp sensor_msgs tf2_ros geometry_msgs)
+ament_target_dependencies(astra_node rclcpp sensor_msgs)
 # RPATH so libOrbbecSDK.so.1.10 is found at runtime without LD_LIBRARY_PATH
 set_target_properties(astra_node PROPERTIES
   BUILD_RPATH "${OrbbecSDK_DIR}/lib"

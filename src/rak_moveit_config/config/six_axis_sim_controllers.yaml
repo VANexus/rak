@@ -1,0 +1,23 @@
+# Targets only the software action servers in rak_arm_simulation.
+controller_names:
+  - arm_controller
+  - gripper_controller
+
+arm_controller:
+  type: FollowJointTrajectory
+  action_ns: follow_joint_trajectory
+  default: true
+  joints:
+    - base_yaw_joint
+    - shoulder_pitch_joint
+    - elbow_pitch_joint
+    - wrist_yaw_joint
+    - wrist_pitch_joint
+    - wrist_roll_joint
+
+gripper_controller:
+  type: GripperCommand
+  action_ns: gripper_cmd
+  default: true
+  joints:
+    - gripper_joint

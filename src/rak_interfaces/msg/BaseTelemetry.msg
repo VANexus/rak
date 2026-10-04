@@ -1,0 +1,13 @@
+std_msgs/Header header
+bool connected
+bool handshake_ok
+bool valid
+bool armed
+uint8 mode
+uint32 fault_bitmap
+uint16 command_sequence
+uint16 echoed_command_sequence
+geometry_msgs/Twist measured_twist
+uint32 device_uptime_ms
+float32 age_sec
+string status

@@ -38,3 +38,10 @@ brain/**/__pycache__/
 # 调试产物：tf 树导出，非交付物
 frames_*.gv
 frames_*.pdf
+
+# TRAE AI IDE workspace state (IDE cache, not project source)
+.trae/
+
+
+# TRAE AI IDE workspace state (IDE cache, not project source)
+.trae/

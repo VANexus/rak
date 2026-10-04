@@ -1,24 +1,17 @@
-"""Full nav2 chain, layered on top of slam.launch.py.
+"""SLAM + omnidirectional Nav2 with a simulation or legacy stub backend.
 
-    ros2 launch rak_navigation nav2.launch.py
-
-Pipeline: lidar -> rf2o -> slam_toolbox -> nav2 navigation -> /cmd_vel
-                                                         -> cmd_vel_stub -> /cmd_vel_raw (for MCU)
-
-SLAM mode: slam_toolbox provides /map + map->odom TF, so no AMCL/map_server.
-The 2D N10P lidar is the only sensor. cmd_vel_stub forwards the unicycle
-Twist verbatim; 4-wheel kinematics live on the MCU.
-
-Lifecycle ordering matters: slam_toolbox must be active before nav2 costmaps
-start, otherwise the global costmap StaticLayer gets nothing on /map.
+Velocity path: MPPI / behavior -> velocity smoother -> collision monitor ->
+the selected non-hardware adapter on the final /cmd_vel topic.
 """
 
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import EqualsSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 
 
@@ -26,18 +19,37 @@ def generate_launch_description():
     share = get_package_share_directory("rak_navigation")
     nav2_share = get_package_share_directory("nav2_bringup")
     nav2_params = os.path.join(share, "config", "nav2_params.yaml")
+    backend = LaunchConfiguration("motion_backend")
+    use_sim_time = LaunchConfiguration("use_sim_time")
 
     return LaunchDescription([
-        # Reuse the whole SLAM chain (driver + filter + static_tf + rf2o + slam_toolbox).
-        # It already wires base_link -> laser_link, /scan, /odom, /map and the
-        # slam_toolbox lifecycle dance.
+        DeclareLaunchArgument(
+            "motion_backend",
+            default_value="sim",
+            choices=["sim", "stub"],
+            description="Non-hardware final Twist adapter; hardware is deliberately excluded",
+        ),
+        DeclareLaunchArgument("use_sim_time", default_value="false"),
+        DeclareLaunchArgument("lidar_z", default_value="0.0"),
+        DeclareLaunchArgument("odom_source", default_value="rf2o", choices=["rf2o", "ekf", "none"]),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(share, "launch", "slam.launch.py")),
+            launch_arguments={
+                "lidar_z": LaunchConfiguration("lidar_z"),
+                "odom_source": LaunchConfiguration("odom_source"),
+            }.items(),
         ),
-
-        # Test relay only; this is not a hardware or emergency-stop interface.
-        # Existing relay behavior is preserved during the package migration.
-        #   ros2 service call /cmd_vel_stub/enable std_srvs/srv/SetBool "{data: false}"
+        Node(
+            package="rak_motion_stub",
+            executable="cmd_vel_sim",
+            name="cmd_vel_sim",
+            output="screen",
+            parameters=[{
+                "cmd_vel_topic": "/cmd_vel",
+                "telemetry_topic": "/base/telemetry",
+            }],
+            condition=IfCondition(EqualsSubstitution(backend, "sim")),
+        ),
         Node(
             package="rak_motion_stub",
             executable="cmd_vel_stub",
@@ -46,20 +58,17 @@ def generate_launch_description():
             parameters=[{
                 "cmd_vel_topic": "/cmd_vel",
                 "raw_topic": "/cmd_vel_raw",
-                "log_every_n": 5,    # 20 Hz controller * 5 = ~4 Hz log; readable, not noisy
+                "log_every_n": 5,
             }],
+            condition=IfCondition(EqualsSubstitution(backend, "stub")),
         ),
-
-        # nav2 navigation stack: planner / controller / bt / behavior / smoother
-        # / collision_monitor / waypoint_follower / etc. Lifecycle manager
-        # autostarts them. This launch reads nav2_params.yaml above.
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(nav2_share, "launch", "navigation_launch.py")
             ),
             launch_arguments={
                 "params_file": nav2_params,
-                "use_sim_time": "False",
+                "use_sim_time": use_sim_time,
                 "autostart": "True",
             }.items(),
         ),

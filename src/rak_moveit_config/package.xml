@@ -2,7 +2,7 @@
 <package format="3">
   <name>rak_moveit_config</name>
   <version>0.1.0</version>
-  <description>MoveIt planning configuration for the legacy demo. No real arm trajectory transport.</description>
+  <description>MoveIt configuration for the legacy demo and isolated six-axis software simulation.</description>
   <maintainer email="xrak@todo.todo">xrak</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
@@ -16,10 +16,13 @@
   <exec_depend>moveit_planners_ompl</exec_depend>
   <exec_depend>moveit_configs_utils</exec_depend>
   <exec_depend>moveit_kinematics</exec_depend>
+  <exec_depend>moveit_simple_controller_manager</exec_depend>
+  <exec_depend>rak_arm_simulation</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>joint_state_publisher</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>xacro</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <test_depend>python3-defusedxml</test_depend>
   <test_depend>python3-yaml</test_depend>

@@ -1,6 +1,4 @@
 from setuptools import setup
-import os
-from glob import glob
 
 package_name = 'rak_motion_stub'
 
@@ -17,12 +15,13 @@ setup(
     zip_safe=True,
     maintainer='xrak',
     maintainer_email='xrak@todo.todo',
-    description='4-wheel mecanum /cmd_vel bridge.',
+    description='Test-only motion relay and simulated base telemetry adapter.',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'cmd_vel_stub = rak_motion_stub.cmd_vel_stub:main',
+            'cmd_vel_sim = rak_motion_stub.cmd_vel_sim:main',
         ],
     },
 )

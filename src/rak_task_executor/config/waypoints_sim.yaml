@@ -1,0 +1,10 @@
+# Simulation-only map coordinates. They are not real robot locations.
+schema_version: 1
+frame_id: map
+waypoints:
+  simulation_origin:
+    x: 0.0
+    y: 0.0
+  simulation_second_point:
+    x: 1.0
+    y: 0.0

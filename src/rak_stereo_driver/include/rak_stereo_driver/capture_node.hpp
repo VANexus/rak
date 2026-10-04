@@ -3,6 +3,7 @@
 #include <rak_gpu/cuda.hpp>
 #include <rak_gpu/vpi_res.hpp>
 
+#include <camera_info_manager/camera_info_manager.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -55,6 +56,8 @@ public:
     std::string right_topic = "eye/right/image_raw";
     std::string left_info_topic = "eye/left/camera_info";
     std::string right_info_topic = "eye/right/camera_info";
+    std::string left_camera_info_url;
+    std::string right_camera_info_url;
     bool publish_compressed = false;
   };
 
@@ -83,6 +86,8 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_right_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_left_info_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_right_info_;
+  std::unique_ptr<camera_info_manager::CameraInfoManager> left_camera_info_;
+  std::unique_ptr<camera_info_manager::CameraInfoManager> right_camera_info_;
 
   // GPU scratch buffers (ping-pong for pipeline overlap)
   static constexpr int kSlots = 2;

@@ -1,0 +1,20 @@
+uint8 IDLE=0
+uint8 ACCEPTED=1
+uint8 PLANNING=2
+uint8 NAVIGATING=3
+uint8 PAUSING=4
+uint8 PAUSED=5
+uint8 RESUMING=6
+uint8 CANCELING=7
+uint8 SUCCEEDED=8
+uint8 FAILED=9
+uint8 CANCELED=10
+uint8 SAFETY_HOLD=11
+
+std_msgs/Header header
+string task_id
+uint64 revision
+uint8 state
+bool has_target
+geometry_msgs/PoseStamped target
+string reason

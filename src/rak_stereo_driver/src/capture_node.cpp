@@ -100,6 +100,8 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
   declare_parameter("right_topic", config_.right_topic);
   declare_parameter("left_info_topic", config_.left_info_topic);
   declare_parameter("right_info_topic", config_.right_info_topic);
+  declare_parameter("left_camera_info_url", config_.left_camera_info_url);
+  declare_parameter("right_camera_info_url", config_.right_camera_info_url);
 
   get_parameter("device", config_.device);
   get_parameter("sbs_width", config_.sbs_width);
@@ -110,6 +112,8 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
   get_parameter("right_topic", config_.right_topic);
   get_parameter("left_info_topic", config_.left_info_topic);
   get_parameter("right_info_topic", config_.right_info_topic);
+  get_parameter("left_camera_info_url", config_.left_camera_info_url);
+  get_parameter("right_camera_info_url", config_.right_camera_info_url);
 
   eye_w_ = config_.sbs_width / 2;
   eye_h_ = config_.sbs_height;
@@ -118,6 +122,16 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
   pub_right_ = create_publisher<sensor_msgs::msg::Image>(config_.right_topic, rclcpp::SensorDataQoS());
   pub_left_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(config_.left_info_topic, rclcpp::SensorDataQoS());
   pub_right_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(config_.right_info_topic, rclcpp::SensorDataQoS());
+  left_camera_info_ = std::make_unique<camera_info_manager::CameraInfoManager>(
+      this, "stereo_left", config_.left_camera_info_url);
+  right_camera_info_ = std::make_unique<camera_info_manager::CameraInfoManager>(
+      this, "stereo_right", config_.right_camera_info_url);
+  if (!left_camera_info_->isCalibrated() || !right_camera_info_->isCalibrated()) {
+    RCLCPP_WARN(
+        logger_,
+        "stereo calibration missing; CameraInfo will be published as uncalibrated until "
+        "left_camera_info_url and right_camera_info_url are configured");
+  }
 
   // Ping-pong GPU buffer for the decoded SBS frame (pipeline overlap)
   sbs_w_ = config_.sbs_width;
@@ -384,6 +398,32 @@ void CaptureNode::capture_loop() {
     pub_left_->publish(*make_image(config_.frame_id + "_left", left_host_->data()));
     pub_right_->publish(*make_image(config_.frame_id + "_right", right_host_->data()));
 
+    auto make_camera_info = [&](camera_info_manager::CameraInfoManager &manager,
+                                const std::string &frame_id) {
+      auto info = manager.getCameraInfo();
+      info.header.stamp = stamp;
+      info.header.frame_id = frame_id;
+      if (manager.isCalibrated() &&
+          (info.width != static_cast<uint32_t>(eye_w_) ||
+           info.height != static_cast<uint32_t>(eye_h_))) {
+        RCLCPP_ERROR_THROTTLE(
+            logger_, *this->get_clock(), 5000,
+            "stereo calibration resolution does not match captured eye dimensions");
+        info = sensor_msgs::msg::CameraInfo{};
+        info.header.stamp = stamp;
+        info.header.frame_id = frame_id;
+      }
+      if (!manager.isCalibrated() || info.k[0] == 0.0) {
+        info.width = eye_w_;
+        info.height = eye_h_;
+      }
+      return info;
+    };
+    pub_left_info_->publish(
+        make_camera_info(*left_camera_info_, config_.frame_id + "_left"));
+    pub_right_info_->publish(
+        make_camera_info(*right_camera_info_, config_.frame_id + "_right"));
+
     slot = 1 - slot;
 
     if (++frame_idx % 30 == 0) {
@@ -393,7 +433,6 @@ void CaptureNode::capture_loop() {
       RCLCPP_INFO(logger_, "eye: %.1f fps", fps);
       fps_t0 = t1;
     }
-    // TODO: publish CameraInfo (loaded from calibration YAML)
   }
 }
 

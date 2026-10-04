@@ -13,6 +13,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(camera_info_manager REQUIRED)
 
 # The driver depends on GPU utilities, not the decision message package.
 find_package(rak_gpu REQUIRED)
@@ -41,6 +42,7 @@ ament_target_dependencies(capture_component
   rclcpp
   rclcpp_components
   sensor_msgs
+  camera_info_manager
 )
 
 target_link_libraries(capture_component
@@ -67,7 +69,7 @@ install(DIRECTORY include/ DESTINATION include)
 # Calibration belongs to the sensor integration configuration.
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(rclcpp rclcpp_components sensor_msgs rak_gpu CUDAToolkit)
+ament_export_dependencies(rclcpp rclcpp_components sensor_msgs camera_info_manager rak_gpu CUDAToolkit)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

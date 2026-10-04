@@ -18,6 +18,7 @@ PYTHON_REQUIRES = ">=3.10,<3.13"  # rai-core pins <3.13 -- see pyproject.toml
 
 setup(
     python_requires=PYTHON_REQUIRES,
+    packages=["rak_ai"],
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{PACKAGE_NAME}"]),
         (f"share/{PACKAGE_NAME}", ["package.xml"]),

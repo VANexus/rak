@@ -6,13 +6,18 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
+find_package(action_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TrackedObject.msg"
   "msg/TrackedObjects.msg"
   "msg/Action.msg"
   "msg/Decision.msg"
-  DEPENDENCIES std_msgs geometry_msgs vision_msgs
+  "msg/TaskStatus.msg"
+  "msg/BaseTelemetry.msg"
+  "action/ExecuteTask.action"
+  "srv/TaskControl.srv"
+  DEPENDENCIES std_msgs geometry_msgs vision_msgs action_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)
