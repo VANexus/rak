@@ -41,13 +41,18 @@
 | 部件 | 型号 / 规格 | 接口 | 状态 |
 |---|---|---|---|
 | 上位机 | Jetson Orin Nano **4GB**（p3767-0004） | — | [已实现] |
-| 底盘 MCU | STM32F407VET6 · M4F | USB-UART 921600, 100 Hz | 固件**不在本仓库** |
-| 臂 MCU | STM32F407VET6 · M4F | 经底盘 F407 的 CAN | 固件**不在本仓库** |
-| 雷达 | WHEELTEC LSLIDAR **N10P**（Leishen） | USB 串口 460800 | [已实现] |
+| **下位机 MCU** | STM32F407VET6 · M4F（C30D 板） | **USB-UART 921600, 100 Hz** | 固件在 `vehical_rak_chassis`（**开发中**） |
+| 机械臂 | **标准 6 轴** + **吸嘴夹爪** + 末端摄像头 | 经下位机（舵机 PWM + 气路） | **[未成形]** 见 ADR-0008 |
+| 雷达 | WHEELTEC LSLIDAR **N10P**（Leishen，2D） | USB 串口 460800 | [已实现] |
 | 深度相机 | Orbbec **Astra**（OrbbecSDK 1.10.18） | USB | [已实现] |
 | 双目 | USB SBS MJPEG 1280×720@30 | USB | [已实现] |
+| 末端摄像头 | 型号未定（eye-in-hand） | USB? | **[待实现]** 见 ADR-0008 |
+| 语音模块 | 型号未定 | ? | **[待实现]** 见 TODO P2-6 |
 | IMU | ST **LSM6DSRTR** | 40-pin **SPI**（mode 3, 10 MHz） | **[待实现]** 见 §5 |
 | 触摸屏 | 1024×600 | — | 与相机争 CMA，见 §6 |
+
+> ⚠️ **臂板已烧毁**：现在只有**一块** F407，同时驱动 4 轮 + 6 舵机 + 吸嘴。
+> 不要再按"两块 MCU + CAN"理解拓扑。
 
 ---
 
