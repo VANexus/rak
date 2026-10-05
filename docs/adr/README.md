@@ -48,9 +48,11 @@
 | [0005](0005-grasping-stack.md) | 抓取栈分三阶段：几何优先 → GraspNet → VLM/AnyGrasp 远程 | 已接受（实现选型待阶段 1 实测） |
 | [0006](0006-3d-obstacle-avoidance.md) | 3D 避障用 STVL；SLAM 保留 slam_toolbox（3D 来自深度相机） | 已接受 |
 | [0007](0007-unified-ros2-control.md) | 全机统一 `ros2_control`（`mecanum_drive_controller` + `joint_trajectory_controller`），麦轮 IK 移到上位机 | 已接受（**取代 0001**） |
-| [0008](0008-end-effector-and-perception.md) | 末端 = 标准 6 轴 + **吸嘴夹爪** + 末端相机；感知 = 深度相机 + 2D 雷达 + 语音 | 已接受（**修订 0005 的抓取范式**） |
+| [0008](0008-end-effector-and-perception.md) | 末端 = 标准 6 轴 + **舵机夹爪**（第 7 个 PWM 舵机）+ 末端相机；感知 = 深度相机 + 2D 雷达 + 语音 | 已接受 |
+| [0009](0009-urdf-modeling-and-calibration.md) | 无 CAD 时用「参数化 + 图元近似 + chArUco 标定」建 URDF | 已接受 |
 
-> **当前有效架构 = ADR-0007 + 0002 + 0003(UART 层) + 0004 + 0005(经 0008 修订) + 0006 + 0008。**
+> **当前有效架构 = ADR-0002 + 0003(UART 层) + 0004 + 0005 + 0006 + 0007 + 0008 + 0009。**
 > 0001 仅作历史记录，不要按其实施。
+> 0008 初稿曾误记末端为吸嘴，同日已更正为舵机夹爪（见该篇修订记录）。
 > 任务与验收见 [`TODO.md`](../../TODO.md)。0004–0006 的结论来自 2026-10-05 的三路专项研究，
 > **有时效性**，涉及版本矩阵/许可/内存的部分在实施前应复核（各篇"参考"节列了来源）。
