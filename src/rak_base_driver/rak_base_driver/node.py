@@ -11,6 +11,16 @@ from rak_interfaces.msg import BaseTelemetry
 from std_srvs.srv import SetBool
 
 from .protocol import (
+    ACTION_CONTINUOUS,
+    ACTION_FORWARD,
+    ACTION_BACKWARD,
+    ACTION_STRAFE_LEFT,
+    ACTION_STRAFE_RIGHT,
+    ACTION_ROTATE_CW,
+    ACTION_ROTATE_CCW,
+    ACTION_STOP,
+    FAULT_INVALID_FEEDBACK,
+    FEATURE_V1_1_ACTIONS,
     MODE_ARMED,
     MODE_DISARMED,
     PROTOCOL_VERSION,
@@ -28,12 +38,17 @@ from .protocol import (
     encode_frame,
     fault_event,
     hello_ack_compatible,
-    hello_payload,
+    hello_payload_v1_1,
     pack_velocity,
+    pack_velocity_v1_1,
     sequence_is_newer,
+    supports_v1_1,
     twist_to_wire,
     unpack_base_state,
+    unpack_velocity_v1_1,
+    validate_action_consistency,
 )
+from rak_interfaces.srv import SendAtomicAction
 
 try:
     import serial
@@ -57,6 +72,11 @@ class BaseUartNode(Node):
         self.declare_parameter("max_wz_rad_s", 0.0)
         self.declare_parameter("command_timeout_sec", 0.1)
         self.declare_parameter("telemetry_timeout_sec", 0.1)
+        # v1.1: when true, host requests FEATURE_V1_1_ACTIONS in HELLO and
+        # sends the 19-byte payload (action_type + max_exec_ms) once F407
+        # confirms. Host treats this as a negotiated capability; v1-only
+        # firmware falls back to the 15-byte payload automatically.
+        self.declare_parameter("request_v1_1_actions", False)
 
         self._port_path = str(self.get_parameter("port").value)
         self._baud = int(self.get_parameter("baud").value)
@@ -72,6 +92,7 @@ class BaseUartNode(Node):
         )
         self._command_timeout = float(self.get_parameter("command_timeout_sec").value)
         self._telemetry_timeout = float(self.get_parameter("telemetry_timeout_sec").value)
+        self._request_v1_1 = bool(self.get_parameter("request_v1_1_actions").value)
         self._ser = None
         self._decoder = StreamDecoder()
         self._tx_sequence = 0
@@ -98,6 +119,15 @@ class BaseUartNode(Node):
         self._status = "DISARMED: port is not configured"
         self._error_streak = 0
         self._last_tx = 0.0
+        # v1.1 negotiated state, set when HELLO_ACK reports FEATURE_V1_1_ACTIONS
+        self._accepted_features = 0
+        self._v1_1_actions = False
+        # last atom we emitted, used by max_exec_ms host-side heartbeat
+        self._last_action_type = ACTION_CONTINUOUS
+        self._last_max_exec_ms = 0
+        # When the host is asked to send an atomic action via the service, it
+        # is committed to max_exec_ms; after that deadline it must DISARM.
+        self._atomic_action_deadline = 0.0
         self._cmd_sub = self.create_subscription(
             Twist,
             str(self.get_parameter("cmd_vel_topic").value),
@@ -108,6 +138,13 @@ class BaseUartNode(Node):
             BaseTelemetry, str(self.get_parameter("telemetry_topic").value), 10
         )
         self._arm_service = self.create_service(SetBool, "~/arm", self._on_arm)
+        # Trigger atomic action: payload = "action_type:magnitude_mm_s_or_mrad_s:max_exec_ms"
+        # v1.1 atomic action queue: typed service in rak_interfaces/srv.
+        # action_type values match the protocol constants; max_exec_ms in
+        # [50, 60000]; magnitude units are mm/s for linear, mrad/s for rotation.
+        self._atomic_service = self.create_service(
+            SendAtomicAction, "~/send_atomic_action", self._on_send_atomic
+        )
         self._timer = self.create_timer(0.01, self._tick)
 
         if self._port_path:
@@ -175,6 +212,7 @@ class BaseUartNode(Node):
             self._armed = False
             self._arm_requested_at = None
             self._last_twist = (0.0, 0.0, 0.0)
+            self._atomic_action_deadline = 0.0
             response.success = True
             response.message = "DISARMED requested"
             self._status = response.message
@@ -206,6 +244,50 @@ class BaseUartNode(Node):
         self._status = response.message
         return response
 
+    def _on_send_atomic(self, request, response):
+        """SendAtomicAction service: queue one v1.1 atomic action for F407."""
+        action_type = int(request.action_type)
+        magnitude = int(request.magnitude)
+        max_exec_ms = int(request.max_exec_ms)
+        try:
+            self._send_atomic_action(action_type, magnitude, max_exec_ms)
+        except ProtocolError as exc:
+            response.accepted = False
+            response.message = str(exc)
+            self.get_logger().warning(f"atomic action rejected: {exc}")
+            return response
+        except Exception as exc:
+            response.accepted = False
+            response.message = f"send failed: {exc}"
+            return response
+        # Compute the wire values for the response so the caller can verify.
+        if action_type == ACTION_FORWARD:
+            vx, vy, wz = magnitude, 0, 0
+        elif action_type == ACTION_BACKWARD:
+            vx, vy, wz = -magnitude, 0, 0
+        elif action_type == ACTION_STRAFE_LEFT:
+            vx, vy, wz = 0, magnitude, 0
+        elif action_type == ACTION_STRAFE_RIGHT:
+            vx, vy, wz = 0, -magnitude, 0
+        elif action_type == ACTION_ROTATE_CW:
+            vx, vy, wz = 0, 0, magnitude
+        elif action_type == ACTION_ROTATE_CCW:
+            vx, vy, wz = 0, 0, -magnitude
+        else:
+            vx, vy, wz = 0, 0, 0  # STOP
+        response.accepted = True
+        response.message = (
+            f"atomic action {action_type} (magnitude={magnitude}) "
+            f"sent for {max_exec_ms} ms"
+        )
+        response.wire_action_type = action_type
+        response.wire_action_byte = action_type
+        response.wire_vx_mm_s = vx
+        response.wire_vy_mm_s = vy
+        response.wire_wz_mrad_s = wz
+        response.wire_max_exec_ms = max_exec_ms
+        return response
+
     def _next_sequence(self):
         value = self._tx_sequence
         self._tx_sequence = (self._tx_sequence + 1) & 0xFFFF
@@ -219,7 +301,12 @@ class BaseUartNode(Node):
         self._last_tx = time.monotonic()
 
     def _send_hello(self, now):
-        self._write_frame(TYPE_HELLO, hello_payload(self._host_build_id, REQUIRED_FEATURES))
+        if self._request_v1_1:
+            features = REQUIRED_FEATURES | FEATURE_V1_1_ACTIONS
+        else:
+            features = REQUIRED_FEATURES
+        payload = hello_payload_v1_1(self._host_build_id, features)
+        self._write_frame(TYPE_HELLO, payload)
         self._last_hello = now
 
     def _fail_closed(self, reason):
@@ -233,15 +320,69 @@ class BaseUartNode(Node):
             except Exception as exc:
                 self.get_logger().error(f"failed to write DISARMED command: {exc}")
 
-    def _send_velocity(self, twist, mode):
+    def _send_velocity(self, twist, mode, action_type=ACTION_CONTINUOUS, max_exec_ms=0):
+        """Send SET_BASE_VELOCITY. Uses v1.1 18-byte payload when negotiated;
+        otherwise falls back to v1 15-byte payload (MCU receives the leading
+        15 bytes identically)."""
         vx, vy, wz = twist_to_wire(*twist)
         sequence = self._next_sequence()
-        payload = pack_velocity(mode, 50, vx, vy, wz)
+        if self._v1_1_actions:
+            payload = pack_velocity_v1_1(mode, 50, action_type, vx, vy, wz, max_exec_ms)
+            self._last_action_type = action_type
+            self._last_max_exec_ms = max_exec_ms
+        else:
+            payload = pack_velocity(mode, 50, vx, vy, wz)
         self._ser.write(
             encode_frame(Frame(PROTOCOL_VERSION, TYPE_SET_BASE_VELOCITY, sequence, payload))
         )
         self._last_command_sequence = sequence
         self._last_tx = time.monotonic()
+
+    def _send_atomic_action(self, action_type: int, magnitude: float, max_exec_ms: int):
+        """Encode and queue one atomic action; host tracks its deadline so the
+        next continuous-twist cycle can detect expiry."""
+        if action_type not in (1, 2, 4, 5, 6, 7, 8):
+            raise ProtocolError(f"action_type {action_type} not an atomic motion")
+        # Magnitude units: action_type 1/2/4/5 -> mm/s linear; 6/7 -> mrad/s yaw;
+        # 8 (STOP) ignores magnitude.
+        if action_type in (1, 2, 4, 5):
+            mm_s = int(round(magnitude))
+            if action_type == ACTION_FORWARD and mm_s <= 0:
+                raise ProtocolError("FORWARD magnitude must be positive")
+            if action_type == ACTION_BACKWARD and mm_s >= 0:
+                raise ProtocolError("BACKWARD magnitude must be negative")
+            if action_type == ACTION_STRAFE_LEFT and mm_s <= 0:
+                raise ProtocolError("STRAFE_LEFT magnitude must be positive")
+            if action_type == ACTION_STRAFE_RIGHT and mm_s >= 0:
+                raise ProtocolError("STRAFE_RIGHT magnitude must be negative")
+            vx = mm_s if action_type in (1, 4) else (-mm_s if action_type in (2, 5) else 0)
+            vy = mm_s if action_type == 4 else (-mm_s if action_type == 5 else 0)
+            wz = 0
+            twist = (vx / 1000.0, vy / 1000.0, 0.0)
+        elif action_type in (6, 7):
+            mrad_s = int(round(magnitude))
+            if action_type == ACTION_ROTATE_CW and mrad_s <= 0:
+                raise ProtocolError("ROTATE_CW magnitude must be positive")
+            if action_type == ACTION_ROTATE_CCW and mrad_s >= 0:
+                raise ProtocolError("ROTATE_CCW magnitude must be negative")
+            wz = mrad_s if action_type == 6 else -mrad_s
+            twist = (0.0, 0.0, wz / 1000.0)
+        else:  # STOP
+            twist = (0.0, 0.0, 0.0)
+        if not self._v1_1_actions:
+            raise ProtocolError("F407 did not negotiate v1.1 atomic actions")
+        if not self._armed:
+            raise ProtocolError("base is not ARMED; service disabled")
+        # Validate the encoded twist against the action_type contract (defensive;
+        # the MCU also enforces, but we'd rather catch it at the host).
+        vx_mm, vy_mm, wz_mrad = twist_to_wire(*twist)
+        if not validate_action_consistency(action_type, vx_mm, vy_mm, wz_mrad):
+            raise ProtocolError(
+                f"action_type {action_type} inconsistent with twist ({vx_mm},{vy_mm},{wz_mrad})"
+            )
+        self._atomic_action_deadline = time.monotonic() + max_exec_ms / 1000.0
+        self._send_velocity(twist, MODE_ARMED, action_type=action_type, max_exec_ms=max_exec_ms)
+        self._status = f"atomic action {action_type} armed for {max_exec_ms} ms"
 
     def _read_frames(self):
         if self._ser is None:
@@ -263,7 +404,7 @@ class BaseUartNode(Node):
         now = time.monotonic()
         if frame.message_type == TYPE_HELLO_ACK:
             try:
-                board_id, firmware, boot_id, _ = hello_ack_compatible(frame.payload)
+                board_id, firmware, boot_id, accepted = hello_ack_compatible(frame.payload)
             except ProtocolError as exc:
                 self._fail_closed(f"incompatible HELLO_ACK: {exc}")
                 return
@@ -276,6 +417,7 @@ class BaseUartNode(Node):
                 self._last_echo = None
                 self._state = None
                 self._last_state_rx = 0.0
+                self._atomic_action_deadline = 0.0
                 self._status = "F407 reboot detected; re-handshaking DISARMED"
             if self._rx_sequence is not None and not sequence_is_newer(
                 frame.sequence, self._rx_sequence
@@ -285,10 +427,17 @@ class BaseUartNode(Node):
             self._boot_id = boot_id
             self._board_id = board_id
             self._firmware_version = firmware
+            self._accepted_features = accepted
+            self._v1_1_actions = supports_v1_1(accepted) and self._request_v1_1
             self._rx_sequence = frame.sequence
             self._handshake_ok = True
             if not rebooted:
-                self._status = "compatible F407 firmware; awaiting BASE_STATE"
+                if self._v1_1_actions:
+                    self._status = (
+                        f"compatible F407 firmware; v1.1 atomic actions enabled"
+                    )
+                else:
+                    self._status = "compatible F407 firmware; v1 atomic actions only"
             return
         if not self._handshake_ok:
             return
@@ -390,6 +539,17 @@ class BaseUartNode(Node):
             now - self._last_command_rx > self._command_timeout or not self._valid
         ):
             self._fail_closed("command input stale or link unhealthy")
+        # Host-side watchdog for atomic-action deadline. The MCU also enforces
+        # max_exec_ms, but the host tracks it locally so the next continuous
+        # twist cycle returns to CONTINUOUS without leaving a stale atomic
+        # action_type stamped on the wire.
+        if self._atomic_action_deadline and now >= self._atomic_action_deadline:
+            self._atomic_action_deadline = 0.0
+            self._last_action_type = ACTION_CONTINUOUS
+            self._last_max_exec_ms = 0
+            self._last_twist = (0.0, 0.0, 0.0)
+            self._status = "atomic action deadline reached; returning to CONTINUOUS"
+            self.get_logger().info(self._status)
         if self._ser is not None and self._handshake_ok and now - self._last_tx >= 0.01:
             try:
                 fresh = now - self._last_command_rx <= self._command_timeout

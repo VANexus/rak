@@ -1,4 +1,10 @@
-"""Jetson-to-F407 UART v1 framing and payload helpers."""
+"""Jetson-to-F407 UART v1 / v1.1 framing and payload helpers.
+
+v1 is the baseline (15-byte SET_BASE_VELOCITY). v1.1 adds two bytes to that
+payload -- ``action_type`` and ``max_exec_ms`` -- so Nav2's continuous twist
+path stays wire-compatible while task_executor / direct-control paths can
+send bounded atomic motions. See docs/protocol/jetson_f407_uart_v1.1.md.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +17,13 @@ PROTOCOL_VERSION = 1
 MAX_PAYLOAD = 128
 HEADER = struct.Struct("<BBHH")
 CRC = struct.Struct("<H")
+# v1 SET_BASE_VELOCITY (15 bytes): mode + lease_ms + vx/vy/wz (all little-endian)
 VELOCITY = struct.Struct("<BHiii")
+# v1.1 SET_BASE_VELOCITY (19 bytes): mode + lease_ms + action_type + reserved
+# pad + vx/vy/wz + max_exec_ms. Layout per jetson_f407_uart_v1.1.md:
+#   B (mode, 1) | H (lease_ms, 2) | B (action_type, 1) | B (reserved, 1)
+#   | i (vx, 4) | i (vy, 4) | i (wz, 4) | H (max_exec_ms, 2)
+VELOCITY_V1_1 = struct.Struct("<BHBBiiiH")
 BASE_STATE = struct.Struct("<HBIiiiI")
 HELLO = struct.Struct("<II")
 HELLO_ACK = struct.Struct("<HIII")
@@ -22,6 +34,7 @@ TYPE_HELLO_ACK = 0x02
 TYPE_SET_BASE_VELOCITY = 0x10
 TYPE_BASE_STATE = 0x11
 TYPE_FAULT_EVENT = 0x12
+TYPE_BASE_ODOMETRY = 0x13  # v1.1; payload defined separately
 
 MODE_DISARMED = 0
 MODE_ARMED = 1
@@ -30,9 +43,25 @@ STATE_DISARMED = 1
 STATE_ARMED = 2
 STATE_FAULT = 3
 
+# fault bits (subset used; remaining reserved)
+FAULT_EMERGENCY_STOP = 1 << 0
+FAULT_LEASE_TIMEOUT = 1 << 1
+FAULT_INVALID_FEEDBACK = 1 << 7
+
 FEATURE_BASE_VELOCITY = 1 << 0
 FEATURE_BASE_TELEMETRY = 1 << 1
+FEATURE_V1_1_ACTIONS = 1 << 3  # v1.1: action_type + max_exec_ms fields
 REQUIRED_FEATURES = FEATURE_BASE_VELOCITY | FEATURE_BASE_TELEMETRY
+
+# Atomic action types (v1.1). Non-power-of-2 to avoid confusion with feature bits.
+ACTION_CONTINUOUS = 0   # Nav2 path; treat as v1 twist (no consistency check)
+ACTION_FORWARD = 1
+ACTION_BACKWARD = 2
+ACTION_STRAFE_LEFT = 4
+ACTION_STRAFE_RIGHT = 5
+ACTION_ROTATE_CW = 6
+ACTION_ROTATE_CCW = 7
+ACTION_STOP = 8
 
 
 class ProtocolError(ValueError):
@@ -254,3 +283,113 @@ def fault_event(payload: bytes) -> tuple[int, int]:
 def frames_from_chunks(chunks: Iterable[bytes]) -> list[Frame]:
     decoder = StreamDecoder()
     return [frame for chunk in chunks for frame in decoder.feed(chunk)]
+
+
+# ---------------------------------------------------------------------------
+# v1.1 SET_BASE_VELOCITY helpers (action_type + max_exec_ms)
+# ---------------------------------------------------------------------------
+
+def pack_velocity_v1_1(
+    mode: int,
+    lease_ms: int,
+    action_type: int,
+    vx_mm_s: int,
+    vy_mm_s: int,
+    wz_mrad_s: int,
+    max_exec_ms: int = 0,
+) -> bytes:
+    """Encode a 19-byte v1.1 SET_BASE_VELOCITY payload."""
+    if mode not in (MODE_DISARMED, MODE_ARMED):
+        raise ProtocolError("unknown command mode")
+    if not 10 <= lease_ms <= 50:
+        raise ProtocolError("lease must be in [10, 50] ms")
+    if mode == MODE_DISARMED and (vx_mm_s or vy_mm_s or wz_mrad_s):
+        raise ProtocolError("DISARMED command must request zero velocity")
+    if action_type not in (
+        ACTION_CONTINUOUS,
+        ACTION_FORWARD,
+        ACTION_BACKWARD,
+        ACTION_STRAFE_LEFT,
+        ACTION_STRAFE_RIGHT,
+        ACTION_ROTATE_CW,
+        ACTION_ROTATE_CCW,
+        ACTION_STOP,
+    ):
+        raise ProtocolError(f"unknown action_type {action_type}")
+    if action_type == ACTION_CONTINUOUS and max_exec_ms != 0:
+        raise ProtocolError("CONTINUOUS action must have max_exec_ms == 0")
+    if action_type != ACTION_CONTINUOUS and action_type != ACTION_STOP and max_exec_ms <= 0:
+        raise ProtocolError("atomic action requires max_exec_ms > 0")
+    if max_exec_ms < 0 or max_exec_ms > 0xFFFF:
+        raise ProtocolError("max_exec_ms out of u16 range")
+    try:
+        return VELOCITY_V1_1.pack(
+            mode, lease_ms, action_type, 0, vx_mm_s, vy_mm_s, wz_mrad_s, max_exec_ms
+        )
+    except struct.error as exc:
+        raise ProtocolError("velocity value is out of int32 range") from exc
+
+
+def unpack_velocity_v1_1(payload: bytes) -> dict:
+    """Decode a 19-byte v1.1 SET_BASE_VELOCITY payload."""
+    if len(payload) != VELOCITY_V1_1.size:
+        raise ProtocolError(
+            f"v1.1 SET_BASE_VELOCITY payload must be {VELOCITY_V1_1.size} bytes"
+        )
+    return {
+        "mode": _vmode(payload[0]),
+        "lease_ms": struct.unpack_from("<H", payload, 1)[0],
+        "action_type": payload[3],
+        "vx_mm_s": struct.unpack_from("<i", payload, 5)[0],
+        "vy_mm_s": struct.unpack_from("<i", payload, 9)[0],
+        "wz_mrad_s": struct.unpack_from("<i", payload, 13)[0],
+        "max_exec_ms": struct.unpack_from("<H", payload, 17)[0],
+    }
+
+
+def _vmode(byte: int) -> int:
+    return MODE_DISARMED if byte == MODE_DISARMED else (
+        MODE_ARMED if byte == MODE_ARMED else byte
+    )
+
+
+def validate_action_consistency(action_type: int, vx: int, vy: int, wz: int) -> bool:
+    """Return True if the twist fields match the action_type contract.
+
+    CONTINUOUS is unconstrained (Nav2 path). Every other action requires the
+    other two fields to be exactly zero, and the active field to have the
+    correct sign. STOP requires all three to be zero.
+    """
+    if action_type == ACTION_CONTINUOUS:
+        return True
+    if action_type == ACTION_FORWARD:
+        return vx > 0 and vy == 0 and wz == 0
+    if action_type == ACTION_BACKWARD:
+        return vx < 0 and vy == 0 and wz == 0
+    if action_type == ACTION_STRAFE_LEFT:
+        return vx == 0 and vy > 0 and wz == 0
+    if action_type == ACTION_STRAFE_RIGHT:
+        return vx == 0 and vy < 0 and wz == 0
+    if action_type == ACTION_ROTATE_CW:
+        return vx == 0 and vy == 0 and wz > 0
+    if action_type == ACTION_ROTATE_CCW:
+        return vx == 0 and vy == 0 and wz < 0
+    if action_type == ACTION_STOP:
+        return vx == 0 and vy == 0 and wz == 0
+    return False
+
+
+def hello_payload_v1_1(host_build_id: int, requested_features: int) -> bytes:
+    """HELLO payload requesting v1.1 features on top of required v1 features.
+
+    The host should always include the v1 required bits even when it also wants
+    v1.1 extensions; bit 3 is the only opt-in.
+    """
+    if requested_features & REQUIRED_FEATURES != REQUIRED_FEATURES:
+        raise ProtocolError("v1 required features missing from HELLO payload")
+    return HELLO.pack(host_build_id, requested_features)
+
+
+def supports_v1_1(accepted_features: int) -> bool:
+    """True if HELLO_ACK accepted_features has FEATURE_V1_1_ACTIONS."""
+    return bool(accepted_features & FEATURE_V1_1_ACTIONS)

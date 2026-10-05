@@ -73,9 +73,9 @@ def generate_launch_description():
                 "max_wz_rad_s": LaunchConfiguration("max_wz_rad_s"),
             }.items(),
             condition=IfCondition(
-                EqualsSubstitution(
-                    LaunchConfiguration("motion_backend"), "hardware"
-                )
+                PythonExpression([
+                    "'", LaunchConfiguration("motion_backend"), "' == 'hardware'",
+                ])
             ),
         ),
         Node(

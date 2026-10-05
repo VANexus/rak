@@ -1,0 +1,25 @@
+# SendAtomicAction.srv
+# Host -> base_uart_driver: enqueue one v1.1 atomic action for F407.
+# Magnitude units: linear action_types use mm/s; rotational use mm/s? Round
+# (int). See docs/protocol/jetson_f407_uart_v1.1.md for action_type values.
+
+uint8 FORWARD=1
+uint8 BACKWARD=2
+uint8 STRAFE_LEFT=4
+uint8 STRAFE_RIGHT=5
+uint8 ROTATE_CW=6
+uint8 ROTATE_CCW=7
+uint8 STOP=8
+
+uint8 action_type
+int32 magnitude      # mm/s for linear; mrad/s for rotational; ignored for STOP
+uint32 max_exec_ms    # 0..60000; >0 required for non-CONTINUOUS atomic actions
+---
+bool accepted
+string message
+uint8  wire_action_type
+uint8  wire_action_byte
+int32  wire_vx_mm_s
+int32  wire_vy_mm_s
+int32  wire_wz_mrad_s
+uint32 wire_max_exec_ms

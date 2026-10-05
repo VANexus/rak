@@ -17,6 +17,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BaseTelemetry.msg"
   "action/ExecuteTask.action"
   "srv/TaskControl.srv"
+  "srv/SendAtomicAction.srv"
   DEPENDENCIES std_msgs geometry_msgs vision_msgs action_msgs
 )
 
