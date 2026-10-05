@@ -1,5 +1,14 @@
 # Hardware Acceptance Gates
 
+> ⚠️ **拓扑已变更（2026-10-05），本文部分内容过期。**
+> 臂板烧毁后只剩**一块** F407（同时管 4 轮 + 6 舵机），**CAN 链路失效**，
+> Jetson 只通过 **USB** 与下位机通信；麦轮 IK 已移到上位机（`mecanum_drive_controller`）。
+> 见 [ADR-0007](adr/0007-unified-ros2-control.md)。下文 §Known Topology 的
+> "Base STM32F407 to arm STM32F407: classic CAN" 与
+> "The base MCU owns mecanum kinematics" 两句已不成立；
+> **验收流程与门槛原则仍然有效**，具体接线/设备名以 ADR-0007 与
+> [`CONSTRUCTION.md`](CONSTRUCTION.md) §6 为准。
+
 This document separates software simulation from physical acceptance. No hardware
 acceptance is claimed by this repository change.
 
