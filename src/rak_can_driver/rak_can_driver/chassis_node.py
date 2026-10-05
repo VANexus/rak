@@ -15,10 +15,25 @@ NEVER enable CAN FD on can0 -- bxCAN error-frames an FD frame.
 
 Argument ``--loopback`` enables python-can internal loopback so the
 node can sanity-check encode/decode without a real peer.
+
+SECURITY MODEL (prototype-grade; production requires SROS2 + hardware
+interlock per the chassis team's review):
+  - ~/safety_cmd and /cmd_vel are NOT authenticated today.  In production
+    the launch should add SROS2 policy: only a signed `arm` principal may
+    call START (it then transitions to REMOTE); only a signed `cmd_vel`
+    principal may publish /cmd_vel.  The host node here refuses START if
+    no valid ARM handshake has occurred (enforced by the chassis MCU via
+    estop_latched / fault_active feedback in BASE_STATE).
+  - All parameters that flow into python-can's Bus() are allowlisted at
+    startup; bitrate is fixed at 1_000_000 (CAN FD forbidden).
+  - No state on this node can clear a hardware e-stop latch; that lives
+    in the chassis MCU and requires the SOFT_RESET (code=7) sequence
+    per protocol §7.1.
 """
 
 from __future__ import annotations
 
+import re
 import threading
 from typing import Optional
 
@@ -47,13 +62,23 @@ from .protocol import (
 class ChassisCanNode(Node):
     """Drives 0x100 CHASSIS_VEL_CMD and listens for 0x200/0x201/0x020."""
 
+    # Security: allowlist only the bus_type and channel parameter values that
+    # pass through to a low-level plugin sink (python-can `Bus`).  Anything
+    # outside the allowlist is rejected at startup before we touch the OS.
+    _ALLOWED_BUS_TYPES = ("virtual", "socketcan")
+    _ALLOWED_CHANNELS_RE = re.compile(r"^(can[0-9]+|[A-Za-z0-9_-]{1,32})$")
+    _CAN_BITRATE_BPS = 1_000_000  # fixed; CAN FD is forbidden by protocol §1
+
     def __init__(self, *, parameter_overrides=None):
         super().__init__("chassis_can_node", parameter_overrides=parameter_overrides)
 
         # --- CAN bus parameters ---
         self.declare_parameter("bus_type", "virtual")
         self.declare_parameter("channel", "test")          # "can0" in production
-        self.declare_parameter("bitrate", 1_000_000)       # 1 Mbps, never FD
+        # bitrate is fixed (CAN 2.0A @ 1 Mbps; FD is explicitly forbidden).  We
+        # keep the parameter declared only so an out-of-band `ros2 param set`
+        # cannot accidentally configure a non-standard rate.
+        self.declare_parameter("bitrate", self._CAN_BITRATE_BPS)
         self.declare_parameter("loopback", False)          # python-can internal loopback
         self.declare_parameter("receive_own_messages", False)
         # --- ROS topics / services ---
@@ -73,6 +98,25 @@ class ChassisCanNode(Node):
         self._max_vx = float(self.get_parameter("max_vx_m_s").value)
         self._max_vy = float(self.get_parameter("max_vy_m_s").value)
         self._max_wz = float(self.get_parameter("max_wz_rad_s").value)
+
+        # Validate parameters that flow into the python-can Bus constructor.
+        # Channel is constrained to either a numeric "canN" interface name
+        # (production path) or a short alphanumeric virtual bus id.
+        if self._bus_type not in self._ALLOWED_BUS_TYPES:
+            raise ValueError(
+                f"bus_type {self._bus_type!r} not in allowlist "
+                f"{self._ALLOWED_BUS_TYPES}"
+            )
+        if not self._ALLOWED_CHANNELS_RE.match(self._channel):
+            raise ValueError(
+                f"channel {self._channel!r} does not match "
+                f"{self._ALLOWED_BUS_TYPES and self._ALLOWED_CHANNELS_RE.pattern}"
+            )
+        if self._bitrate != self._CAN_BITRATE_BPS:
+            raise ValueError(
+                f"bitrate {self._bitrate} != fixed {self._CAN_BITRATE_BPS} "
+                f"(CAN v3 forbids CAN FD)"
+            )
 
         # --- ROS interface ---
         self._cmd_sub = self.create_subscription(
