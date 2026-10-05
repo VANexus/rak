@@ -45,3 +45,8 @@ frames_*.pdf
 
 # TRAE AI IDE workspace state (IDE cache, not project source)
 .trae/
+
+# Mac tar AppleDouble + pycache (sloppy tar from macOS adds these)
+._*
+__pycache__
+*.pyc
