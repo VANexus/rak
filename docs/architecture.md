@@ -1,9 +1,9 @@
 # 分层具身智能架构
 
-状态：2026-10-04 统一包迁移与软件任务闭环已实现。文字任务、fake Nav2
-暂停/恢复/取消、UART v1 主机端和隔离六轴动作夹具均有实现。硬件 backend launch
-已通过安装态解析和模式映射检查，但未做设备运行验证；真实传感器 Nav2、F407 固件
-互操作和整车安全验收仍未完成。README 是工程入口，当前进度汇总见
+状态：统一包迁移与软件任务闭环已实现。文字任务、fake Nav2
+暂停/恢复/取消、UART v1 主机/固件以及隔离六轴动作夹具均有软件实现。
+目标 UART v2 的 Jetson 与 F407 独立 codec 已通过 golden vector，但尚未接入控制
+endpoint；真实 v2 互操作、传感器 Nav2 和整车安全验收仍未完成。README 是工程入口，当前进度汇总见
 [项目总体状态](project_status.md)。
 
 ## 1. 目标与硬件事实
@@ -54,7 +54,7 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_description` | URDF、几何、惯量与可视化 | 导航参数、模型策略 |
 | `rak_navigation` | SLAM、全向 MPPI、smoother/collision-monitor 配置 | 对话理解、LLM 调用 |
 | `rak_task_executor` | 单一任务状态机、文字意图、Nav2 Action 生命周期 | 原始底盘/关节命令、感知算法 |
-| `rak_base_driver` | Jetson-F407 UART v1 编解码、遥测与显式使能门控 | F407 固件、下游 CAN、硬实时安全 |
+| `rak_base_driver` | UART v1 历史节点；独立 v2 编解码 | v2 硬件接口 endpoint、MCU 实时环、安全认证 |
 | `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |
 | `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
 | `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
@@ -160,10 +160,12 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 当前 `brain` 回调先推理再 resolve，不能作为实时防碰撞保证。
 安全许可应落实到命令出口，MCU 还要独立处理断联、使能和超时。
 
-`rak_base_driver` 已实现提议中的 UART v1 主机端编解码、100 Hz 命令节拍、状态发布
-和显式 ARM 服务，但默认不打开串口、零速度限值且 DISARMED。仓库没有相匹配的
-F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留在 MCU，MCU 必须独立
-实现命令租约、断联停止、E-stop 和故障锁存。
+`rak_base_driver` 的旧节点实现 UART v1 机体速度命令、状态发布和显式 ARM 服务，
+默认不打开串口且保持 DISARMED。F407 R16-R18 曾实现并台架运行 v1；v1 不提供轮编码器
+里程计或机械臂接口。ADR-0007 的目标是 UART v2 四轮速度 + 关节位置协议：
+host Python codec 与 F407 standalone codec 已通过软件 golden vector，但 v2 尚未接入
+串口、控制环或 ROS hardware plugin。只有完整 endpoint 与实机验收后才能声明互通。
+CAN 双板链路已失效并保留为历史资料。
 
 顶层 `rak_bringup` 的 launch 提供 `motion_backend:=hardware`，并在 bringup 层启动 UART
 节点；`rak_navigation` 不依赖上层 bringup。该路径已通过安装态解析和模式映射检查，
@@ -210,7 +212,7 @@ F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留�
 | A：包迁移 | 已完成，详见 `docs/migration.md` | 全工作区构建、安装检查、旧 AI 回归 |
 | B：任务内核 | 软件实现；fake Nav2 覆盖成功、重复请求、暂停/确认/恢复、服务取消和 Action 取消 | 到达/暂停竞态、各种超时、慢规划迟到、重启等剩余竞态仍需扩测 |
 | C：Nav2 接入 | Action、waypoint 和全向参数已接入；hardware 末端 launch 静态检查通过 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链；确认每种 backend 单写者 |
-| D：硬件闭环 | UART v1 host codec/driver 已实现，F407 固件未实现/未核验 | F407 匹配、断联/E-stop、里程计/IMU、限速与人工监督低速测试 |
+| D：硬件闭环 | UART v1 host/firmware 曾台架运行；v2 host/MCU standalone codec 有软件向量 | v2 endpoint、里程计/IMU、断联/E-stop、限速与人工监督低速测试 |
 | E：语音与智能体 | 文字 CLI 已有；ASR/TTS、task 与 S1/Harness 仲裁未接入 | 无网络本地打断、旧提案拒绝、误识别处理与端到端延迟 |
 | F：机械臂 | 六轴隔离夹具和软件动作服务器已实现 | 真实几何/限位/映射/失联策略确认后再做实机适配 |
 

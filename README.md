@@ -5,7 +5,8 @@
 通过 Nav2、MoveIt2 和 F407 控制底盘与机械臂，而不是让模型直接控制电机。
 
 设计入口：[项目总体状态](docs/project_status.md) · [整体架构](docs/architecture.md) ·
-[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md)。
+[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md) ·
+[USB/UART v2 规范](docs/protocol/usb_serial_v2.md)。
 包重命名不代表硬件已工程化；下面明确区分现有功能和后续规划。
 
 ## 工程布局
@@ -22,7 +23,7 @@
 | `src/rak_description` | URDF、几何、惯量、可视化；当前仍是旧五轴演示模型 |
 | `src/rak_navigation` | SLAM、全向 MPPI Nav2 与速度平滑/碰撞监控话题链 |
 | `src/rak_task_executor` | 唯一导航任务状态机；文字、暂停、恢复、取消和仿真 Nav2 |
-| `src/rak_base_driver` | Jetson-F407 UART v1 主机端；默认不打开硬件且保持 DISARMED |
+| `src/rak_base_driver` | UART v1 历史主机节点 + 独立 v2 编解码；默认不打开硬件 |
 | `src/rak_moveit_config` | 旧演示配置与隔离的六轴仿真配置；没有实机轨迹执行链 |
 | `src/rak_arm_simulation` | 软件轨迹/夹爪 Action server；无物理仿真、无硬件接口 |
 | `src/rak_motion_stub` | 测试转发与速度估算；不是 CAN 驱动或安全控制器 |
@@ -40,7 +41,8 @@ pip 工作流不随 ROS 包名迁移。`colcon` 同时发现 `src/` 与 `brain/`
                            ├-> 暂停：取消确认 + 新鲜静止遥测
                            └-> 恢复：重发 map 目标并重新规划
 Nav2 -> MPPI Omni -> smoother -> collision monitor -> /cmd_vel -> sim/stub/hardware adapter
-UART v1 -> F407 底盘（主机驱动已实现；匹配固件缺失，未做实机验收）
+UART v1 -> F407 底盘（旧体速度链；下位机 R18 曾台架运行）
+UART v2 -> 四轮/关节位置（主机与MCU独立 codec 已实现；端点尚未互通）
 六轴 MoveIt fixture -> 软件轨迹/夹爪 Action server（仅仿真测试）
 ```
 
@@ -127,7 +129,9 @@ UART adapter 已通过静态解析，但没有设备运行验证；默认仍使�
 - `guard()` 保留最终否决权；Jev 进程内直接调用；S2 不得扩大安全许可。
 - `brain/rak_ai/types.py` 和 episode 的 `state_text` 不变；新任务协议另行版本化。
 - CAN 为 classic CAN 2.0A 1 Mbps，禁止 `fd on`。协议以叶节点仓库为准，不能猜测六轴固件映射。
-- UART v1 文档与主机驱动不证明 F407 固件兼容；`serial_100hz.py` 是 PTY-only。
+- UART v1 是已台架运行的旧机体速度接口；目标协议是
+  [UART v2](docs/protocol/usb_serial_v2.md)，目前 host 与 MCU 仅独立 codec 通过向量，
+  尚无 v2 endpoint 互通。`serial_100hz.py` 是 v1 PTY-only 测试。
 - `scripts/serial_link_test.py` 是 refusal-only 兼容入口，拒绝运行旧 CRC-8 实体串口
   协议；不要恢复为可发送版本。`scripts/serial_100hz.py` 才是 UART v1 的 PTY-only 测试。
 - collision monitor/Nav2 配置与软件测试不等于安全认证或物理急停。

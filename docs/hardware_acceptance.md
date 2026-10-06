@@ -8,22 +8,31 @@
 > "The base MCU owns mecanum kinematics" 两句已不成立；
 > **验收流程与门槛原则仍然有效**，具体接线/设备名以 ADR-0007 与
 > [`CONSTRUCTION.md`](CONSTRUCTION.md) §6 为准。
+>
+> 2026-10-06 协议更新：v1 F407 固件 R16-R18 曾台架运行；目标
+> [UART v2](protocol/usb_serial_v2.md) 的 host/MCU codec 有软件 golden-vector
+> 测试，但 v2 尚无串口控制 endpoint，以下硬件门槛仍未解除。
 
 This document separates software simulation from physical acceptance. No hardware
 acceptance is claimed by this repository change.
 
 ## Known Topology
 
-- Jetson Orin Nano to base STM32F407: USB-UART, 921600 baud, 100 Hz, bidirectional.
-- Base STM32F407 to arm STM32F407: classic CAN 2.0A, 1 Mbps, 1 kHz.
-- Jetson does not connect directly to the CAN bus. The base MCU owns mecanum
-  kinematics and its four 25 kHz wheel loops.
-- The repository contains no matching base or arm F407 firmware source.
+- Jetson Orin Nano to the single base STM32F407: dedicated USB serial,
+  921600 8N1 when bridged UART is used.
+- The target v2 command link carries four wheel angular velocities and six arm
+  positions, with optional seventh gripper servo; the F407 owns the wheel loops
+  and servo PWM. Host `mecanum_drive_controller` owns inverse kinematics.
+- The F407 R16-R18 source implements legacy v1 body velocity and has bench
+  evidence. v2 frame/payload codecs exist in both repositories, but the v2
+  endpoint is not integrated and is not interoperable yet.
+- CAN v3 was for the former two-board topology. It is dormant and not part of
+  the current Jetson-F407 control link.
 
-The proposed host UART format is documented in
-[jetson_f407_uart_v1.md](protocol/jetson_f407_uart_v1.md). Existing firmware
-compatibility is unknown until the base firmware is updated and its implementation
-is checked against the protocol vectors.
+The target host UART format is documented in
+[usb_serial_v2.md](protocol/usb_serial_v2.md). The older
+[jetson_f407_uart_v1.md](protocol/jetson_f407_uart_v1.md) is retained for the
+bench-tested legacy firmware only.
 
 ## Before Connecting a Physical Base
 

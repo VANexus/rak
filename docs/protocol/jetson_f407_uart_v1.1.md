@@ -1,4 +1,8 @@
-# Jetson ↔ Base F407 UART Protocol v1.1 — 原子动作 + 底盘里程计扩展
+# Jetson ↔ Base F407 UART Protocol v1.1 — 已归档提案
+
+> 此提案不属于当前目标协议。v1.1 在旧机体速度接口上扩展原子动作；
+> 当前目标是独立的[USB/UART v2 轮速与关节位置协议](usb_serial_v2.md)。
+> 不要将 v1.1 的 feature bit 或 payload 用于 v2 协商。
 
 **状态**:v0.2 提案（2026-10-04）—— 待 F407 固件负责人 + Jetson host 联合签字
 
