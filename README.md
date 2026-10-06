@@ -18,8 +18,8 @@
 | `src/rak_interfaces` | 感知/决策消息，以及任务 Action、控制 Service、底盘遥测 |
 | `src/rak_gpu` | CUDA / TensorRT / VPI 工具；JetPack 专用 |
 | `src/rak_stereo_driver` | 双目采集；nvJPEG 解码后拷回主机发布 ROS 图像 |
-| `src/rak_astra_driver` | 已测试的 Astra 深度相机接入；仍需标定与安装验证 |
-| `src/rak_sensor_bringup` | 雷达、相机的设备配置与独立启动 |
+| `src/rak_astra_driver` | Astra 深度相机适配，保留为 Gemini 的可替换后端 |
+| `src/rak_sensor_bringup` | 雷达配置，以及 Astra/Gemini 335L 互斥选择启动 |
 | `src/rak_description` | URDF、几何、惯量、可视化；当前仍是旧五轴演示模型 |
 | `src/rak_navigation` | SLAM、全向 MPPI Nav2 与速度平滑/碰撞监控话题链 |
 | `src/rak_task_executor` | 唯一导航任务状态机；文字、暂停、恢复、取消和仿真 Nav2 |
@@ -83,6 +83,8 @@ env -u PYTHONPATH brain/.venv/bin/python brain/tests/test_ai.py
 
 ROS 集成测试需先 source `install/architecture/local_setup.bash`，并使用独立的
 `ROS_DOMAIN_ID`；测试仅连接 fake action server，不访问真实 UART/CAN。
+机器人运行统一使用 Cyclone DDS 和 domain 47（`~/.bashrc`、`rak_bringup` 操作脚本
+及 Cyclone 配置保持一致）；ROS 集成测试仍隔离在 domain 77/187，避免加入机器人运行图。
 完整构建需要本机 JetPack SDK。只开发决策层可用
 `--packages-up-to rak_agent`，无需构建 GPU 包。
 首次准备 Python 环境：在 `brain/` 下创建 `.venv` 并安装 `-e .`；
@@ -94,6 +96,9 @@ venv 命令需 `env -u PYTHONPATH`，ROS 节点则必须保留 ROS 的 `PYTHONPA
 ```bash
 ros2 launch rak_sensor_bringup lidar.launch.py
 ros2 launch rak_sensor_bringup astra.launch.py
+ros2 launch rak_sensor_bringup depth_camera.launch.py  # 默认 Gemini 335L
+ros2 launch rak_sensor_bringup depth_camera.launch.py camera:=astra
+ros2 launch rak_sensor_bringup gemini335l.launch.py serial_number:=YOUR_SERIAL
 ros2 launch rak_sensor_bringup stereo.launch.py device:=/dev/video0
 ros2 launch rak_navigation slam.launch.py
 ros2 launch rak_navigation nav2.launch.py
@@ -108,6 +113,12 @@ ros2 launch rak_description view_urdf.launch.py
 ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
 ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 ```
+
+深度相机选择入口默认启动 Gemini 335L；切换 `camera:=astra` 使用既有 Astra 驱动，
+同一入口每次只启动一个深度相机。335L 使用 Orbbec 官方 SDK v2 ROS 2 包
+`orbbec_camera` 的 `gemini_330_series.launch.py`，该上游包需单独安装并 source；
+本仓不复制或维护厂商 SDK。统一 RGB-D 话题和标定/TF 注意事项见
+[相机接入说明](docs/cameras.md)。
 
 `task_simulation.launch.py` 是无传感器的任务状态机 fixture；`task_navigation.launch.py`
 组合真实 SLAM/Nav2 软件栈，默认底盘后端为仿真估算，且仍需要有效雷达/定位输入。

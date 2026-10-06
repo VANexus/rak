@@ -93,7 +93,8 @@ env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH \
 - `agent.launch.py` 现在显式透传 `s1_weights`，默认仍为 `auto`。
 - 操作脚本迁移至 `src/rak_bringup/scripts/`，共享 `environment.sh`。
 - `RAK_WORKSPACE`、`RAK_INSTALL_PREFIX`、DDS 配置与 ROS domain 可覆盖；
-  默认安装目录是 `install/architecture`，不再手工补 Python 包前缀。
+  机器人运行默认使用 Cyclone DDS、domain 47；默认安装目录是
+  `install/architecture`，不再手工补 Python 包前缀。
 - 无 GUI 的雷达、SLAM、Nav2 脚本不再强制设置 DISPLAY；
   RViz/MoveIt demo 才检查可读的 Xauthority 文件。
 - 不要单独复制一个 `run_*.sh` 到 `/tmp`，它现在需要同目录的 `environment.sh`。

@@ -44,7 +44,7 @@
 | **下位机 MCU** | STM32F407VET6 · M4F（C30D 板） | **USB-UART 921600, 100 Hz** | 固件在 `vehical_rak_chassis`（**开发中**） |
 | 机械臂 | **标准 6 轴** + **舵机夹爪**（第 7 个 PWM 舵机）+ 末端摄像头 | 经下位机（7 路舵机 PWM） | **[未成形]** 见 ADR-0008 |
 | 雷达 | WHEELTEC LSLIDAR **N10P**（Leishen，2D） | USB 串口 460800 | [已实现] |
-| 深度相机 | Orbbec **Astra**（OrbbecSDK 1.10.18） | USB | [已实现] |
+| 深度相机 | Orbbec **Gemini 335L**（当前优先）+ Astra（可替换后端） | USB | [实机 RGB-D/IMU 已验收；`base_link` 外参待标定] |
 | 双目 | USB SBS MJPEG 1280×720@30 | USB | [已实现] |
 | 末端摄像头 | 型号未定（eye-in-hand） | USB? | **[待实现]** 见 ADR-0008 |
 | 语音模块 | 型号未定 | ? | **[待实现]** 见 TODO P2-6 |
@@ -129,7 +129,8 @@ env -u PYTHONPATH brain/.venv/bin/python brain/tests/test_ai.py
 
 ```bash
 ros2 launch rak_sensor_bringup lidar.launch.py     # N10P → /scan (frame laser_link)
-ros2 launch rak_sensor_bringup astra.launch.py     # 深度/彩色
+ros2 launch rak_sensor_bringup depth_camera.launch.py  # 默认 Gemini 335L
+ros2 launch rak_sensor_bringup depth_camera.launch.py camera:=astra
 ros2 launch rak_sensor_bringup stereo.launch.py device:=/dev/video0
 ```
 

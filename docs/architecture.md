@@ -50,7 +50,7 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_gpu` | GPU RAII、TRT/VPI 工具 | 消息生成、机器人策略 |
 | `rak_stereo_driver` | V4L2、nvJPEG、图像发布 | 目标识别、导航目标选择 |
 | `rak_astra_driver` | Astra SDK 与 ROS 数据转换 | 世界状态、抓取规划 |
-| `rak_sensor_bringup` | 设备启动、滤波和设备参数 | 任务策略、整机状态机 |
+| `rak_sensor_bringup` | Astra/Gemini 335L 二选一启动、设备配置 | 任务策略、整机状态机 |
 | `rak_description` | URDF、几何、惯量与可视化 | 导航参数、模型策略 |
 | `rak_navigation` | SLAM、全向 MPPI、smoother/collision-monitor 配置 | 对话理解、LLM 调用 |
 | `rak_task_executor` | 单一任务状态机、文字意图、Nav2 Action 生命周期 | 原始底盘/关节命令、感知算法 |
@@ -59,7 +59,7 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
 | `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
 | `rak_agent` | 当前 S1/S2 认知原型 | 电机驱动、同步等待云端后控制 |
-| `rak_bringup` | 整机组合、DDS、操作入口 | 通用算法或传感器 SDK |
+| `rak_bringup` | 整机组合、Cyclone DDS（运行 domain 47）、操作入口 | 通用算法或传感器 SDK |
 
 关键依赖方向（箭头表示“依赖”）：
 
@@ -71,7 +71,7 @@ rak_base_driver -----> rak_interfaces / serial
 rak_arm_simulation --> standard trajectory/gripper actions
 rak_moveit_config ----> rak_description / rak_arm_simulation (simulation only)
 rak_navigation -------> rak_sensor_bringup / rak_motion_stub / Nav2 / SLAM
-rak_sensor_bringup ----> 自有相机驱动 / 上游雷达 / laser_filters
+rak_sensor_bringup ----> Astra / Orbbec SDK v2 ROS driver / 上游雷达 / laser_filters
 rak_bringup ----------> 各能力的启动入口
 ```
 

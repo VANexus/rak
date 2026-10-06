@@ -1,0 +1,36 @@
+uvc_backend: v4l2
+enumerate_net_device: false
+device_num: 1
+device_preset: Default
+
+enable_color: true
+color_width: 1280
+color_height: 800
+color_fps: 30
+color_format: RGB
+color_frame_queue_max_frames: 1
+"color.image_raw.enable_pub_plugins":
+  - image_transport/raw
+color_preset: ""
+
+enable_depth: true
+depth_width: 1280
+depth_height: 800
+depth_fps: 30
+depth_format: Y16
+depth_registration: false
+"depth.image_raw.enable_pub_plugins":
+  - image_transport/raw
+
+enable_frame_sync: true
+enable_depth_scale: true
+time_domain: global
+enable_sync_host_time: true
+enable_publish_extrinsic: true
+
+enable_hardware_noise_removal_filter: true
+enable_noise_removal_filter: false
+
+enable_accel: true
+enable_gyro: true
+enable_sync_output_accel_gyro: true

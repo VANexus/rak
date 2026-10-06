@@ -112,8 +112,9 @@ env -u PYTHONPATH brain/.venv/bin/python brain/tests/test_ai.py
 Use `build/architecture` + `install/architecture`, never the old `build/` / `install/`
 artifacts. Decision-layer-only work skips the GPU packages: `--packages-up-to rak_agent`.
 ROS integration tests need the install overlay sourced and an isolated `ROS_DOMAIN_ID`;
-they connect only to fake action servers and must never touch real UART/CAN. Treat
-`colcon build` + `brain/tests/test_ai.py` as the two checks to pass before claiming done.
+they connect only to fake action servers and must never touch real UART/CAN. Runtime
+operator scripts use Cyclone DDS on domain 47 by default; test domains 77/187 stay isolated.
+Treat `colcon build` + `brain/tests/test_ai.py` as the two checks to pass before claiming done.
 There is no CI, linter, formatter or pre-commit config in this repo.
 
 `env -u PYTHONPATH` is mandatory for anything run inside `brain/.venv`: `~/.bashrc` sources
@@ -149,7 +150,7 @@ base TF. Never run two Nav2 instances or two `/cmd_vel` end adapters. `task_navi
 with `motion_backend:=hardware` only selects the host UART adapter — `hardware_enable` is still
 false, so the device is not opened; a parsed launch is not firmware compatibility. Operator
 launchers live in `src/rak_bringup/scripts/run_*.sh` and share `environment.sh` (they resolve
-the repo from their own path, default DDS Cyclone, domain 45, logs to `/tmp/*_run.log`); see
+the repo from their own path, default DDS Cyclone, domain 47, logs to `/tmp/*_run.log`); see
 that directory's `README.md`.
 
 ## Architecture
