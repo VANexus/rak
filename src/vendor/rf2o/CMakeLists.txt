@@ -43,26 +43,24 @@ include_directories(
   ##${EIGEN3_INCLUDE_DIRS}
 )
 
+# [AI] lyrical: ament_target_dependencies 已移除，机械移植为 target_link_libraries
 set(DEPENDENCIES
-  "rclcpp"           
-  "std_msgs"         
-  "geometry_msgs" 
-  "tf2_geometry_msgs"
-  "tf2"
-  "tf2_ros"
-  "sensor_msgs"
-  "nav_msgs"
-  "eigen3_cmake_module"
+  "rclcpp::rclcpp"
+  "std_msgs::std_msgs__rosidl_typesupport_cpp"
+  "geometry_msgs::geometry_msgs__rosidl_typesupport_cpp"
+  "tf2_geometry_msgs::tf2_geometry_msgs"
+  "tf2::tf2"
+  "tf2_ros::tf2_ros"
+  "sensor_msgs::sensor_msgs__rosidl_typesupport_cpp"
+  "nav_msgs::nav_msgs__rosidl_typesupport_cpp"
 )
 
 ##target_include_directories(${PROJECT_NAME} PUBLIC ${Eigen3_INCLUDE_DIRS})
-ament_target_dependencies(${EXECUTABLE_NAME} ${DEPENDENCIES})
+target_link_libraries(${EXECUTABLE_NAME} PUBLIC ${DEPENDENCIES})
 
 ## Declare a cpp library
 add_library(${PROJECT_NAME} src/CLaserOdometry2D.cpp)
-
-## Declare a cpp executable
-ament_target_dependencies(${PROJECT_NAME} ${DEPENDENCIES})
+target_link_libraries(${PROJECT_NAME} PUBLIC ${DEPENDENCIES})
 
 install(TARGETS ${EXECUTABLE_NAME}
   DESTINATION lib/${PROJECT_NAME})

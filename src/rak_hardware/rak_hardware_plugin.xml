@@ -1,0 +1,8 @@
+<library path="rak_hardware_plugin">
+  <class
+    name="rak_hardware/RakSystemHardware"
+    type="rak_hardware::RakSystemHardware"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>仅导出四轮接口的 USB v2 ros2_control 硬件插件</description>
+  </class>
+</library>
