@@ -25,6 +25,7 @@
 | **P0** | IMU（LSM6DSRTR）接入 | 里程计融合、航向 | 接线 + overlay |
 | **P1** | 四路里程计融合 + 3D 避障 | 自主导航质量 | P0 完成 |
 | **P2** | 感知算力分配 + 深度点云 + 视觉点云融合 | 抓取、语义避障 | P1 部分 |
+| **P2** | Harness 慢路径 + 呼吸感表达层（P2-7，ADR-0010） | 任务理解、对话 | 无硬件前置（纯软件） |
 | **P3** | 抓取（几何 → 网络 → VLM） | 机械臂作业 | P2 + 臂实机解锁 |
 
 ---
@@ -200,6 +201,30 @@
 - **风险**：普通打断需要**快速本地识别路径**，不能等云端完整推理；
   但语音**不是**硬件急停的替代品（`docs/architecture.md` §4）。
 
+### P2-7 Harness 与「呼吸感」表达层
+
+- **依据**：**ADR-0010**（已接受，设计先行，未实现）。
+- **目标**：把"云端 LLM + Harness 理解任务"从愿景落成软件；Jev（S1）经
+  `/brain/decision` 影响任务，但**只传递、不赋权**。
+- **要做**（全部软件、不依赖硬件门）：
+  1. 建标准 ROS 2 包 `src/rak_harness` + 节点 `harness_node`（console entry point），
+     由 `rak_bringup` 与任务栈一并启动。
+  2. 在 `src/rak_interfaces` 新增 `HarnessRequest` / `HarnessProposal` / `HarnessEvent`
+     三份消息（`schema_version=1`），话题 `/harness/request`、`/harness/proposal`、`/harness/event`。
+  3. 执行器 `slow_planner` 参数扩展 `local | rai | harness`；`harness` 走
+     "发布请求 → `PLANNING` 内限时等待匹配提案"，接受前校验
+     `task_id`/`revision`/`expires_at`/白名单。
+  4. 新 `anthropic` 客户端（`rak_harness/cloud_client.py`）：`base_url=https://api.deepseek.com/anthropic`、
+     key 取 `ANTHROPIC_API_KEY`、tool-use 结构化输出、单工作线程 + 容量 1 队列。
+  5. 表达层 `ExpressionIntent`/`ExpressionGate`/`NoOpExpressionSink`（本轮恒 no-op）。
+- **前置 / 待实测**：`anthropic` SDK 在系统 Python 的安装与版本；DeepSeek Anthropic 端点的
+  可用模型 id（`deepseek-chat` 为占位）；tool-use 行为。
+- **验收**：① `/harness/proposal` 的陈旧（revision 变更）、过期（`expires_at`）、
+  预算耗尽、Harness 重启四类竞态测试；② 未装 `anthropic` 时降级为只发 `KIND_NO_OP`；
+  ③ harness 路径端到端延迟 p50/p95/p99；④ 表达层门恒关（`ExpressionGate` 恒 false）。
+- **风险**：3.4 GB 板上新增进程与依赖；话题式 request/proposal 活动部件多，
+  正确性全押在 `task_id`/`revision`/`expires_at` 三件套上。
+
 ---
 
 ## P3 — 抓取
@@ -268,6 +293,7 @@
 | P0-1…P0-4 | **D：硬件闭环** | 同一件事的不同侧面 |
 | P0-5, P1-* | **C：Nav2 接入**（扩展） | 融合与避障是 C 阶段质量提升 |
 | P2-* | 未编号（新增） | 感知栈此前只有驱动，无融合链 |
+| P2-7 | **E：语音与智能体** | Harness/仲裁/表达层，见 ADR-0010；纯软件，不依赖硬件门 |
 | P3-* | **F：机械臂** | 算法侧先准备，实机受 F 阶段门槛约束 |
 
 ---
@@ -279,6 +305,9 @@
   （`mecanum_drive_controller`），F407 只做每轮 PID + 舵机 PWM。
 - ~~不用 `mecanum_drive_controller`~~ → **已反转，见 ADR-0007**：现在正是用它。
 - **不让 S2/云端 LLM 进实时控制环**：延迟 12–30 s，只能 fire-and-forget。
+- **不让 Jev（S1）决策直接驱动任务执行器**：见 ADR-0010 —— 只经 Harness 传递、不赋权；
+  执行器**不**订阅 `/brain/decision`，Harness 只输出结构化提案，永不发速度/关节命令。
+- **不共用 LLM key 变量**：RAI 慢路径用 `OPENAI_API_KEY`，Harness 用 `ANTHROPIC_API_KEY`。
 - **不改 `brain/rak_ai/types.py` 的冻结语义**：要新协议就版本化。
 - **不在本仓定义 CAN 帧字段**：CAN v3 的源在下位机仓（ADR-0003）。
 

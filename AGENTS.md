@@ -2,29 +2,63 @@
 
 Layered embodied robot system for Jetson Orin Nano (JetPack 7.2). C++/ROS 2 (Jazzy) + a
 plain-Python decision layer. `README.md` is the primary design doc — read it before
-changing behavior; it records decisions that are not obvious from the code.
+changing behavior; it records decisions that are not obvious from the code. `CLAUDE.md`
+is the parallel instruction file (Claude Code) and goes deeper on architecture; keep
+repository-wide guidance in sync between the two.
+
+## Topology changed on 2026-10-05 — read this first
+
+The arm board burned out. There is now **one** F407 driving 4 wheels + 7 servos and
+**USB is the only Jetson↔MCU link**; the CAN bus has no peer and is dead.
+
+- `docs/adr/*` are immutable (append/supersede only), indexed by `docs/adr/README.md`.
+  **ADR-0007 supersedes ADR-0001**; the valid set is 0002 + 0003 (UART layer) + 0004–0010.
+- ADR-0010's target — Harness as a standard ROS 2 package `src/rak_harness` + node
+  `harness_node`, the Jev↔executor arbitration seam, a separate `anthropic` cloud client and a
+  gated "呼吸感" expression interface — is **accepted but design-only**: there is no
+  `src/rak_harness`, and the expression layer is a no-op stub behind closed hardware gates.
+- ADR-0007's target — whole robot on `ros2_control`, plugin `rak_hardware`, host-side
+  mecanum IK — is **accepted but not implemented**: there is no `src/rak_hardware`, and
+  `src/rak_moveit_config/test/validate_six_axis_sim.py:36` asserts the six-axis URDF
+  contains **no** `<ros2_control>` tag.
+- `src/rak_can_driver` and `src/rak_serial_link` exist but are **deprecated/reserved**
+  (TODO P0-3): semantics void, launched by nothing. Do not build new work on them.
+- Docs disagree by date, not correctness. The 2026-10-04 set (`README.md`,
+  `docs/architecture.md`, `docs/project_status.md`) describes the code as it stands;
+  `TODO.md`, `docs/CONSTRUCTION.md` and `docs/adr/0007` describe the accepted target.
+  Do not read a 10-04 status line as current, and do not implement the target as if the
+  code already supported it.
 
 ## Layout
 
 The 2026-10-04 unified migration supersedes the old package layout.
-Read `docs/architecture.md` and `docs/migration.md` before moving package boundaries.
+Read `docs/architecture.md` and `docs/migration.md` before moving package boundaries
+(its package table still predates the two CAN/serial packages below).
 
 - `src/rak_interfaces`: messages/actions/services only, no GPU/model dependencies.
 - `src/rak_gpu`: JetPack library, exported target `rak_gpu::gpu`, namespace `rak::gpu`.
 - `src/rak_stereo_driver`: plugin `rak::stereo_driver::CaptureNode`, executable `stereo_node`.
 - `src/rak_astra_driver`: tested depth camera adapter, executable `astra_node`.
 - `src/rak_sensor_bringup`: camera/lidar launch and device configuration.
-- `src/rak_description`: geometry and visualization, still a legacy five-axis demo.
+- `src/rak_description`: geometry and visualization — legacy five-axis demo plus the
+  isolated six-axis fixture `urdf/six_axis_sim.urdf.xacro`.
 - `src/rak_moveit_config`: SRDF, IK and planning configuration; six-axis fixture is simulation-only.
 - `src/rak_motion_stub`: test relay/estimate, not a hardware driver.
 - `src/rak_navigation`: SLAM, omnidirectional Nav2 and velocity safety chain.
 - `src/rak_task_executor`: sole owner of text-navigation task and Nav2 goal lifecycle.
 - `src/rak_base_driver`: Jetson-to-F407 UART v1 host driver; hardware disabled by default.
 - `src/rak_arm_simulation`: software-only six-axis trajectory/gripper action fixture.
+- `src/rak_can_driver`: CAN v3 chassis host stack (python-can, exec `chassis_can_node`,
+  virtual bus by default). Deprecated/reserved, and **ships no `setup.cfg`**, so its script
+  installs to `bin/` and `ros2 run rak_can_driver chassis_can_node` reports "No executable
+  found".
+- `src/rak_serial_link`: CAN v3 frames over UART (execs `serial_link_node`,
+  `serial_link_cli`). Deprecated/reserved; `serial_link_node` opens hardware with no gate.
 - `src/rak_bringup`: composition, DDS configuration and operator scripts.
 - `src/vendor`: third-party code, read-only.
-- `brain/`: ROS package `rak_agent`, Python module `rak_ai`, pip project `rak-brain`.
-  Preserve its physical location, `.venv`, data and pip workflow. Do not add COLCON_IGNORE.
+- `brain/`: ROS `ament_python` package `rak_agent`, Python module `rak_ai`.
+  Keep its source/data location; runtime uses ROS system Python, with no dedicated venv or
+  inference service process. Do not add COLCON_IGNORE.
 
 Target arm: six positioning joints plus an independent gripper. Never invent the
 missing axis or calibration from the legacy URDF. Models, topics and episode schemas
@@ -35,36 +69,64 @@ were not redesigned during the package migration.
 No CI, no linter/formatter config, no pre-commit. Verification commands:
 
 ```bash
-# C++ / ROS 2
+# C++ / ROS 2 — repo root, only /opt/ros/jazzy sourced
 source /opt/ros/jazzy/setup.bash
 colcon build --base-paths src brain --executor sequential --build-base build/architecture --install-base install/architecture --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/architecture/local_setup.bash
 python3 scripts/check_workspace.py --installed
-colcon test --build-base build/architecture --packages-select rak_description rak_moveit_config
-python3 -m pytest src/rak_task_executor/test src/rak_arm_simulation/test
-PYTHONPATH=src/rak_base_driver python3 -m pytest src/rak_base_driver/test
+colcon test --build-base build/architecture --install-base install/architecture --packages-select rak_description rak_moveit_config
+colcon test-result --test-result-base build/architecture --verbose
+ROS_DOMAIN_ID=77 python3 -m pytest src/rak_task_executor/test src/rak_arm_simulation/test
+ROS_DOMAIN_ID=77 PYTHONPATH=src/rak_base_driver:$PYTHONPATH python3 -m pytest src/rak_base_driver/test
 ros2 run rak_stereo_driver stereo_node
 ros2 launch rak_sensor_bringup lidar.launch.py
 
-# Memory/DMA mode of the board itself (needs sudo; see Gotchas)
-sudo scripts/rak-mode.sh status | headless | desktop
+# Memory/DMA mode of the board itself: status | headless | desktop (needs sudo; see Gotchas)
+sudo scripts/rak-mode.sh headless
 
-# The brain as a node (model + deps come from brain/.venv, resolved at run time)
-ros2 launch rak_bringup agent.launch.py decider:=laya sim:=true
+# The brain as a standard ROS node (system Python; TRT backend is not implemented yet)
+ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
 ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
-# -p s1_weights:=fp32 is the escape hatch if a decision ever looks wrong; see Gotchas.
 
-# Python decision layer, no ROS (from brain/)
-python3 -m venv .venv && .venv/bin/pip install -e ".[laya]"
-env -u PYTHONPATH .venv/bin/python -m rak_ai.loop --scenario approach --decider stub --ticks 50
-env -u PYTHONPATH .venv/bin/python tests/test_ai.py     # plain asserts, no pytest needed
-env -u PYTHONPATH .venv/bin/python tests/test_laya_fp16_parity.py  # needs the model + GPU, ~10 min
+# Python decision layer tests, no ROS
+PYTHONPATH=brain python3 -m rak_ai.loop --scenario approach --decider stub --ticks 50
+PYTHONPATH=brain python3 brain/tests/test_ai.py
+PYTHONPATH=brain python3 brain/tests/test_task_intent.py
 ```
 
-`env -u PYTHONPATH` is mandatory for anything run inside the venv: `~/.bashrc` sources
-ROS unconditionally and injects `/opt/ros/jazzy/.../site-packages` into the venv,
-defeating its isolation. It does **not** apply to `ros2 run`/`ros2 launch`, which need
-that same PYTHONPATH to find `rclpy` and the install space.
+Install ROS package dependencies through rosdep (`rosdep install --from-paths brain
+--ignore-src -r -y`). Do not create a project venv or install generic CUDA/PyTorch wheels.
+
+Each command above has a known, unrelated way to fail:
+
+- **A full build needs three host deps** that may be absent: `/opt/OrbbecSDK_v1.10.18`
+  (`rak_astra_driver`), `libpcap-dev` (vendor `lslidar_driver`), and
+  `ros-jazzy-camera-info-manager` (`rak_stereo_driver`). Until they exist, build with
+  `--packages-skip rak_astra_driver lslidar_driver rak_stereo_driver` — the other 16
+  packages still build. Their absence also makes `stereo_node` / `lidar.launch.py` fail
+  with "package not found", and leaves a partial install entry, so sourcing prints
+  `not found: .../local_setup.bash` (harmless).
+- **`check_workspace.py` exits 1 at HEAD for two reasons of its own**: it reads
+  `src/rak_can_driver/setup.cfg`, which does not exist, and its `EXPECTED` set omits
+  `rak_serial_link`. Neither is your regression.
+- **`PYTHONPATH=src/rak_base_driver` replaces ROS's own PYTHONPATH** →
+  `ModuleNotFoundError: No module named 'rclpy'`. Append `:$PYTHONPATH`; putting
+  `src/...` first also makes pytest test your edits without a rebuild.
+- **Three packages ship `test/test_protocol.py`** (`rak_base_driver`, `rak_serial_link`,
+  `rak_can_driver`). Two in one pytest run → `ImportPathMismatchError`, even with
+  `--import-mode=importlib`. Run one package per invocation, or `colcon test
+  --packages-select`, which isolates them.
+- **ROS pytest needs the install overlay sourced** — `rak_interfaces` exists only there.
+  `ROS_DOMAIN_ID=77` keeps it off runtime domain 47, which `~/.bashrc` pins for the operator.
+  `colcon test` on `rak_moveit_config` fails `legacy_srdf` until `python3-defusedxml`
+  (a declared `test_depend`) is installed.
+- `rak_agent` requires the Ubuntu `python3-pydantic` system package. The implementation
+  supports Ubuntu's Pydantic 1 API; `package.xml` declares it for rosdep. The TensorRT
+  binding is supplied by JetPack, while the model engine and tokenizer are not yet integrated.
+
+`rak_agent` runs under the sourced ROS system Python. ROS integration tests must keep the
+install overlay on `PYTHONPATH` and use an isolated `ROS_DOMAIN_ID`; plain decision tests
+can use `PYTHONPATH=brain`.
 
 Text navigation smoke test: source `install/architecture/local_setup.bash`, then run
 `ros2 launch rak_task_executor task_simulation.launch.py` and in another terminal run
@@ -75,7 +137,8 @@ Current progress and acceptance gaps are tracked in `docs/project_status.md`.
 
 Build `rak_interfaces` before `rak_agent`, and `rak_gpu` before `rak_stereo_driver`;
 colcon knows the order from package manifests. Treat `colcon build` +
-`tests/test_ai.py` as the two checks to pass before claiming done.
+`tests/test_ai.py` as the two checks to pass before claiming done — subject to the
+caveats above.
 
 ## Constraints that are easy to break
 
@@ -89,9 +152,10 @@ colcon knows the order from package manifests. Treat `colcon build` +
 - **`brain/rak_ai/types.py` is frozen once episodes exist.** `state_text` is stored
   verbatim in `brain/data/episodes/*.jsonl`; regenerating it silently corrupts the
   finetune corpus. There is deliberately no training pipeline here.
-- `--decider stub` is the default and stays runnable without torch or a model — torch on
-  aarch64/JetPack is a real install risk. Do not make `laya`/`rai` hard dependencies
-  (both are optional extras in `brain/pyproject.toml`).
+- `--decider stub` is the default and stays runnable without a model. The target System 1
+  runtime is in-process TensorRT from JetPack; do not add a model service or generic
+  CUDA/PyTorch wheel dependency. TensorRT model loading is not implemented until its
+  ONNX/tokenizer contract is validated.
 - `rak_task_executor` is the only task/goal lifecycle owner. Pause is not reported until
   Nav2 cancellation is confirmed and fresh repeated stationary telemetry arrives; resume
   submits the semantic map goal again. Its default parser is local; optional RAI planning
@@ -102,10 +166,21 @@ colcon knows the order from package manifests. Treat `colcon build` +
   before ARM; zero is not pass-through. UART v1 is a proposed host protocol; this repository
   has no matching F407 firmware. PTY tests do not prove device compatibility.
   Never change defaults to ARM as a shortcut.
+- **`rak_serial_link.serial_link_node` opens hardware unconditionally**: its `port`
+  parameter defaults to `/dev/wheel_motor` at 921600 and is opened in `__init__` with no
+  `allow_hardware` gate — the opposite of `BaseUartNode`. Do not start it on a machine
+  where that device exists unless you mean to own the port.
 - The six-axis MoveIt fixture and `rak_arm_simulation` action servers are software-only.
   They contain test geometry/limits and must not be connected to hardware.
-- LLM key comes from `OPENAI_API_KEY`; `brain/config.toml` points `[openai]` at
-  SiliconFlow and must never contain the key.
+- **Two LLM keys, two providers.** RAI's slow path reads `OPENAI_API_KEY` (SiliconFlow,
+  `brain/config.toml [openai]`); the ADR-0010 Harness client reads `ANTHROPIC_API_KEY`
+  (DeepSeek's Anthropic-compatible endpoint). Do not share one variable across providers, and
+  `brain/config.toml` must never contain either key.
+- **Jev does not reach the task executor directly (ADR-0010).** The only new consumer of
+  `/brain/decision` is the Harness node, and it is context only — never authority. Jev's path to
+  execution is transitive (`/brain/decision` → Harness → `/harness/proposal` →
+  `rak_task_executor`); the executor must not subscribe to `/brain/decision`, and Harness emits
+  structured goals only — never velocity or joint commands.
 
 ## Gotchas
 
@@ -119,20 +194,15 @@ colcon knows the order from package manifests. Treat `colcon build` +
   and replies are checked on a later tick. Currently `_drain()` only records replies;
   it does not execute them. The S1 callback also precedes safety resolution, so the
   prototype is not an independent real-time safety path. See architecture.md.
-- `brain/data/`, `brain/.venv/`, `build/`, `install/`, `log/` are gitignored. Stray
+- `brain/data/`, `build/`, `install/`, `log/` are gitignored. Stray
   `frames_*.gv` / `frames_*.pdf` at the root are debugging artifacts, not deliverables.
-- `brain/pyproject.toml` says `dynamic = ["requires-python"]` and `setup.py` supplies the
-  value **on purpose**: setuptools' pyproject loader turns `requires-python` into a
-  `SpecifierSet` object, and colcon reads the setup.py distribution through
-  `ast.literal_eval`, so moving it back under `[project]` makes `colcon build` fail with
-  `SyntaxError: invalid syntax (<unknown>, line 1)`.
-- `brain/scripts/agent_node` is a stdlib-only bootstrap, not a `console_scripts` entry
-  point: colcon builds scripts with its own system `python3`, which cannot `import
-  pydantic`. It re-execs `$RAK_BRAIN_PYTHON` or `<repo>/brain/.venv/bin/python`, so the
-  venv never needs to be activated at build time.
+- `rak_agent` installs `agent_node` as a standard `console_scripts` entry point and runs
+  with ROS system Python. Keep Python runtime dependencies in `package.xml`/rosdep rather
+  than reintroducing an interpreter bootstrap or project venv.
 - The 1024x600 touchscreen and the camera compete for the same pool. A logged-in
-  GNOME session drives `CmaFree` to **0 kB** of the 256 MiB CMA area, and `eye`
-  asks that pool for 4 `V4L2_MEMORY_MMAP` buffers -- so capture fails in a way that
+  GNOME session drives `CmaFree` to **0 kB** of the 256 MiB CMA area, and the stereo
+  capture (`stereo_node`, node `eye_capture`, topics `eye/*` — "eye" is the historical
+  name) asks that pool for 4 `V4L2_MEMORY_MMAP` buffers, so capture fails in a way that
   looks like a camera bug but is a memory decision. `scripts/rak-mode.sh headless`
   stops and disables gdm (~1.8 -> ~2.3 GiB available, 75-160 MiB CMA back).
   GUI launchers require `desktop`; migrated sensor/navigation wrappers do not
@@ -142,36 +212,37 @@ colcon knows the order from package manifests. Treat `colcon build` +
 - Simulation task telemetry is a command-motion estimate, not measured odometry. A
   successful software pause/resume test is not hardware acceptance; see
   `docs/hardware_acceptance.md`.
-- nvpmodel sits in the **10W** mode on this board (6 cores, capped EMC bandwidth),
-  so the ~158 ms/predict figure and eye's 30 fps are both measured under that cap.
-  Raising it (`sudo nvpmodel -m 0 && sudo jetson_clocks`) is root and changes the
-  thermal envelope -- do not assume a benchmark is comparable across the two.
-- Laya costs **~1.4 GB of this box's 3.4 GB of unified memory** to sit on the GPU:
-  804 MiB of resident weights (421M params, bf16) plus ~600 MiB of CUDA context and
-  cuDNN/cuBLAS workspace, measured at 158 ms/predict. It used to need ~1.9 GB, and
-  that was pure waste: the checkpoint is F16 on disk, but `laya.load()` builds its
-  module in torch's *default* dtype (fp32) and `load_state_dict` copies up into
-  those parameters, so the weights sat resident at 1606 MiB. Worse, on Tegra CUDA's
-  notion of "free" is just the pages nobody is holding, so the fp32 build peaked on
-  the CPU side and starved the GPU side at the same moment -- `laya.load(model)`
-  OOMed and fell back to CPU before anything could be cast. `LayaDecider` therefore
-  loads on CPU with the default dtype already set to the checkpoint's `amp_dtype`
-  (bf16) and places afterwards, so fp32 never exists. `s1_weights=auto|fp16|bf16|fp32`
-  selects it; `auto` follows the checkpoint.
+- **`nvpmodel` is already at mode 0 = 10 W, this board's *highest* mode** (the only other
+  modes are `7W_AI` and `7W_CPU`), so there is nothing to raise. `nvpmodel.service` runs
+  at boot, but `jetson-clocks.service` is enabled and has **not** run (inactive, no
+  journal entries): the governor is `schedutil` and CPU clock floats 729–1510 MHz. Do not
+  assume clocks are locked, and never compare benchmarks across power/clock states — the
+  ~158 ms/predict figure and eye's 30 fps are 10 W-mode numbers.
+- **Memory is zram + swap now** (`docs/CONSTRUCTION.md` §2.2, not in git): 1.7 G zram plus
+  a 4 G swapfile. `free` looks less alarming than it should, and swap/zram are not
+  real-time guarantees; whether zram helps on a 4 GB board is contested (TODO P2-1) —
+  measure `si/so` and p99 latency rather than reverting from documentation.
+- The historical PyTorch/Laya path cost **~1.4 GB of this box's 3.4 GB unified memory**
+  on the GPU: 804 MiB of
+  resident bf16 weights (421M params) plus ~600 MiB CUDA context / cuDNN / cuBLAS
+  workspace, at 158 ms/predict. It once needed ~1.9 GB for nothing: `laya.load()` built
+  the module in torch's *default* dtype (fp32) and `load_state_dict` copied up into those
+  parameters, so the weights sat at 1606 MiB — and on Tegra CUDA's "free" is just the
+  pages nobody is holding, so the fp32 build peaked CPU-side and starved the GPU at the
+  same moment, making `laya.load(model)` OOM and fall back to CPU before any cast could
+  run. `LayaDecider` therefore loads on CPU with the default dtype already set to the
+  checkpoint's `amp_dtype` (bf16) and places afterwards, so fp32 never exists.
+  These are historical measurements, not the target TensorRT runtime; do not install or
+  select this legacy backend for current Jetson runs.
 - Half weights only run where autocast is on, and laya only turns it on for CUDA
   (CPU bf16 is the documented `LAYA_CPU_AMP=bf16`). Without it the forward dies in
   `F.linear`: "mat1 and mat2 must have the same dtype, but got Float and
-  BFloat16" -- fp32 activations against half weights. So `LayaDecider` degrades to
-  fp32 when there is no CUDA rather than hand back a model that cannot run.
+  BFloat16" -- fp32 activations against half weights. The legacy `LayaDecider` degraded to
+  fp32 without CUDA; do not use it for current Jetson runs.
 - If it does not fit, `laya` catches the CUDA OOM itself and drops to CPU at
   ~1.6 s/predict -- slower than the sensor rate, with no exception raised.
   `LayaDecider.device/.weights/.place_error` and the node's `s1_device=`/`s1_weights=`
-  startup fields say which one you got, and `agent_node` warns on CPU; keep baseline
-  RAM low before running `decider:=laya`.
-- The fp16/bf16 cast is verified, not assumed: `tests/test_laya_fp16_parity.py`
-  compares fp32 against the cast over 90 states and asserts on what `resolve()`
-  *executes*, not on the model's label -- at LOW tier the label is discarded and the
-  geometric fallback runs, so a label flip there cannot move the robot. Measured:
-  0 executed-action, 0 source and 0 tier flips, max |dp| 0.004, 5 label flips all
-  at LOW. Autocast does not cover LayerNorm/embeddings/softmax, which is why the
-  comparison has to run at all rather than rest on "autocast already used bf16".
+  startup fields describe that legacy implementation; do not run `decider:=laya`.
+- The legacy PyTorch/Laya fp16 parity run compared executed actions and safety tiers over
+  90 states. Do not use it to qualify TensorRT: a new engine requires separate output
+  parity and `resolve()` behavior tests before it can be enabled.

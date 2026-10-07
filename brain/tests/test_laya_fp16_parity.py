@@ -1,4 +1,7 @@
-"""Half precision must not change what the robot is allowed to do.
+"""Historical parity test for the retired PyTorch Laya backend.
+
+Do not run this test on the Jetson or install PyTorch to satisfy it. Replace it
+with TensorRT parity coverage once the exported engine and tokenizer are integrated.
 
 `laya.load()` builds fp32 parameters and copies an F16 checkpoint into them, so
 the model wants 1606 MiB of this 3.4 GB box's unified memory when the file on
@@ -19,10 +22,7 @@ the precision -- and this box cannot hold two models, so the parity pass runs in
 a child interpreter with CUDA hidden. The GPU pass then proves the cast actually
 lands on the GPU and reports what it cost.
 
-Needs the model and torch, so it stays out of the default `--decider stub` path.
-Run it on the Jetson:
-
-    cd brain && env -u PYTHONPATH .venv/bin/python tests/test_laya_fp16_parity.py
+This file preserves the previous experiment's method and results for reference.
 """
 
 from __future__ import annotations

@@ -10,5 +10,5 @@ if(BUILD_TESTING)
   )
 endif()
 
-install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch config udev DESTINATION share/${PROJECT_NAME})
 ament_package()

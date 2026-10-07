@@ -59,6 +59,7 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
 | `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
 | `rak_agent` | 当前 S1/S2 认知原型 | 电机驱动、同步等待云端后控制 |
+| `rak_harness`（**待创建**，ADR-0010） | Harness 慢路径：任务上下文、工具白名单、预算/超时/事件摘要/失败恢复；独立 `anthropic` 客户端 | 速度/关节命令、第二生命周期所有者、实时安全裁决 |
 | `rak_bringup` | 整机组合、Cyclone DDS（运行 domain 47）、操作入口 | 通用算法或传感器 SDK |
 
 关键依赖方向（箭头表示“依赖”）：
@@ -75,9 +76,11 @@ rak_sensor_bringup ----> Astra / Orbbec SDK v2 ROS driver / 上游雷达 / laser
 rak_bringup ----------> 各能力的启动入口
 ```
 
-`brain/` 是有意保留的源码位置例外，ROS 包名为 `rak_agent`，pip 名为 `rak-brain`，
-Python import 为 `rak_ai`。保持已有 venv 和 episode 路径，避免移动虚拟环境后 shebang、
-editable install 和数据定位同时失效。今后若统一物理位置，应独立迁移数据目录与部署环境。
+`brain/` 是有意保留的源码位置例外，ROS 包名为 `rak_agent`，Python import 为
+`rak_ai`。它由 `colcon` 标准构建、安装为 `ament_python` 包，并通过 console entry
+point 使用 ROS 系统 Python；没有独立 venv 或 Laya 推理子进程。episode 仍保存在
+`brain/data/episodes`。Jev 的 TensorRT 原生后端目标是在该节点进程内加载 Jetson
+系统 TensorRT Python binding；当前需先确认 ONNX、tokenizer 和输出语义，后端尚未实现。
 
 ## 4. 运行架构与实现状态
 
@@ -109,11 +112,15 @@ Harness 只在慢路径管理任务上下文、工具白名单、预算、超时
 
 当前实现边界：`rak_task_executor` 默认只做本地命令解析和已配置地点别名查找；
 未知地点可选调用 RAI 结构化输出，但结果必须是 waypoint 白名单成员。该慢路径
-不是 Laya/Jev 的 System 1，也没有 Harness 持续任务调度。现有 `rak_agent` 与
-task executor 尚未通过共享任务仲裁接口联动；不能描述为完整的 Jev + Harness VLA。
+不是 Laya/Jev 的 System 1，也没有 Harness 持续任务调度。**ADR-0010 已定义**
+`rak_agent`（Jev）与 task executor 之间的共享仲裁缝：Jev → `/brain/decision` →
+Harness（`/harness/request` / `/harness/proposal`）→ 执行器（校验 `task_id`/`revision`/
+`expires_at` 与白名单后接受）。执行器**不**直连 S1，Jev 的影响是传递式、非权威的。
+但 Harness 本体尚未实现（`src/rak_harness` 未创建），所以现在仍**不能**描述为完整的
+Jev + Harness VLA。
 
-先保留 `rak_ai` 的现有文件，不在本次包迁移中改写 `resolve()` 或训练契约。
-未来可在该 Python 包内逐步分出 `state`、`policy`、`harness` 模块，
+`rak_ai` 保持在 `rak_agent` 包内；推理适配器不得另起服务或改变 `resolve()`、
+安全裁决或训练契约。当前 TensorRT 适配仍待模型资产和数值 parity 验收。
 只有独立部署或资源隔离确有必要时才新增进程。
 
 ### 执行侧
@@ -191,6 +198,9 @@ CAN 双板链路已失效并保留为历史资料。
 “呼吸感”首先来自及时确认、自然停顿、连贯动作和可解释的恢复。
 待机姿态、朝向关注、语音节奏等表达只使用空闲资源和有效许可，
 不叠加到活动的导航/抓取控制流上，也不靠随机晃动掩盖系统迟延。
+**ADR-0010** 把这条拆成两层：软件可表达（`/harness/event` 的确认、事件合并、
+可解释恢复 —— 无运动、无 TTS）与硬件可表达（`ExpressionIntent` / `ExpressionGate` /
+`ExpressionSink`，本轮唯一实现是 `NoOpExpressionSink`，门全关）。TTS 引擎尚未选型。
 
 ## 5. 状态、时间与资源
 
@@ -213,7 +223,7 @@ CAN 双板链路已失效并保留为历史资料。
 | B：任务内核 | 软件实现；fake Nav2 覆盖成功、重复请求、暂停/确认/恢复、服务取消和 Action 取消 | 到达/暂停竞态、各种超时、慢规划迟到、重启等剩余竞态仍需扩测 |
 | C：Nav2 接入 | Action、waypoint 和全向参数已接入；hardware 末端 launch 静态检查通过 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链；确认每种 backend 单写者 |
 | D：硬件闭环 | UART v1 host/firmware 曾台架运行；v2 host/MCU standalone codec 有软件向量 | v2 endpoint、里程计/IMU、断联/E-stop、限速与人工监督低速测试 |
-| E：语音与智能体 | 文字 CLI 已有；ASR/TTS、task 与 S1/Harness 仲裁未接入 | 无网络本地打断、旧提案拒绝、误识别处理与端到端延迟 |
+| E：语音与智能体 | 文字 CLI 已有；ASR 已有（Vosk），TTS 未接入；task 与 S1/Harness 仲裁**已定义（ADR-0010）但未实现** | 无网络本地打断、旧提案拒绝、误识别处理、harness 路径端到端延迟与表达 stub 落地 |
 | F：机械臂 | 六轴隔离夹具和软件动作服务器已实现 | 真实几何/限位/映射/失联策略确认后再做实机适配 |
 
 ## 7. 未因本次重构而解决的问题
@@ -225,7 +235,9 @@ CAN 双板链路已失效并保留为历史资料。
 - 当前 `odom_source:=ekf` 预留选项不会自动启动 EKF；仍需外部提供有效 TF。
 - 相机标定、深度与彩色对齐、硬件 TF、真实里程计质量都需要工程验证。
 - 六轴模型尺寸/限位是测试夹具占位值；没有真实六轴实机支持。
-- `rak_task_executor` 的慢规划是可选 RAI 地点选择，不是当前 Jev/Harness 的统一任务推理。
+- `rak_task_executor` 的慢规划目前只是可选 RAI 地点选择。**ADR-0010 已定义** Jev/Harness
+  的统一仲裁缝与契约，但 `src/rak_harness` 与 `harness_node` 尚未实现，
+  所以这条现在仍是缺口，只是从"没有设计"变成了"有设计、待实现"。
 - `scripts/serial_link_test.py` 是拒绝执行旧 CRC-8 实体串口协议的兼容入口；
   UART v1 PTY-only 测试入口是 `scripts/serial_100hz.py`。
 

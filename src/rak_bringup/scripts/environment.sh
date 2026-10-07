@@ -3,7 +3,7 @@
 
 if [[ -z "${RAK_WORKSPACE:-}" ]]; then
   RAK_WORKSPACE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-  while [[ "$RAK_WORKSPACE" != / && ! -f "$RAK_WORKSPACE/brain/pyproject.toml" ]]; do
+  while [[ "$RAK_WORKSPACE" != / && ! -f "$RAK_WORKSPACE/brain/package.xml" ]]; do
     RAK_WORKSPACE="$(dirname "$RAK_WORKSPACE")"
   done
   if [[ "$RAK_WORKSPACE" == / ]]; then

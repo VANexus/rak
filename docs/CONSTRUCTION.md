@@ -115,11 +115,11 @@ python3 scripts/check_workspace.py --installed
 
 ```bash
 colcon test --build-base build/architecture --packages-select rak_description rak_moveit_config
-env -u PYTHONPATH brain/.venv/bin/python brain/tests/test_ai.py
+PYTHONPATH=brain python3 brain/tests/test_ai.py
 ```
 
-`env -u PYTHONPATH` 对 `brain/.venv` 内的命令是**强制**的：`~/.bashrc` 无条件 source ROS，
-会把 `/opt/ros/jazzy/.../site-packages` 注入 venv，破坏隔离。它**不**适用于 `ros2 run/launch`。
+`rak_agent` 是标准 `ament_python` 包，ROS 节点使用系统 Python；依赖由包清单和 rosdep
+管理，不创建独立 venv。普通 Python 测试通过 `PYTHONPATH=brain` 从源码运行。
 
 ---
 

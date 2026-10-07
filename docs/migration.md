@@ -84,13 +84,17 @@ env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH \
 不要继续加载旧 `install/setup.bash`；本次不自动修改个人 `.bashrc`。
 当前 IDE 的包搜索路径同步到新安装目录，IDE 配置仍为本机未跟踪文件。
 
-## Python 与操作脚本
+## 2026-10-06 ROS 系统 Python 运行方式
 
-- `brain/.venv`、`brain/data`、pip 项目名 `rak-brain` 和 `rak_ai` 导入不变。
-- ROS 引导脚本更名为 `agent_node`，支持在仓库外启动及嵌套安装目录；
-  `RAK_BRAIN_PYTHON` 仍可指定解释器。
-- Laya/RAI 仍是可选依赖，stub 不需要 torch。
-- `agent.launch.py` 现在显式透传 `s1_weights`，默认仍为 `auto`。
+本节 supersede 早期迁移记录中的 venv 和 bootstrap 约定。`brain/` 仍作为
+`ament_python` 包 `rak_agent` 由 colcon 发现，不迁移 episode 数据，也不启动独立
+推理进程；`agent_node` 使用标准 `console_scripts` entry point 和 ROS 系统 Python。
+运行依赖由 `package.xml`/rosdep 管理，Pydantic 使用 Ubuntu 系统包，stub 不需要模型。
+
+TensorRT 是 Laya/Jev 的目标原生运行时，计划在 `rak_agent` 节点进程内调用 Jetson
+系统 TensorRT binding。ONNX、tokenizer、输入动态 shape 和输出类别映射尚未确认，
+因此 TensorRT decider 尚未实现或验收；此文档不代表模型当前可运行。
+
 - 操作脚本迁移至 `src/rak_bringup/scripts/`，共享 `environment.sh`。
 - `RAK_WORKSPACE`、`RAK_INSTALL_PREFIX`、DDS 配置与 ROS domain 可覆盖；
   机器人运行默认使用 Cyclone DDS、domain 47；默认安装目录是
@@ -103,7 +107,7 @@ env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH \
 
 `scripts/check_workspace.py` 校验包命名、构建类型、资源标记、依赖图和
 launch 的显式运行依赖。`--installed` 还校验安装资源与源码一致，
-逐个解析 launch、序列化消息并从仓库外验证智能体引导入口。
+逐个解析 launch、序列化消息并从仓库外验证智能体 console entry point。
 launch 检查使用 `--show-args`，不会打开设备或发出运动命令。
 
 描述与 MoveIt 的旧结构测试接入 CTest，缺少资源时失败而不是静默跳过。

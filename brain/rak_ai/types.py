@@ -16,6 +16,24 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+
+class _Model(BaseModel):
+    """Keep the frozen model API working with Ubuntu's Pydantic 1 package."""
+
+    @classmethod
+    def model_validate(cls, value):
+        validator = getattr(super(), "model_validate", None)
+        if validator is not None:
+            return validator(value)
+        return cls.parse_obj(value)
+
+    def model_dump(self, *args, **kwargs):
+        dumper = getattr(super(), "model_dump", None)
+        if dumper is not None:
+            return dumper(*args, **kwargs)
+        return self.dict(*args, **kwargs)
+
+
 ActionKind = Literal[
     "stop",
     "slow",
@@ -27,7 +45,7 @@ ActionKind = Literal[
 ]
 
 
-class Entity(BaseModel):
+class Entity(_Model):
     """One tracked object, metres, camera frame (+z forward, +x right)."""
 
     id: int
@@ -41,7 +59,7 @@ class Entity(BaseModel):
     score: float = 0.0
 
 
-class SceneState(BaseModel):
+class SceneState(_Model):
     """The world as both System 1 and System 2 see it."""
 
     t: float = 0.0
@@ -73,7 +91,7 @@ class SceneState(BaseModel):
         return head + " | " + " | ".join(parts)
 
 
-class Action(BaseModel):
+class Action(_Model):
     kind: ActionKind
     target_id: int | None = None
     reason: str = ""
@@ -85,7 +103,7 @@ class Tier(str, Enum):
     LOW = "low"
 
 
-class Decision(BaseModel):
+class Decision(_Model):
     """A decision plus enough provenance to audit and to train on."""
 
     action: Action

@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 from .body import MockBody
-from .system1 import Decider, LayaDecider, StubDecider, resolve
+from .system1 import Decider, StubDecider, resolve
 from .system2 import Consultant, StubConsultant
 from .types import Decision, SceneState, Tier
 
@@ -107,10 +107,13 @@ def run(
     force_s2: int | None = None,
     out_dir: Path = EPISODE_DIR,
     verbose: bool = True,
-    weights: str = "auto",
 ) -> Logger:
     body = MockBody(scenario)
-    s1: Decider = StubDecider() if decider == "stub" else LayaDecider(weights=weights)
+    if decider != "stub":
+        raise RuntimeError(
+            f"decider {decider!r} is unavailable; use stub until the TensorRT backend is integrated"
+        )
+    s1: Decider = StubDecider()
     s2 = consultant or StubConsultant()
     log = Logger(out_dir=out_dir)
     log.log(
@@ -187,20 +190,13 @@ def run(
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scenario", default="approach", choices=["approach", "cross", "clear"])
-    p.add_argument("--decider", default="stub", choices=["stub", "laya"])
-    p.add_argument(
-        "--weights",
-        default="auto",
-        choices=["auto", "fp16", "bf16", "fp32"],
-        help="resident weight precision for laya; auto takes the checkpoint's amp dtype "
-        "(half of it -- fp32 is what used to fall off this box's GPU)",
-    )
+    p.add_argument("--decider", default="stub", choices=["stub"])
     p.add_argument("--ticks", type=int, default=50)
     p.add_argument("--force-s2", type=int, default=None, help="force escalation from this tick")
     p.add_argument("--out", default=str(EPISODE_DIR))
     a = p.parse_args()
 
-    log = run(a.scenario, a.ticks, a.decider, force_s2=a.force_s2, out_dir=Path(a.out), weights=a.weights)
+    log = run(a.scenario, a.ticks, a.decider, force_s2=a.force_s2, out_dir=Path(a.out))
     print(f"\nepisode: {log.path}")
 
 

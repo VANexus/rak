@@ -3,7 +3,10 @@ enumerate_net_device: false
 device_num: 1
 device_preset: Default
 
-enable_color: true
+# Color is off: nothing in the stack subscribes to /camera/color/image_raw (navigation
+# runs on /scan, and enable_colored_point_cloud is false), and 1280x800 RGB at 30 fps is
+# ~92 MB/s of copy the CPU pays for and nobody reads. Re-enable when a consumer exists.
+enable_color: false
 color_width: 1280
 color_height: 800
 color_fps: 30
@@ -31,6 +34,14 @@ enable_publish_extrinsic: true
 enable_hardware_noise_removal_filter: true
 enable_noise_removal_filter: false
 
-enable_accel: true
-enable_gyro: true
-enable_sync_output_accel_gyro: true
+# IMU off: heading authority is the Jetson's LSM6DSRTR (ADR-0007), and nothing
+# subscribes to the camera's accel/gyro samples.
+enable_accel: false
+enable_gyro: false
+enable_sync_output_accel_gyro: false
+
+# The SDK builds the cloud on the CPU, one point per depth pixel. At factor 1 that is
+# 1280x800 = 1.02M points/frame; factor 4 is 320x200 = 64k, ~16x less work. Measured on
+# this box: 15.2% -> 4.1% of a core for the camera container. Prefer the GPU node
+# (rak_pointcloud) with enable_point_cloud:=false when a full-resolution cloud is wanted.
+point_cloud_decimation_filter_factor: 4
