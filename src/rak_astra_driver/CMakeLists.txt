@@ -4,8 +4,13 @@ project(rak_astra_driver CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(OrbbecSDK_DIR "/opt/OrbbecSDK_v1.10.18/SDK")
-set(OrbbecSDK_LIB_ABS "/opt/OrbbecSDK_v1.10.18/SDK/lib/libOrbbecSDK.so.1.10.18")
+set(OrbbecSDK_DIR "/opt/OrbbecSDK_v1.10.18/SDK" CACHE PATH
+  "Orbbec SDK 1.10.18 SDK directory (contains include/ and lib/)")
+set(OrbbecSDK_LIB_ABS "${OrbbecSDK_DIR}/lib/libOrbbecSDK.so.1.10.18" CACHE FILEPATH
+  "Orbbec SDK 1.10.18 shared library")
+if(NOT EXISTS "${OrbbecSDK_LIB_ABS}")
+  message(FATAL_ERROR "Orbbec SDK library not found: ${OrbbecSDK_LIB_ABS}. Set OrbbecSDK_DIR to the extracted SDK directory.")
+endif()
 find_path(ORBBecSDK_INC NAMES "libobsensor/ObSensor.hpp"
   PATHS "${OrbbecSDK_DIR}/include" NO_DEFAULT_PATH REQUIRED)
 

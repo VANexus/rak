@@ -50,9 +50,11 @@
 | [0007](0007-unified-ros2-control.md) | 全机统一 `ros2_control`（`mecanum_drive_controller` + `joint_trajectory_controller`），麦轮 IK 移到上位机 | 已接受（**取代 0001**） |
 | [0008](0008-end-effector-and-perception.md) | 末端 = 标准 6 轴 + **舵机夹爪**（第 7 个 PWM 舵机）+ 末端相机；感知 = 深度相机 + 2D 雷达 + 语音 | 已接受 |
 | [0009](0009-urdf-modeling-and-calibration.md) | 无 CAD 时用「参数化 + 图元近似 + chArUco 标定」建 URDF | 已接受 |
+| [0010](0010-jev-harness-arbitration-and-expression.md) | Jev + Harness 任务仲裁：新包 `src/rak_harness` 作传递式仲裁缝；云端 LLM 走独立 `anthropic` 客户端；「呼吸感」分层预留接口 | 已接受（Harness 本体未实现） |
 
-> **当前有效架构 = ADR-0002 + 0003(UART 层) + 0004 + 0005 + 0006 + 0007 + 0008 + 0009。**
+> **当前有效架构 = ADR-0002 + 0003(UART 层) + 0004 + 0005 + 0006 + 0007 + 0008 + 0009 + 0010。**
 > 0001 仅作历史记录，不要按其实施。
 > 0008 初稿曾误记末端为吸嘴，同日已更正为舵机夹爪（见该篇修订记录）。
+> 0010 只定义接口与验收，`src/rak_harness` 与 `harness_node` **尚未创建**；「呼吸感」硬件门全关。
 > 任务与验收见 [`TODO.md`](../../TODO.md)。0004–0006 的结论来自 2026-10-05 的三路专项研究，
 > **有时效性**，涉及版本矩阵/许可/内存的部分在实施前应复核（各篇"参考"节列了来源）。

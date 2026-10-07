@@ -29,7 +29,7 @@ Thumbs.db
 # CodeGraph index
 .codegraph/
 
-# brain: venv and the decision corpus
+# brain: legacy local venv (not used by ROS) and the decision corpus
 brain/.venv/
 brain/data/
 brain/**/__pycache__/

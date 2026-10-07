@@ -11,10 +11,22 @@ os.environ["ROS_LOCALHOST_ONLY"] = "1"
 import rclpy
 from rak_interfaces.msg import Decision
 
-from rak_ai.node import BrainNode, DECISION_TOPIC
+from rak_ai.node import BrainNode, DECISION_TOPIC, _make_decider
 
 
 def main():
+    assert type(_make_decider("stub")).__name__ == "StubDecider"
+    for backend, message in (
+        ("laya", "disabled"),
+        ("tensorrt", "not integrated"),
+    ):
+        try:
+            _make_decider(backend)
+        except RuntimeError as exc:
+            assert message in str(exc)
+        else:
+            raise AssertionError(f"unavailable backend {backend!r} was accepted")
+
     with tempfile.TemporaryDirectory(prefix="rak-agent-smoke-") as output:
         rclpy.init(args=[
             "--ros-args", "-p", "sim:=true", "-p", "decider:=stub",

@@ -18,7 +18,7 @@
 ```bash
 bash src/rak_bringup/scripts/run_lidar.sh
 bash src/rak_bringup/scripts/run_slam.sh odom_source:=none
-ROS_DOMAIN_ID=45 bash src/rak_bringup/scripts/run_nav2.sh
+ROS_DOMAIN_ID=47 bash src/rak_bringup/scripts/run_nav2.sh
 ```
 
 雷达、SLAM、Nav2 不要求桌面。RViz 和 MoveIt demo 默认使用本机 `DISPLAY=:1`，
@@ -27,7 +27,8 @@ ROS_DOMAIN_ID=45 bash src/rak_bringup/scripts/run_nav2.sh
 
 其他可覆盖参数：`RAK_WORKSPACE`、`RAK_INSTALL_PREFIX`、
 `RMW_IMPLEMENTATION`、`ROS_DOMAIN_ID`、`CYCLONEDDS_URI`。
-默认 DDS 为 Cyclone，domain 45。不得让不同链路意外运行在不同 domain。
+默认 DDS 为 Cyclone，运行 domain 为 47。集成测试使用独立 domain 77/187，
+避免连接到运行中的机器人；不得让同一条运行链路意外使用不同 domain。
 
 脚本沿用 `setsid nohup`，退出 SSH 不会自动停止节点。停止时针对对应 launch
 进程组发送 SIGINT 并确认子节点退出，不要使用全机范围的 `pkill -9` 作为日常关闭方式。

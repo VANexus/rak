@@ -3,7 +3,7 @@
 
 if [[ -z "${RAK_WORKSPACE:-}" ]]; then
   RAK_WORKSPACE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-  while [[ "$RAK_WORKSPACE" != / && ! -f "$RAK_WORKSPACE/brain/pyproject.toml" ]]; do
+  while [[ "$RAK_WORKSPACE" != / && ! -f "$RAK_WORKSPACE/brain/package.xml" ]]; do
     RAK_WORKSPACE="$(dirname "$RAK_WORKSPACE")"
   done
   if [[ "$RAK_WORKSPACE" == / ]]; then
@@ -24,7 +24,7 @@ source /opt/ros/jazzy/setup.bash
 source "$RAK_INSTALL_PREFIX/local_setup.bash"
 
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-45}"
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-47}"
 export CYCLONEDDS_URI="${CYCLONEDDS_URI:-file://$(ros2 pkg prefix --share rak_bringup)/config/cyclonedds.xml}"
 
 # Non-GUI chains work headless; only visualization launchers call this.

@@ -28,6 +28,7 @@ public:
     auto dev = pipe_.getDevice();
     auto sensor_list = dev->getSensorList();
     auto config = std::make_shared<ob::Config>();
+    bool color_enabled = false, depth_enabled = false;
 
     for (uint32_t i = 0; i < sensor_list->count(); ++i) {
       auto st = sensor_list->type(i);
@@ -39,10 +40,13 @@ public:
         RCLCPP_INFO(this->get_logger(), "  profile[%u] fmt=%d %ux%u", j, p->format(), profileWidth(p), profileHeight(p));
         const bool supported_color =
             st == OB_SENSOR_COLOR &&
-            (p->format() == OB_FORMAT_RGB || p->format() == OB_FORMAT_BGR);
+            (p->format() == OB_FORMAT_RGB || p->format() == OB_FORMAT_BGR ||
+             p->format() == OB_FORMAT_UYVY || p->format() == OB_FORMAT_YUYV ||
+             p->format() == OB_FORMAT_YUY2 || p->format() == OB_FORMAT_MJPG);
         const bool supported_depth =
             st == OB_SENSOR_DEPTH &&
-            (p->format() == OB_FORMAT_Y16 || p->format() == OB_FORMAT_Z16);
+            (p->format() == OB_FORMAT_Y16 || p->format() == OB_FORMAT_Z16 ||
+             p->format() == OB_FORMAT_Y11 || p->format() == OB_FORMAT_Y12);
         if (!chosen && (supported_color || supported_depth)) {
           chosen = p;
         }
@@ -50,16 +54,25 @@ public:
       if (chosen) {
         RCLCPP_INFO(this->get_logger(), "  -> enabling fmt=%d %ux%u", chosen->format(), profileWidth(chosen), profileHeight(chosen));
         config->enableStream(chosen);
+        color_enabled = color_enabled || st == OB_SENSOR_COLOR;
+        depth_enabled = depth_enabled || st == OB_SENSOR_DEPTH;
       } else if (st == OB_SENSOR_COLOR || st == OB_SENSOR_DEPTH) {
         RCLCPP_ERROR(
             this->get_logger(),
-            "No directly supported color/depth profile. Configure RGB/BGR color and "
-            "Y16/Z16 depth; compressed and packed formats are not published as raw images.");
+            "No supported color/depth profile; pipeline will not start.");
       }
+    }
+    if (!color_enabled || !depth_enabled) {
+      throw std::runtime_error("Astra requires supported color and depth profiles");
     }
     pipe_.start(config, [this](std::shared_ptr<ob::FrameSet> frameset) {
       RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "FrameSet received, count=%u", frameset->frameCount());
-      onFrameset(frameset);
+      try {
+        onFrameset(frameset);
+      } catch (const std::exception &error) {
+        RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+                             "Astra frame processing failed: %s", error.what());
+      }
     });
     RCLCPP_INFO(this->get_logger(), "Astra S pipeline started");
   }
@@ -75,12 +88,12 @@ private:
 
   static uint32_t profileWidth(const std::shared_ptr<ob::StreamProfile> &sp) {
     if (!sp) return 0;
-    auto vp = std::dynamic_pointer_cast<ob::VideoStreamProfile>(sp);
+    auto vp = sp->is<ob::VideoStreamProfile>() ? sp->as<ob::VideoStreamProfile>() : nullptr;
     return vp ? vp->width() : 0;
   }
   static uint32_t profileHeight(const std::shared_ptr<ob::StreamProfile> &sp) {
     if (!sp) return 0;
-    auto vp = std::dynamic_pointer_cast<ob::VideoStreamProfile>(sp);
+    auto vp = sp->is<ob::VideoStreamProfile>() ? sp->as<ob::VideoStreamProfile>() : nullptr;
     return vp ? vp->height() : 0;
   }
 
@@ -88,7 +101,8 @@ private:
       const std::shared_ptr<ob::Frame> &frame) {
     if (!frame) return {};
     auto stream = frame->getStreamProfile();
-    return std::dynamic_pointer_cast<ob::VideoStreamProfile>(stream);
+    return stream && stream->is<ob::VideoStreamProfile>()
+        ? stream->as<ob::VideoStreamProfile>() : nullptr;
   }
 
   sensor_msgs::msg::CameraInfo makeCameraInfo(
@@ -131,7 +145,21 @@ private:
   }
 
   void publishColor(
-      const std::shared_ptr<ob::ColorFrame> &frame, const rclcpp::Time &stamp) {
+      const std::shared_ptr<ob::ColorFrame> &source_frame, const rclcpp::Time &stamp) {
+    auto frame = source_frame;
+    // Use the SDK decoder; packed/compressed payloads are never copied as RGB.
+    switch (frame->format()) {
+      case OB_FORMAT_UYVY: color_converter_.setFormatConvertType(FORMAT_UYVY_TO_RGB); break;
+      case OB_FORMAT_YUYV:
+      case OB_FORMAT_YUY2: color_converter_.setFormatConvertType(FORMAT_YUYV_TO_RGB); break;
+      case OB_FORMAT_MJPG: color_converter_.setFormatConvertType(FORMAT_MJPG_TO_RGB); break;
+      default: break;
+    }
+    if (frame->format() != OB_FORMAT_RGB && frame->format() != OB_FORMAT_BGR) {
+      auto converted = color_converter_.process(frame);
+      if (!converted) return;
+      frame = converted->as<ob::ColorFrame>();
+    }
     const uint32_t w = frame->width(), h = frame->height();
     if (w == 0 || h == 0 || !frame->data()) return;
     const auto format = frame->format();
@@ -164,7 +192,7 @@ private:
           source + static_cast<size_t>(row) * source_stride, row_bytes);
     }
     color_pub_->publish(*img);
-    color_info_pub_->publish(makeCameraInfo(frame, stamp, w, h, color_frame_id_));
+    color_info_pub_->publish(makeCameraInfo(source_frame, stamp, w, h, color_frame_id_));
   }
 
   void publishDepth(
@@ -226,6 +254,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr color_info_pub_, depth_info_pub_;
   std::string color_frame_id_;
   std::string depth_frame_id_;
+  ob::FormatConvertFilter color_converter_;
   ob::Pipeline pipe_;
 };
 

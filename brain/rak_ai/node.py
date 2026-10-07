@@ -6,15 +6,15 @@ drift away from the data. A watchdog covers the other case: perception stopping
 entirely.
 
 What crosses the wire is perception IN and decisions OUT, which are the two
-edges the design allows. System 1 does not cross: Laya is constructed and
-called in this process, exactly as in `python -m rak_ai.loop`. Putting it
+edges the design allows. System 1 does not cross: its decider is constructed
+and called in this process. Putting it
 behind a topic or a service would put a cross-process boundary on the fast
 path, which the architecture forbids.
 
 ROS must be sourced before this module is imported -- `rclpy` comes from
 /opt/ros/jazzy and `rak_interfaces.msg` from the colcon install space.
 
-    ros2 run rak_agent agent_node --ros-args -p decider:=laya -p sim:=true
+    ros2 run rak_agent agent_node --ros-args -p decider:=stub -p sim:=true
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from rak_interfaces.msg import TrackedObjects
 
 from .body import MockBody
 from .loop import Logger, _drain  # noqa: PLC2701 -- same package, one tick pipeline
-from .system1 import Decider, LayaDecider, StubDecider, guard, resolve
+from .system1 import Decider, StubDecider, guard, resolve
 from .system2 import Consultant, StubConsultant
 from .types import Action, Decision, Entity, SceneState, Tier
 
@@ -104,6 +104,22 @@ def _state_to_msg(state: SceneState, clock, frame_id: str) -> TrackedObjects:
     return msg
 
 
+def _make_decider(name: str, model_dir: str = "") -> Decider:
+    if name == "stub":
+        return StubDecider()
+    if name == "tensorrt":
+        # Imported here so the stub path never loads the TensorRT binding.
+        from .tensorrt_decider import TensorRtDecider
+
+        return TensorRtDecider(model_dir=model_dir or None)
+    if name == "laya":
+        raise RuntimeError(
+            "The legacy PyTorch Laya backend is disabled in the ROS node; "
+            "use decider:=tensorrt (the built engine) instead"
+        )
+    raise ValueError(f"unknown decider {name!r}; expected stub or tensorrt")
+
+
 class BrainNode(Node):
     """Runs guard/gate/resolve over live perception and publishes the decision."""
 
@@ -112,13 +128,11 @@ class BrainNode(Node):
 
         # -- parameters -------------------------------------------------
         self.declare_parameter("decider", "stub")
+        # Empty -> the decider searches for brain/data/models/laya-typed-decisions
+        # (see tensorrt_decider._default_model_dir); set it when the assets live
+        # somewhere else.
+        self.declare_parameter("decider_model_dir", "")
         self.declare_parameter("consultant", "stub")
-        # auto|fp16|bf16|fp32: the resident weight precision. "auto" takes the
-        # checkpoint's own amp dtype, which halves the model (803 MiB vs 1606 MiB)
-        # with one rounding step instead of two -- on this board the fp32 peak is
-        # what pushed System 1 off the GPU. fp32 is the escape hatch if a decision
-        # ever looks wrong.
-        self.declare_parameter("s1_weights", "auto")
         self.declare_parameter("scenario", "approach")
         self.declare_parameter("sim", False)
         self.declare_parameter("rate", 10.0)  # sim + watchdog Hz
@@ -132,7 +146,7 @@ class BrainNode(Node):
         self.declare_parameter("frame_id", "stereo_camera")  # matches eye
         self.declare_parameter("out", "")  # "" -> brain/data/episodes
         self.declare_parameter("verbose", True)
-        # Out-of-domain Laya rarely clears the gate, so escalation would
+        # Out-of-domain System 1 answers rarely clear the gate, so escalation would
         # otherwise fire on every tick while System 2 takes 12-30 s to answer:
         # hundreds of live threads, and answers that were stale on arrival.
         self.declare_parameter("max_s2_in_flight", 1)
@@ -154,11 +168,8 @@ class BrainNode(Node):
 
         # -- the two halves of the brain, both in this process ----------
         decider = str(g("decider"))
-        self._s1: Decider = (
-            StubDecider() if decider == "stub" else LayaDecider(weights=str(g("s1_weights")))
-        )
-        # "cuda"/"cpu": laya swallows CUDA OOM and degrades to CPU, which on this
-        # box is 8x slower -- slower than the sensor rate, so it must not be quiet.
+        self._s1 = _make_decider(decider, str(g("decider_model_dir")))
+        # Preserve device/weight provenance in episode metadata across decider backends.
         self._s1_device = str(getattr(self._s1, "device", ""))
         self._s1_weights = str(getattr(self._s1, "weights", ""))
         self._s1_place_error = str(getattr(self._s1, "place_error", ""))
@@ -219,8 +230,6 @@ class BrainNode(Node):
         self.create_timer(1.0 / self._rate, self._watchdog)
         self.get_logger().info(
             f"brain up: decider={decider} s1_device={self._s1_device or '-'} "
-            f"s1_weights={self._s1_weights or '-'}"
-            f"{f' ({self._s1_weights_mib} MiB resident)' if self._s1_weights_mib else ''} "
             f"sim={self._body is not None} "
             f"perception={PERCEPTION_TOPIC} decision={DECISION_TOPIC}"
         )
@@ -229,11 +238,8 @@ class BrainNode(Node):
         self.get_logger().info(f"corpus: {self._log.path.parent}")
         if self._s1_device == "cpu":
             self.get_logger().warn(
-                "System 1 is on CPU (~1.6 s/predict, vs ~0.19 s on GPU): slower "
-                "than the sensor rate, so frames are dropped. This box has 3.4 GB "
-                "of unified memory and the model costs ~800 MiB at s1_weights=auto "
-                "(~1600 MiB at fp32, which is what used to fail) -- free some, or "
-                "run with -p decider:=stub."
+                "System 1 reports CPU execution; verify that this backend meets "
+                "the sensor-rate and latency requirements."
                 + (f" Placement said: {self._s1_place_error[:200]}" if self._s1_place_error else "")
             )
 
@@ -466,8 +472,8 @@ def _rai(consultant: str) -> Consultant:
 def _episode_dir(out: str):
     """Where the corpus is appended. `out` wins; "" means "the one corpus".
 
-    The package-relative default is the source tree when the brain runs
-    editable -- the CLI loop. `ros2 run rak_agent agent_node` runs the *installed*
+    The package-relative default is the source tree for local tests.
+    `ros2 run rak_agent agent_node` runs the *installed*
     copy, where `__file__` sits under `<ws>/install/`, a disposable tree that
     `rm -rf install` would take the corpus with. From there walk back out to
     the workspace and use `brain/data/episodes`: the same directory the CLI
@@ -478,19 +484,20 @@ def _episode_dir(out: str):
     if out:
         return Path(out)
     pkg = Path(__file__).resolve().parent.parent  # .../site-packages
-    if (pkg / "pyproject.toml").exists():  # source or editable install
+    if (pkg / "package.xml").exists():  # source tree
         return pkg / "data" / "episodes"
     # <ws>/install/<pkg>/lib/pythonX.Y/site-packages
     for parent in pkg.parents:
-        if parent.name == "install" and (parent.parent / "brain" / "pyproject.toml").exists():
+        if parent.name == "install" and (parent.parent / "brain" / "package.xml").exists():
             return parent.parent / "brain" / "data" / "episodes"
     return pkg / "data" / "episodes"  # unknown layout: keep it beside the package
 
 
 def main(args=None) -> int:
     rclpy.init(args=args)
-    node = BrainNode()
+    node = None
     try:
+        node = BrainNode()
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass  # SIGINT/SIGTERM: the finally below still flushes the episode
@@ -503,8 +510,9 @@ def main(args=None) -> int:
         if rclpy.ok():
             raise
     finally:
-        node.shutdown()
-        node.destroy_node()
+        if node is not None:
+            node.shutdown()
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
     return 0

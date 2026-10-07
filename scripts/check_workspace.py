@@ -9,8 +9,8 @@ import importlib
 import os
 from pathlib import Path
 import re
-import runpy
 import subprocess
+import sys
 import tempfile
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
@@ -149,18 +149,15 @@ def check_installed(found) -> None:
         module_path = Path(module.__file__).resolve()
         assert prefix in module_path.parents, f"{module_name} imported outside install: {module_path}"
 
-    bootstrap_path = Path(get_package_prefix("rak_agent")) / "lib/rak_agent/agent_node"
-    bootstrap = runpy.run_path(str(bootstrap_path))
-    with patch.object(Path, "cwd", return_value=Path("/tmp")):
-        candidates = bootstrap["_candidates"]()
-    interpreter = next((path for path in candidates if bootstrap["_usable"](path)), None)
-    assert interpreter is not None, "agent bootstrap found no usable interpreter"
+    agent_node = Path(get_package_prefix("rak_agent")) / "lib/rak_agent/agent_node"
+    assert agent_node.is_file(), f"missing ROS console entry point: {agent_node}"
+    assert "rak_ai.node" in agent_node.read_text(), "agent_node is not a ROS console entry point"
     result = subprocess.run(
-        [str(interpreter), str(ROOT / "brain/tests/test_ros_smoke.py")],
+        [sys.executable, str(ROOT / "brain/tests/test_ros_smoke.py")],
         cwd="/tmp", text=True, capture_output=True, timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    print("OK installed interfaces, Python relay and agent bootstrap (outside workspace)")
+    print("OK installed interfaces, Python relay and ROS agent entry point")
 
 
 def main() -> None:

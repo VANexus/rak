@@ -20,10 +20,55 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EqualsSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 
+#: The servers `navigate_to_pose_w_replanning_and_recovery.xml` actually resolves.
+#: `nav2_bringup`'s navigation_launch.py always starts ten; the four dropped here were
+#: measured at ~19% of a core on an otherwise idle stack, doing nothing this robot asks
+#: for -- `smoother_server` (the default BT never calls it), `route_server` and
+#: `docking_server` (no route or dock use case), `waypoint_follower` (the task executor
+#: drives NavigateToPose, not NavigateThroughPoses).
+_NAV2_SERVERS = (
+    ("nav2_controller", "controller_server", "controller_server", True),
+    ("nav2_planner", "planner_server", "planner_server", False),
+    ("nav2_behaviors", "behavior_server", "behavior_server", True),
+    ("nav2_bt_navigator", "bt_navigator", "bt_navigator", False),
+    ("nav2_velocity_smoother", "velocity_smoother", "velocity_smoother", False),
+    ("nav2_collision_monitor", "collision_monitor", "collision_monitor", False),
+)
+
+
+def _navigation_servers(params_file, use_sim_time):
+    """Start the lifecycle servers and their manager directly, minus the dead weight."""
+    remappings = [("/tf", "tf"), ("/tf_static", "tf_static")]
+    nodes = []
+    for package, executable, name, remap_cmd_vel in _NAV2_SERVERS:
+        nodes.append(
+            Node(
+                package=package,
+                executable=executable,
+                name=name,
+                output="screen",
+                parameters=[params_file, {"use_sim_time": use_sim_time}],
+                remappings=remappings + ([("cmd_vel", "cmd_vel_nav")] if remap_cmd_vel else []),
+            )
+        )
+    nodes.append(
+        Node(
+            package="nav2_lifecycle_manager",
+            executable="lifecycle_manager",
+            name="lifecycle_manager_navigation",
+            output="screen",
+            parameters=[
+                {"autostart": True},
+                {"use_sim_time": use_sim_time},
+                {"node_names": [name for _, _, name, _ in _NAV2_SERVERS]},
+            ],
+        )
+    )
+    return nodes
+
 
 def generate_launch_description():
     nav_share = get_package_share_directory("rak_navigation")
-    nav2_share = get_package_share_directory("nav2_bringup")
     nav2_params = os.path.join(nav_share, "config", "nav2_params.yaml")
     backend = LaunchConfiguration("motion_backend")
     use_sim_time = LaunchConfiguration("use_sim_time")
@@ -68,14 +113,5 @@ def generate_launch_description():
             }],
             condition=IfCondition(EqualsSubstitution(backend, "stub")),
         ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(nav2_share, "launch", "navigation_launch.py")
-            ),
-            launch_arguments={
-                "params_file": nav2_params,
-                "use_sim_time": use_sim_time,
-                "autostart": "True",
-            }.items(),
-        ),
+        *_navigation_servers(nav2_params, use_sim_time),
     ])

@@ -15,6 +15,8 @@ Read these before changing behavior — they record decisions the code does not 
 - `docs/CONSTRUCTION.md` — assembly order and deployment checklist; host-side board changes.
 - `docs/adr/` — **immutable** architecture decisions (why, and what was rejected). Index in
   `docs/adr/README.md`. `ADR-0007` is the current control architecture and **supersedes ADR-0001**.
+  `ADR-0010` defines the Jev↔Harness arbitration seam and the reserved "呼吸感" expression
+  interface; it is **design-only** — `src/rak_harness` / `harness_node` do not exist yet.
 - `docs/hardware_acceptance.md` — gates that must pass before any physical base/arm test.
 - `docs/migration.md` — the 2026-10-04 unified `rak_` package rename (old name → new name table).
 - `TODO.md` — prioritized roadmap (P0–P3). Tasks only; rationale lives in the ADRs.
@@ -78,13 +80,13 @@ Two facts that are easy to get wrong:
 | `src/rak_can_driver` | CAN v3 chassis host stack (python-can, exec `chassis_can_node`). **Docs mark it deprecated/reserved** after the topology change; the code is not annotated yet |
 | `src/rak_serial_link` | CAN v3 frames over UART (execs `serial_link_node`, `serial_link_cli`). Same deprecated/reserved status |
 | `src/rak_bringup` | Integration entry (`agent.launch.py`, `task_navigation.launch.py`, `base_uart.launch.py`), DDS config, operator scripts |
-| `brain/` | Decision layer. ROS package `rak_agent`, Python module `rak_ai`, pip project `rak-brain` |
+| `brain/` | Decision layer. `ament_python` ROS package `rak_agent`, Python module `rak_ai`; system Python runtime |
 | `src/vendor/*` | Leishen lidar + `rf2o`. Third-party, **read-only** |
 
-`brain/` stays at the repo root on purpose: its `.venv`, episode data and pip workflow do
-not move with the ROS package name. Its `COLCON_IGNORE` is gone deliberately — do not
-re-add it. `depth` / `mind` / `world` / `forge` / `nerve` are roadmap names; they do not
-exist here.
+`brain/` stays at the repo root to preserve the source and episode-data location. It is
+built and installed by colcon as a standard ROS package; it has no dedicated venv or
+inference service process. Its `COLCON_IGNORE` is gone deliberately — do not re-add it.
+`depth` / `mind` / `world` / `forge` / `nerve` are roadmap names; they do not exist here.
 
 ## Build & verify
 
@@ -106,19 +108,24 @@ colcon test --build-base build/architecture --install-base install/architecture 
 colcon test-result --test-result-base build/architecture --verbose
 ROS_DOMAIN_ID=77 python3 -m pytest src/rak_task_executor/test src/rak_arm_simulation/test
 ROS_DOMAIN_ID=77 PYTHONPATH=src/rak_base_driver python3 -m pytest src/rak_base_driver/test
-env -u PYTHONPATH brain/.venv/bin/python brain/tests/test_ai.py
+PYTHONPATH=brain python3 brain/tests/test_ai.py
+PYTHONPATH=brain python3 brain/tests/test_task_intent.py
 ```
+
+Install package dependencies with rosdep. Do not create a project venv or install generic
+CUDA/PyTorch wheels. The target in-process TensorRT decider is not implemented until the
+ONNX and tokenizer contract is verified.
 
 Use `build/architecture` + `install/architecture`, never the old `build/` / `install/`
 artifacts. Decision-layer-only work skips the GPU packages: `--packages-up-to rak_agent`.
 ROS integration tests need the install overlay sourced and an isolated `ROS_DOMAIN_ID`;
-they connect only to fake action servers and must never touch real UART/CAN. Treat
-`colcon build` + `brain/tests/test_ai.py` as the two checks to pass before claiming done.
+they connect only to fake action servers and must never touch real UART/CAN. Runtime
+operator scripts use Cyclone DDS on domain 47 by default; test domains 77/187 stay isolated.
+Treat `colcon build` + `brain/tests/test_ai.py` as the two checks to pass before claiming done.
 There is no CI, linter, formatter or pre-commit config in this repo.
 
-`env -u PYTHONPATH` is mandatory for anything run inside `brain/.venv`: `~/.bashrc` sources
-ROS unconditionally and injects `/opt/ros/jazzy/.../site-packages` into the venv, defeating
-its isolation. It does **not** apply to `ros2 run`/`ros2 launch`, which need that PYTHONPATH.
+The ROS node runs directly under the ROS system Python. `package.xml` declares
+`python3-pydantic`; JetPack provides the TensorRT Python binding.
 
 ## Entry points
 
@@ -136,10 +143,9 @@ ros2 run rak_base_driver base_uart_node
 ros2 launch rak_moveit_config demo.launch.py         # legacy five-axis demo
 ros2 launch rak_moveit_config six_axis_sim.launch.py # six-axis fixture
 ros2 launch rak_description view_urdf.launch.py
-ros2 launch rak_bringup agent.launch.py decider:=laya sim:=true
+ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
 ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 ros2 run rak_stereo_driver stereo_node
-# -p s1_weights:=fp32 is the escape hatch if a decision ever looks wrong; see Gotchas.
 sudo scripts/rak-mode.sh status | headless | desktop   # board memory/DMA mode
 ```
 
@@ -149,7 +155,7 @@ base TF. Never run two Nav2 instances or two `/cmd_vel` end adapters. `task_navi
 with `motion_backend:=hardware` only selects the host UART adapter — `hardware_enable` is still
 false, so the device is not opened; a parsed launch is not firmware compatibility. Operator
 launchers live in `src/rak_bringup/scripts/run_*.sh` and share `environment.sh` (they resolve
-the repo from their own path, default DDS Cyclone, domain 45, logs to `/tmp/*_run.log`); see
+the repo from their own path, default DDS Cyclone, domain 47, logs to `/tmp/*_run.log`); see
 that directory's `README.md`.
 
 ## Architecture
@@ -178,27 +184,35 @@ implementation and the subtle part:
 - Images currently cross to host memory as `sensor_msgs/Image`; the cross-node GPU
   zero-copy pipeline is a goal, not a current fact.
 
-**`rak_agent`** (`brain/rak_ai/`) is the decision layer, shipped both as the pip package
-`rak-brain` and the `ament_python` package `rak_agent`. All entry points share one policy,
+**`rak_agent`** (`brain/rak_ai/`) is the decision layer, built as the `ament_python` ROS
+package `rak_agent` and run with a standard console entry point. All entry points share one policy,
 `system1.resolve()`:
 - `system1.py` — fast path. `guard()` is the deterministic geometric veto (real authority);
-  `gate()` only picks the escalation tier. Deciders: `StubDecider`, `LayaDecider`.
+  `gate()` only picks the escalation tier. `StubDecider` is the supported ROS backend;
+  the legacy PyTorch `LayaDecider` is not used by `agent_node`.
 - `system2.py` — slow path behind a `Consultant` protocol: `StubConsultant`,
   `RaiConsultant` (drives RAI's LLM plumbing directly, LangGraph underneath).
 - `node.py` — ROS edge. Subscribes `/perception/tracked_objects` (BEST_EFFORT, keep-last-1:
   newest frame only, a backlog is worse than a gap), publishes `/brain/decision` (RELIABLE,
   depth 10: the consumer is an actuator). Params include `sim`, `decider`, `consultant`,
-  `scenario`, `s1_weights`, `rate`, `force_s2`, `max_state_age`, `max_s2_in_flight`,
+  `scenario`, `rate`, `force_s2`, `max_state_age`, `max_s2_in_flight`,
   `scene`, `flags`, `frame_id`, `out`.
 - `task_intent.py` — deterministic text-intent parsing (waypoint alias allow-list) used by
   `rak_task_executor`; a **separate** path from `resolve()`.
 - `loop.py` — no-ROS tick loop (`sense → guard → decide → escalate → act → log`), writes
   JSONL episodes to `brain/data/episodes/`. `body.py` — `Body` protocol + `MockBody`
   scenarios. `types.py` — the frozen S1/S2 contract.
-- `scripts/agent_node` is a stdlib-only bootstrap, not a `console_scripts` entry point:
-  colcon builds scripts with its system `python3`, which cannot `import pydantic`. It
-  re-execs `$RAK_BRAIN_PYTHON` or `<repo>/brain/.venv/bin/python`, so the venv never needs
-  activating at build time.
+- `agent_node` is a standard `console_scripts` entry point. Runtime dependencies are
+  installed as ROS/system packages; the node does not switch interpreters.
+
+**`rak_harness`** (ADR-0010) is the **planned** slow-path task system — a standard ROS 2 package
+`src/rak_harness` with node `harness_node`, started beside `agent_node`. It owns task context,
+tool whitelist, budget, timeouts, event summaries and failure recovery, and talks to a cloud LLM
+through a **separate `anthropic` client** pointed at `https://api.deepseek.com/anthropic`
+(key from `ANTHROPIC_API_KEY`, never `brain/config.toml`). It emits structured proposals only
+(waypoint alias / plan revision / clarification / no-op) and never velocity or joint commands.
+**It does not exist yet** — ADR-0010 defines the interface and the stub contract, and the package
+is created at implementation time, not before.
 
 **`rak_task_executor`** owns the single navigation-task lifecycle: `/task/execute` (Action),
 `/task/control` (Service), `/task/status` (status), driving Nav2 `NavigateToPose`. Pause is
@@ -225,6 +239,12 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
 
 - **System 1 (Laya) is a direct function call.** Never route it through an orchestration
   framework or a cross-process boundary. The RAI harness belongs only on the System 2 slow path.
+- **Jev does not reach the task executor directly (ADR-0010).** The only new consumer of
+  `/brain/decision` is the Harness node, and it is context only — never authority. Jev's path to
+  execution is transitive: `/brain/decision` → Harness → `/harness/proposal` → `rak_task_executor`,
+  which accepts a proposal only if `task_id`/`revision` match, `expires_at` is in the future, and
+  the waypoint is in the configured allow-list. `rak_task_executor` must not subscribe to
+  `/brain/decision`. Harness emits structured goals only — never velocity or joint commands.
 - **`guard()` is the only authority** (deterministic geometric veto, overrides everything).
   `gate()` only decides escalation tier. System 2 may narrow authority, never widen it.
   Laya's confidence is out-of-domain and untrusted — a malformed model answer is a normal
@@ -240,11 +260,13 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   `allow_hardware=false`, and three speed limits that must all be finite positive before ARM —
   `0.0` is not "unlimited/pass-through", and non-zero Twist is rejected until armed. Never
   relax a default to ARM as a shortcut. A launch argument is not firmware compatibility.
-- `--decider stub` is the default and must stay runnable without torch or a model — torch on
-  aarch64/JetPack is a real install risk. `laya`/`rai` are optional extras in
-  `brain/pyproject.toml`; do not make them hard dependencies.
-- LLM key comes from `OPENAI_API_KEY`; `brain/config.toml` points `[openai]` at SiliconFlow
-  and must never contain the key.
+- `--decider stub` is the default and must stay runnable without a model. The target System 1
+  runtime is in-process TensorRT from JetPack; do not add a model service or generic
+  CUDA/PyTorch wheel dependency. The TensorRT decider is not implemented yet.
+- **Two LLM keys, two providers.** RAI's slow path reads `OPENAI_API_KEY` (SiliconFlow,
+  `brain/config.toml [openai]`); the ADR-0010 Harness client reads `ANTHROPIC_API_KEY`
+  (DeepSeek's Anthropic-compatible endpoint). Do not share one variable across providers, and
+  `brain/config.toml` must never contain either key.
 - ROS message type identity includes the package name: `rak_interfaces/msg/Decision` does not
   interoperate with the old `core/msg/Decision`. External nodes must be rebuilt; old rosbags
   need explicit type migration.
@@ -280,7 +302,8 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   not compare benchmarks across power/clocks states.**
 - **nvJPEG / stereo fps and the S1 latency are 10 W-mode numbers**; the EMC bandwidth cap
   applies. Do not assume a benchmark is comparable after any power change.
-- **Laya costs ~1.4 GB of this box's 3.4 GB unified memory** to sit on the GPU: ~804 MiB of
+- **The retired PyTorch/Laya path cost ~1.4 GB of this box's 3.4 GB unified memory** on the
+  GPU: ~804 MiB of
   bf16 weights (421M params) plus ~600 MiB of CUDA context and cuDNN/cuBLAS workspace. The
   checkpoint is F16 on disk, but `laya.load()` builds in torch's *default* dtype (fp32) and
   `load_state_dict` copies up, so weights used to sit resident at 1606 MiB; on Tegra CUDA's
@@ -288,33 +311,26 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   the GPU side at the same moment — `laya.load(model)` OOMed and fell back to CPU before
   anything could be cast. `LayaDecider` therefore loads on CPU with the default dtype already
   set to the checkpoint's `amp_dtype` (bf16) and places afterwards, so fp32 never exists.
-  `s1_weights=auto|fp16|bf16|fp32` selects it; `auto` follows the checkpoint.
+  `s1_weights=auto|fp16|bf16|fp32` selected it. This is historical PyTorch backend
+  behavior only; do not install or select it for current Jetson runs.
 - Half weights only run where autocast is on, and laya only turns it on for CUDA (CPU bf16 is
   the documented `LAYA_CPU_AMP=bf16`). Without it the forward dies in `F.linear` with
-  "mat1 and mat2 must have the same dtype". So `LayaDecider` degrades to fp32 when there is
-  no CUDA rather than hand back a model that cannot run.
-- If it does not fit, `laya` catches the CUDA OOM itself and drops to CPU at ~1.6 s/predict
-  — slower than the sensor rate, with no exception raised. `LayaDecider.device/.weights/
-  .place_error` and the node's `s1_device=`/`s1_weights=` startup fields say which one you
-  got; `agent_node` warns on CPU. Keep baseline RAM low before running `decider:=laya`.
-- The fp16/bf16 cast is verified, not assumed: `brain/tests/test_laya_fp16_parity.py`
-  compares fp32 against the cast over 90 states and asserts on what `resolve()` *executes*,
-  not the model's label — at LOW tier the label is discarded and the geometric fallback
-  runs. Measured: 0 executed-action / source / tier flips, max |dp| 0.004, 5 label flips all
-  at LOW. Autocast does not cover LayerNorm/embeddings/softmax, which is why it must run.
+  "mat1 and mat2 must have the same dtype". The legacy `LayaDecider` degraded to fp32 when
+  there was no CUDA; do not use it for current Jetson runs.
+- If it did not fit, `laya` caught CUDA OOM and dropped to CPU at ~1.6 s/predict — slower
+  than the sensor rate. This is historical only; the ROS node rejects `decider:=laya` and
+  `decider:=tensorrt` until TensorRT assets are integrated.
+- The legacy PyTorch/Laya parity test measured the executed policy over 90 states. It does
+  not qualify TensorRT; a new engine needs separate logits/probability parity and
+  `resolve()` behavior tests before enabling it.
 - **System 2 latency is 12–30 s per call** (measured), so S2 is fire-and-forget in a thread
   and replies are applied on a later tick. `_drain()` currently only *records* replies; it
   does not execute them. The S1 callback also precedes safety resolution, so this prototype
   is **not** an independent real-time safety controller.
 - C++ is C++17 with `-Wall -Wextra -Wpedantic` in the GPU/stereo packages; `rak_stereo_driver`
   runs `ament_lint_auto` under `BUILD_TESTING`, `rak_gpu` has no functional tests.
-- `brain/data/`, `brain/.venv/`, `build/`, `install/`, `log/` are gitignored. Stray
+- `brain/data/`, `build/`, `install/`, `log/` are gitignored. Stray
   `frames_*.gv` / `frames_*.pdf` at the root are debugging artifacts, not deliverables.
-- `brain/pyproject.toml` says `dynamic = ["requires-python"]` and `setup.py` supplies the
-  value **on purpose**: setuptools' pyproject loader turns `requires-python` into a
-  `SpecifierSet` object, and colcon reads the setup.py distribution through
-  `ast.literal_eval`, so moving it back under `[project]` makes `colcon build` fail with
-  `SyntaxError: invalid syntax (<unknown>, line 1)`.
 - `scripts/serial_100hz.py` is the PTY-only UART v1 test. `scripts/serial_link_test.py` is a
   **refusal-only** compatibility stub for the retired CRC-8 physical-port protocol — keep it
   refusing (exit 2); do not restore it to a sending version.
