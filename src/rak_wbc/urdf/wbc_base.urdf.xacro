@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<!--
+  wbc_base.urdf.xacro — WBC 分析模型基座（ADR-0011 D3）。
+
+  [AI] 它是"平面虚拟关节 + 底盘基座 + 臂安装关节"的最小骨架，与 rak_arm.urdf.xacro
+  在运行时合并为单一 URDF（model_builder），只服务 Pinocchio 求解与桌面数值测试；
+  不是 RViz/Gazebo 的可视化模型，也不复制臂几何。
+
+  质量/安装位姿为占位值（ADR-0011 待闭合 #2/#3），实测后在此单点更新。
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rak_wbc">
+
+  <xacro:arg name="base_mass" default="1.2"/>
+  <xacro:arg name="base_com_z" default="0.05"/>
+  <xacro:arg name="mount_x" default="0.0"/>
+  <xacro:arg name="mount_y" default="0.0"/>
+  <xacro:arg name="mount_z" default="0.12"/>
+
+  <!-- 世界系锚点：平面虚拟关节链 x → y → yaw，速度语义见 spec §3.2 -->
+  <link name="wbc_world"/>
+
+  <joint name="wbc_x_joint" type="prismatic">
+    <parent link="wbc_world"/>
+    <child link="wbc_x_link"/>
+    <origin xyz="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-10.0" upper="10.0" effort="0.0" velocity="10.0"/>
+  </joint>
+  <!-- 虚拟连接不承载质量：不给 inertial，CoM 只由 base_link 与臂贡献 -->
+  <link name="wbc_x_link"/>
+
+  <joint name="wbc_y_joint" type="prismatic">
+    <parent link="wbc_x_link"/>
+    <child link="wbc_y_link"/>
+    <origin xyz="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-10.0" upper="10.0" effort="0.0" velocity="10.0"/>
+  </joint>
+  <link name="wbc_y_link"/>
+
+  <joint name="wbc_yaw_joint" type="revolute">
+    <parent link="wbc_y_link"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793"
+           effort="0.0" velocity="10.0"/>
+  </joint>
+
+  <!-- 底盘基座：占位质量/惯量（TODO(measured)：实车称重后回填） -->
+  <link name="base_link">
+    <inertial>
+      <mass value="$(arg base_mass)"/>
+      <origin xyz="0 0 $(arg base_com_z)"/>
+      <inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01"/>
+    </inertial>
+  </link>
+
+  <!-- 臂安装：base_link → arm_base_link。
+       占位安装位姿（TODO(measured)）：安装面高度计在整车 URDF（见 rak_arm.urdf.xacro 头注）。 -->
+  <joint name="arm_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="arm_base_link"/>
+    <origin rpy="0 0 0" xyz="$(arg mount_x) $(arg mount_y) $(arg mount_z)"/>
+  </joint>
+
+</robot>
