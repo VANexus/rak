@@ -20,6 +20,7 @@ pluginlib_export_plugin_description_file(hardware_interface rak_hardware_plugin.
 add_library(rak_hardware_plugin SHARED
   src/protocol.cpp
   src/serial_session.cpp
+  src/can_session.cpp
   src/rak_system.cpp
 )
 target_include_directories(rak_hardware_plugin PUBLIC

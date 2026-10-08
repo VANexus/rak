@@ -2,6 +2,7 @@
 #define RAK_HARDWARE__SERIAL_SESSION_HPP_
 
 #include "rak_hardware/protocol.hpp"
+#include "rak_hardware/session.hpp"
 
 #include <array>
 #include <atomic>
@@ -13,40 +14,23 @@
 
 namespace rak_hardware
 {
-struct SessionSnapshot
-{
-  bool connected{};
-  bool handshaken{};
-  bool feedback_valid{};
-  bool faulted{true};
-  uint8_t feedback_valid_mask{};
-  uint32_t accepted_features{};
-  uint32_t boot_id{};
-  uint32_t fault_bitmap{};
-  uint32_t encoder_epoch{};
-  uint64_t sample_time_us{};
-  std::array<double, 4> wheel_position{};
-  std::array<double, 4> wheel_velocity{};
-  std::chrono::milliseconds feedback_age{std::chrono::milliseconds::max()};
-};
-
-class SerialSession
+class SerialSession final : public Session
 {
 public:
   explicit SerialSession(
     std::string device_path,
     uint32_t host_build_id,
     std::chrono::milliseconds feedback_timeout = std::chrono::milliseconds(120));
-  ~SerialSession();
+  ~SerialSession() override;
 
   SerialSession(const SerialSession &) = delete;
   SerialSession &operator=(const SerialSession &) = delete;
 
-  void start();
-  void stop();
-  void set_wheel_command(const std::array<double, 4> &command);
-  void set_motion_enabled(bool enabled);
-  SessionSnapshot snapshot() const;
+  void start() override;
+  void stop() override;
+  void set_wheel_command(const std::array<double, 4> &command) override;
+  void set_motion_enabled(bool enabled) override;
+  SessionSnapshot snapshot() const override;
 
 private:
   void run();

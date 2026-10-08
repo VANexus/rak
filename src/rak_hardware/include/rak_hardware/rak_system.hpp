@@ -1,7 +1,7 @@
 #ifndef RAK_HARDWARE__RAK_SYSTEM_HPP_
 #define RAK_HARDWARE__RAK_SYSTEM_HPP_
 
-#include "rak_hardware/serial_session.hpp"
+#include "rak_hardware/session.hpp"
 
 #include <hardware_interface/system_interface.hpp>
 #include <rclcpp/duration.hpp>
@@ -36,6 +36,10 @@ public:
     const rclcpp::Time &time, const rclcpp::Duration &period) override;
 
 private:
+  /* [AI] R49: 传输后端选择（docs/protocol.md v4 §10，CAN 主链路 / USB 备用） */
+  enum class Transport { kUsb, kCan };
+  Transport transport_{Transport::kUsb};
+  std::string can_channel_{"can0"};
   std::array<std::string, 4> wheel_names_{};
   std::array<double, 4> wheel_command_{};
   std::array<double, 4> wheel_position_{};
@@ -44,7 +48,7 @@ private:
   uint32_t host_build_id_{};
   bool allow_motion_{};  // [AI] 运动许可：默认 false，只有 URDF 显式配置 true 才允许 ARMED
   bool feedback_seen_{};  // [AI] 启动宽限标记：首次收到有效反馈前置 false
-  std::unique_ptr<SerialSession> session_;
+  std::unique_ptr<Session> session_;  /* [AI] R49: USB/CAN 双后端，见 on_init 工厂 */
 };
 }  // [AI] 命名空间结束
 

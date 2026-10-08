@@ -40,13 +40,27 @@ hardware_interface::CallbackReturn RakSystemHardware::on_init(
     wheel_names_[i] = joint.name;
   }
 
+  /* [AI] R49: transport=usb|can（默认 usb，行为与 R48 之前完全一致）；
+     can 时 device 参数不要求串口 by-id 路径，改用 can_channel（默认 can0） */
+  const auto transport = info.hardware_parameters.find("transport");
+  transport_ =
+    (transport != info.hardware_parameters.end() && transport->second == "can") ?
+    Transport::kCan : Transport::kUsb;
   const auto device = info.hardware_parameters.find("device");
   const auto build_id = info.hardware_parameters.find("host_build_id");
-  if (device == info.hardware_parameters.end() ||
-    device->second.rfind("/dev/serial/by-id/", 0U) != 0U ||
-    build_id == info.hardware_parameters.end())
-  {
-    return hardware_interface::CallbackReturn::ERROR;
+  if (transport_ == Transport::kUsb) {
+    if (device == info.hardware_parameters.end() ||
+      device->second.rfind("/dev/serial/by-id/", 0U) != 0U ||
+      build_id == info.hardware_parameters.end())
+    {
+      return hardware_interface::CallbackReturn::ERROR;
+    }
+  } else {
+    if (build_id == info.hardware_parameters.end()) {
+      return hardware_interface::CallbackReturn::ERROR;
+    }
+    const auto can_ch = info.hardware_parameters.find("can_channel");
+    can_channel_ = (can_ch != info.hardware_parameters.end()) ? can_ch->second : "can0";
   }
   /* [AI] 运动许可默认关闭：allow_motion=false 时永远只发 DISARMED 零目标 */
   allow_motion_ = false;
@@ -66,7 +80,9 @@ hardware_interface::CallbackReturn RakSystemHardware::on_init(
   } catch (...) {
     return hardware_interface::CallbackReturn::ERROR;
   }
-  device_path_ = device->second;
+  if (transport_ == Transport::kUsb) {
+    device_path_ = device->second;
+  }
   wheel_command_.fill(0.0);
   wheel_position_.fill(0.0);
   wheel_velocity_.fill(0.0);
@@ -106,7 +122,12 @@ hardware_interface::CallbackReturn RakSystemHardware::on_configure(
   if (session_) {
     session_->stop();
   }
-  session_ = std::make_unique<SerialSession>(device_path_, host_build_id_);
+  /* [AI] R49: 传输后端工厂——上层协议完全一致，仅换底层链路 */
+  if (transport_ == Transport::kCan) {
+    session_ = std::make_unique<CanSession>(can_channel_, host_build_id_);
+  } else {
+    session_ = std::make_unique<SerialSession>(device_path_, host_build_id_);
+  }
   session_->start();
   return hardware_interface::CallbackReturn::SUCCESS;
 }
