@@ -136,6 +136,54 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 UART adapter 已通过静态解析，但没有设备运行验证；默认仍使用 sim，硬件开关默认关闭。
 操作脚本见 [rak_bringup/scripts](src/rak_bringup/scripts/README.md)。
 
+## 示教 / 驾驶 TUI 小工具
+
+两个直接对接 F407 USB v2 链路的终端小工具（curses 面板），用于标定、排查和
+人工驾驶。都是**调试工具，不是生产运动接口**；生产路径是 `ros2_control`
+（`rak_hardware`）+ Nav2/MoveIt。
+
+> 串口：板子 USB 枚举为 `/dev/ttyACM0`（WCH），装了 udev 别名的机器用
+> `/dev/wheel_motor`。参数语法必须 `--ros-args -p port:=...`（裸 `-p` 会被
+> 当 remap 规则吞掉）。两工具默认 **DISARMED**，按 `a` 才 ARM；退出自动撤防；
+> 固件侧安全门（lease 看门狗 / 外部故障 / 急停）始终兜底。急停 = 板上按钮长按。
+
+### 舵机示教 `rak_arm_tui`
+
+```bash
+ros2 run rak_arm_tui arm_servo_tui --ros-args -p port:=/dev/ttyACM0
+```
+
+USB v2 `ARM_COMMAND` 6 轴 µrad 位置，50 Hz lease 保活。键位：↑↓选轴、
+←→ ±2°、PgUp/PgDn ±10°、Home 回零位、`a` ARM、`m` 打标、`w` 落盘、
+`q` 退出。机械臂标定口径（限位/零位/Home）见
+[MoveIt 设计 spec](docs/superpowers/specs/2026-10-07-rak-arm-moveit2-design.md)
+与 `rak_description/urdf/properties_arm.xacro`（单点定义）。
+
+### 底盘驾驶 `rak_drive_tui`
+
+```bash
+ros2 run rak_drive_tui drive_tui --ros-args -p port:=/dev/ttyACM0
+```
+
+主机侧麦轮 IK（ADR-0007）→ `DRIVE_COMMAND` 4 轮 urad/s，20 Hz lease 保活。
+键位：↑↓←→ 平移、`q`/`e` 自转、空格全零、PgUp/PgDn 步长、`a` ARM、
+`r` 里程清零、`x` 退出。几何与固件 R30 标定表同源
+（轮半径 32.5 mm，杠杆 150 mm——**杠杆未实测签核**，放大速度前先签核）。
+面板含四轮实测速度/位置与轮式里程航位推算（纯轮式，麦轮 y 向漂移是固有
+代价，仅驾驶参考，正式里程源见 P1-1 四路融合）。
+
+键盘版轮级直通脚本 `scripts/mecanum_tui_v2.py` 保留作参考（其几何为占位值）。
+
+### 上报与 IMU 的分工（易混淆）
+
+- 固件 `DRIVE_STATE`（100 Hz）：4 轮累计位置/速度——**纯编码器**，不含 IMU。
+- 固件**轮级稳定器**（`wheel_stabilize_targets`）：用**下位机 IMU** 的 yaw 角速度
+  做旋转补偿，只作用于轮速命令域；IMU 就绪是 ARM 前提之一（缺 IMU 时 ARM 会被
+  外部故障门挡住）。这就是"板载 IMU 收窄为轮级"的职责（ADR-0007）。
+- **航向权威在 Jetson**：未来经 40-pin SPI 接 LSM6DSRTR，由 EKF 做融合
+  （P0-5 / P1-1）。两者不冲突：下位机 IMU 管 100 Hz 轮级抗扰，Jetson IMU 管
+  全局航向与里程融合。
+
 ## 性能与硬件约束
 
 - 双目历史测量为 1280×720 SBS、30 fps；独立解码线程、双缓冲和固定曝光帧率策略保留。
