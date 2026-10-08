@@ -263,6 +263,10 @@
 - **前置**：拿到真实几何/限位/映射（`hardware_acceptance.md` §Arm Unlock Gates 七项）。
 - **形态**（ADR-0008）：**标准 6 轴** + **舵机夹爪**（第 7 个 PWM 舵机）+ 末端摄像头。
   现有五轴 URDF 与六轴夹具**都要重建**。
+- **进度 [2026-10-08]**：固件 R42 已打通 USB v2 `ARM_COMMAND`（7 轴 µrad）→ 舵机 PWM
+  落地（轴序/限位/零位见下位机 `app_car.h`）；Jetson 侧新增 `src/rak_arm_tui`
+  示教 TUI（50 Hz ARM_COMMAND + ARM_STATE 回显）。**剩余**：`rak_hardware`
+  ros2_control SystemInterface 插件 + `joint_trajectory_controller` 接入。
 - **验收**：`ros2_control` 硬件接口 + `JointTrajectoryController`，插值/刷新率按固件定。
 - **风险**：**不要把 25 kHz 电机环搬到 ROS**（`docs/architecture.md` §4）。
 - ⚠️ **舵机角度 ↔ 钳口开度是非线性的**（连杆机构）—— 需要映射曲线，建议放上位机（改曲线不烧固件）。
@@ -280,7 +284,16 @@
 - **目标**：把 `six_axis_sim.urdf.xacro` 的**虚构数值**换成实测参数，成为真实模型。
 - **依据**（ADR-0009）：**不需要精确 CAD** —— 规划只要运动学（joint origin/axis/limits），
   碰撞体用**图元保守近似**，惯量仅仿真需要，视觉体与规划无关。
-- **阻塞项**：需要**关节 origin / axis / limits** 三项实测值（其余可后补）。
+- **进度 [2026-10-08] 基本完成**：`src/rak_description/urdf/rak_arm.urdf.xacro`
+  （真实参数版，与 fixture 隔离）+ `rak_moveit_config/config/rak_arm.srdf`。
+  实测标定：六轴位置型，J1/J3/J4/J5/J6 0~270°、J2 0~255°（硬件约束）；连杆
+  8/10/11/6/9 cm；零位（q=0）= 指令 J1/J4/J6=0°、J2=135°、J3=180°、J5=0°；
+  J3 俯仰方向与 J2/J5 反向；俯仰轴在中位同轴共线、各 ±90°。常数单点定义在
+  `properties_arm.xacro`，`test/validate_rak_arm.py` 断言（colcon test 已挂）。
+  设计与事实分级见 `docs/superpowers/specs/2026-10-07-rak-arm-moveit2-design.md`。
+- **剩余**：① 零位精标（当前为用户目测指定）；② MoveIt 规划配置
+  （joint_limits/kinematics/ompl/mock controllers + launch，阶段 A M3/M4）；
+  ③ 夹爪/末端摄像头 link（待支架确定）。
 - **验收**：MoveIt 能对真实目标位姿规划出可行轨迹；`tf2_tools view_frames` 链路正确。
 - ⚠️ **关节零位标定是独立于手眼标定的另一件事**，两者都要做，否则整个 TF 树是偏的。
 
