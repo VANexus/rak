@@ -56,6 +56,8 @@ Read `docs/architecture.md` and `docs/migration.md` before moving package bounda
 - `src/rak_arm_simulation`: software-only six-axis trajectory/gripper action fixture.
 - `src/rak_arm_tui`: hand-teach TUI over USB v2 `ARM_COMMAND` (6-axis servos, firmware R42+).
   Commissioning tool only — it is not a production motion interface.
+- `src/rak_drive_tui`: mecanum driving TUI over USB v2 `DRIVE_COMMAND` (host-side IK,
+  firmware R30+ calibration geometry). Commissioning tool only.
 - `src/rak_can_driver`: CAN v3 chassis host stack (python-can, exec `chassis_can_node`,
   virtual bus by default). Deprecated/reserved, and **ships no `setup.cfg`**, so its script
   installs to `bin/` and `ros2 run rak_can_driver chassis_can_node` reports "No executable

@@ -89,6 +89,7 @@ Two facts that are easy to get wrong:
 | `src/rak_moveit_config` | SRDF, IK, planning config: `demo.launch.py` (legacy five-axis) + `six_axis_sim.launch.py` (fixture). No real trajectory execution path |
 | `src/rak_arm_simulation` | Software-only six-axis trajectory/gripper Action servers (exec `fake_joint_controllers`). No physics, no hardware interface |
 | `src/rak_arm_tui` | 舵机示教 TUI（exec `arm_servo_tui`）：USB v2 `ARM_COMMAND` 6 轴 µrad 位置 → F407 舵机（固件 R42 起）。仅标定/示教用，不是生产运动接口 |
+| `src/rak_drive_tui` | 底盘驾驶 TUI（exec `drive_tui`）：主机侧麦轮 IK → `DRIVE_COMMAND` 4 轮 urad/s（20Hz lease 保活），面板显示 `DRIVE_STATE` 轮速/轮位 + 轮式里程航位推算 + `DIAGNOSTICS` 电池/温度。几何与固件 R30 标定表同源（r=0.0325/L=0.15，杠杆未签核） |
 | `src/rak_motion_stub` | Test-only `/cmd_vel` → `/cmd_vel_raw` relay (`cmd_vel_stub`). Not a hardware driver |
 | `src/rak_can_driver` | CAN v3 chassis host stack (python-can, exec `chassis_can_node`). **Docs mark it deprecated/reserved** after the topology change; the code is not annotated yet |
 | `src/rak_serial_link` | CAN v3 frames over UART (execs `serial_link_node`, `serial_link_cli`). Same deprecated/reserved status |
@@ -155,6 +156,7 @@ ros2 launch rak_bringup base_uart.launch.py          # hardware_enable=false; po
 ros2 run rak_base_driver base_uart_node
 ros2 launch rak_moveit_config demo.launch.py         # legacy five-axis demo
 ros2 run rak_arm_tui arm_servo_tui --ros-args -p port:=/dev/wheel_motor   # 舵机示教 TUI（须 port；-p 必须挂 --ros-args，裸 -p/--remap 会被当 remap 吞掉）
+ros2 run rak_drive_tui drive_tui --ros-args -p port:=/dev/wheel_motor    # 底盘驾驶 TUI（麦轮 IK + 状态面板；同上语法）
 ros2 launch rak_moveit_config six_axis_sim.launch.py # six-axis fixture
 ros2 launch rak_description view_urdf.launch.py
 ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true

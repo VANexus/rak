@@ -151,6 +151,37 @@ def decode_v2_frame(packet: bytes) -> Frame:
     return decode_frame(packet, require_version=VERSION)
 
 
+class V2StreamDecoder:
+    """[AI] 增量分隔符解码（v2 版本门）。
+
+    protocol.StreamDecoder 固定用 require_version=PROTOCOL_VERSION(v1)，
+    v2 帧会被 'unsupported protocol version' 静默丢弃——v2 会话必须用本类。
+    字节级行为与 StreamDecoder 一致，仅版本门不同。
+    """
+
+    def __init__(self, max_encoded_size: int = 160):
+        self._buffer = bytearray()
+        self._max = max_encoded_size
+        self.errors = 0
+
+    def feed(self, data: bytes) -> list[Frame]:
+        frames = []
+        for byte in data:
+            if byte == 0:
+                if self._buffer:
+                    try:
+                        frames.append(decode_frame(bytes(self._buffer), require_version=VERSION))
+                    except ProtocolError:
+                        self.errors += 1
+                    self._buffer.clear()
+            else:
+                self._buffer.append(byte)
+                if len(self._buffer) > self._max:
+                    self.errors += 1
+                    self._buffer.clear()
+        return frames
+
+
 def pack_hello(host_build_id: int, requested_features: int) -> bytes:
     try:
         return _HELLO.pack(host_build_id, requested_features)

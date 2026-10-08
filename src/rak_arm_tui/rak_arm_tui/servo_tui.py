@@ -43,6 +43,7 @@ from rak_base_driver.protocol_v2 import (
     TYPE_HELLO,
     TYPE_HELLO_ACK,
     VERSION,
+    V2StreamDecoder,
     ArmCommand,
     encode_v2_frame,
     pack_arm_command,
@@ -54,36 +55,8 @@ from rak_base_driver.protocol_v2 import (
 DEG_TO_URAD = math.pi / 180.0 * 1e6
 FULL_SCALE_DEG = 270.0
 
-
-class V2StreamDecoder:
-    """[AI] rak_base_driver 的 StreamDecoder 固定校验 v1 版本号，v2 帧会被
-    'unsupported protocol version' 静默丢弃；此处以 require_version=2 重实现
-    同样的增量分隔符解码（字节级行为一致，仅版本门不同）。"""
-
-    def __init__(self, max_encoded_size: int = 160):
-        import rak_base_driver.protocol as _p
-
-        self._decode = _p.decode_frame
-        self._buffer = bytearray()
-        self._max = max_encoded_size
-        self.errors = 0
-
-    def feed(self, data: bytes):
-        frames = []
-        for byte in data:
-            if byte == 0:
-                if self._buffer:
-                    try:
-                        frames.append(self._decode(bytes(self._buffer), require_version=VERSION))
-                    except ProtocolError:
-                        self.errors += 1
-                    self._buffer.clear()
-            else:
-                self._buffer.append(byte)
-                if len(self._buffer) > self._max:
-                    self.errors += 1
-                    self._buffer.clear()
-        return frames
+# [AI] V2StreamDecoder 现由 rak_base_driver.protocol_v2 提供（v2 版本门的增量
+# 解码器，protocol.StreamDecoder 只认 v1）；此处 import 沿用原名字。
 
 # [AI] 2026-10-08 TUI 实测标定（用户探极限后确认，第二轮更新）：
 # 全部 6 轴为位置型 MG995/MG996R，0~270°（J2 机械约束 0~255°）。
