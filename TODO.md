@@ -135,6 +135,33 @@
 - **验收**：闭环回环误差可测；`map→odom` 不跳变。
 - **风险**：换 SLAM 方案会牵动 `odom_source` 接缝与 Nav2 参数，**应与 P1-1 一起规划**。
 
+### P1-5 全身运动仲裁层（WBC/HQP）
+
+- **目标**：底盘与臂的运动冲突有单一仲裁点 —— `src/rak_wbc` 100 Hz 速度级 HQP
+  （Pinocchio + OSQP），成为常规运动的**唯一写入者**（底盘 reference + 臂位置流）。
+- **依据**：**ADR-0011**（2026-10-08 已接受）；设计规格见
+  `docs/superpowers/specs/2026-10-08-rak-wbc-hqp-design.md`（公式/契约/验收全表）。
+- **已做（2026-10-08）**：包骨架 + 数值层 + 桌面回归 15 项全绿（模型雅可比有限差分、
+  约束激活、任务冲突、warm-start、降级；含两个历史缺陷回归：`osqp.update` 静默失效、
+  posture/EE 权重档位漂移）。节点层与配置已就绪但未上车（`enabled=false` 默认）。
+  **影子冒烟已具备并跑通**：`scripts/wbc_shadow_smoke.sh` + `fake_arm_stream` 夹具，
+  x86 彩排通过（抓修属性遮蔽 TypeError）；**Jetson 真机影子 2026-10-08 通过**
+  （status= solved / 影子输出 / 臂流伺服 / 夹具回显全链路）。
+  **时序实测（ADR-0011 #8 闭合）**：Jetson solve p50=2.41ms / p99=2.85ms / max=4.90ms
+  （657 样本）——未触发 3ms C++ 迁移判据，Python 方案成立。
+  **依赖闭合（#6）**：`ros-jazzy-pinocchio` 4.1.0 (apt) + `osqp` 1.1.3 (pip --user)。
+- **推进路线（2026-10-08 重定；物理数字孪生不适用——定义性约束见 `docs/architecture.md` §1）**：
+  ① 真底盘 `allow_motion:=false` 影子运行（base reference remap 到影子话题、
+  `publish_arm=false`）：验证模型加载 / TF / 100 Hz 时序 / 状态机 / 降级，零运动风险；
+  ② wheels-only（P0+P2+P3）上车：测单一写权与 `reference_timeout` 兜底；
+  ③ 臂侧留在软件夹具（fake position-stream，mirror `rak_arm_simulation` 模式），
+  待 `rak_hardware` 臂接口就绪后增量接 P1；
+  ④ 标定冲刺（轮半径/轮距/支撑多边形/质量 CoM/舵机限速）回填占位值（可并行）。
+  台架阶梯（轮架空 → 臂 slow 单轴 → Home → 联合低速）不变。
+- **验收**：三级矩阵见 spec §9；台架按 `hardware_acceptance.md` 的 Arm Unlock Gates。
+- **风险**：臂无关节反馈（命令回读乐观，负载下 EE 误差不可信）；质量/底盘几何未实测前
+  倾覆约束只能保守运行；Jetson 侧 `pin`/`osqp` Python 依赖可得性待核实（ADR-0011 #6）。
+
 ---
 
 ## P2 — 感知栈与算力

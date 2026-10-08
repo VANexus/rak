@@ -13,14 +13,20 @@ The arm board burned out. There is now **one** F407 driving 4 wheels + 7 servos 
 
 - `docs/adr/*` are immutable (append/supersede only), indexed by `docs/adr/README.md`.
   **ADR-0007 supersedes ADR-0001**; the valid set is 0002 + 0003 (UART layer) + 0004–0010.
+  **ADR-0011 (WBC/HQP motion arbitration) was accepted 2026-10-08**: `src/rak_wbc`
+  (ament_python skeleton + desktop numeric tests) exists; arm interfaces and measured
+  masses/geometry remain hard gates — read its closed items before wiring hardware.
 - ADR-0010's target — Harness as a standard ROS 2 package `src/rak_harness` + node
   `harness_node`, the Jev↔executor arbitration seam, a separate `anthropic` cloud client and a
   gated "呼吸感" expression interface — is **accepted but design-only**: there is no
   `src/rak_harness`, and the expression layer is a no-op stub behind closed hardware gates.
 - ADR-0007's target — whole robot on `ros2_control`, plugin `rak_hardware`, host-side
-  mecanum IK — is **accepted but not implemented**: there is no `src/rak_hardware`, and
-  `src/rak_moveit_config/test/validate_six_axis_sim.py:36` asserts the six-axis URDF
-  contains **no** `<ros2_control>` tag.
+  mecanum IK — is **partially implemented as of 2026-10-08**: `src/rak_hardware` exists but
+  exports **four wheel interfaces only** and has passed an F407 chassis smoke test
+  (firmware R37); arm position interfaces, the arm controller and the gripper axis do not
+  exist yet. `src/rak_moveit_config/test/validate_six_axis_sim.py:36` still asserts the
+  six-axis **sim fixture** URDF contains no `<ros2_control>` tag — that fixture is not the
+  real arm.
 - `src/rak_can_driver` and `src/rak_serial_link` exist but are **deprecated/reserved**
   (TODO P0-3): semantics void, launched by nothing. Do not build new work on them.
 - Docs disagree by date, not correctness. The 2026-10-04 set (`README.md`,
@@ -56,14 +62,23 @@ Read `docs/architecture.md` and `docs/migration.md` before moving package bounda
   found".
 - `src/rak_serial_link`: CAN v3 frames over UART (execs `serial_link_node`,
   `serial_link_cli`). Deprecated/reserved; `serial_link_node` opens hardware with no gate.
+- `src/rak_wbc`: velocity-level whole-body arbitration (ADR-0011): ament_python standalone
+  node `wbc_node` — single regular motion writer for base + arm; skeleton + desktop numeric
+  tests exist, hardware wiring gated by the ADR's closed items. Fixtures/smoke:
+  `fake_arm_stream` (command-echo arm fixture) and `scripts/wbc_shadow_smoke.sh`
+  (shadow contract smoke; remaps the base output — no actuator is commanded).
 - `src/rak_bringup`: composition, DDS configuration and operator scripts.
 - `src/vendor`: third-party code, read-only.
 - `brain/`: ROS `ament_python` package `rak_agent`, Python module `rak_ai`.
   Keep its source/data location; runtime uses ROS system Python, with no dedicated venv or
   inference service process. Do not add COLCON_IGNORE.
 
-Target arm: six positioning joints plus an independent gripper. Never invent the
-missing axis or calibration from the legacy URDF. Models, topics and episode schemas
+Target arm: six positioning joints plus an independent gripper. The real six-axis geometry,
+limits, axes and zero mapping were **measured on 2026-10-08**
+(`src/rak_description/urdf/rak_arm.urdf.xacro` + `properties_arm.xacro`;
+`src/rak_moveit_config/config/rak_arm.srdf`; link masses are still `TODO(measured)`
+placeholders). Never invent the missing axis or calibration from the legacy URDF, and do not
+confuse the six-axis **sim fixture** with the real arm. Models, topics and episode schemas
 were not redesigned during the package migration.
 
 ## Commands

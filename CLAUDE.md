@@ -42,14 +42,25 @@ The arm board burned out. What changed:
 | Mecanum IK | on the F407 | **moves to the host** (`mecanum_drive_controller`) |
 | Heading authority | F407 onboard IMU | **Jetson's LSM6DSRTR (SPI)** feeds the EKF; F407 IMU is wheel-level only |
 
-**Accepted target (ADR-0007, not yet built):** the whole robot goes `ros2_control` — a
-`hardware_interface::SystemInterface` plugin named `rak_hardware` exposing 4 wheel velocity
-commands + 7 servo position commands (6 arm joints + 1 gripper) over USB, with `mecanum_drive_controller` and
-`joint_trajectory_controller`. **`src/rak_hardware` does not exist yet.** The current code
-predates this: `rak_base_driver` (UART v1, body-velocity `(vx,vy,wz)` protocol),
+**Accepted target (ADR-0007, partially built as of 2026-10-08):** the whole robot goes
+`ros2_control` — a `hardware_interface::SystemInterface` plugin named `rak_hardware` exposing
+4 wheel velocity commands + 7 servo position commands (6 arm joints + 1 gripper) over USB,
+with `mecanum_drive_controller` and `joint_trajectory_controller`. **`src/rak_hardware` exists
+and exports four wheel interfaces only** (chassis chain smoke-tested against the F407, firmware
+R37); arm position interfaces, the arm controller and the gripper axis are not implemented.
+Code that predates this: `rak_base_driver` (UART v1, body-velocity `(vx,vy,wz)` protocol),
 `rak_can_driver` and `rak_serial_link` (CAN v3 stack). Per `TODO.md` P0-3 and ADR-0007 待闭合项
 #8, the CAN packages are **deprecated / reserved** — they exist but their semantics are void.
 Do not build new work on the CAN path or assume `rak_base_driver` survives ADR-0007.
+
+**ADR-0011 (accepted 2026-10-08)** adds the whole-body motion-arbitration layer on top of that
+target: `src/rak_wbc` (ament_python, 100 Hz velocity-level HQP with Pinocchio + OSQP) — a
+standalone node that is the **single regular motion writer**: it publishes `TwistStamped` into
+`mecanum_drive_controller`'s `reference` and the arm position stream, taking Nav2's `/cmd_vel`
+as its P2 input and `/wbc/ee_target` as P1. Harness proposals reach it only transitively
+(executor → skills → `/wbc/*` goals); HQP never reads `/brain/decision`. Skeleton + desktop
+numeric tests exist; hardware gates (arm interfaces, measured masses/geometry) are in the
+ADR's closed items.
 
 Two facts that are easy to get wrong:
 - **Wheel-level saturation belongs to the MCU.** `mecanum_drive_controller` only clamps at the
@@ -73,6 +84,7 @@ Two facts that are easy to get wrong:
 | `src/rak_description` | URDF/xacro, meshes, RViz. Legacy five-axis demo **plus** an isolated six-axis sim fixture |
 | `src/rak_navigation` | SLAM, odometry sources, Nav2: `slam.launch.py`, `nav2.launch.py` |
 | `src/rak_task_executor` | **Sole owner** of the navigation-task lifecycle: `/task/execute` Action, `/task/control` Service, `/task/status`; execs `task_executor`, `task_cli`, `fake_navigation` |
+| `src/rak_wbc` | Velocity-level whole-body arbitration (ADR-0011): 100 Hz HQP (Pinocchio + OSQP), single regular motion writer; skeleton + desktop numeric tests, hardware gated |
 | `src/rak_base_driver` | Jetson→F407 UART v1/v1.1 host codec/node (exec `base_uart_node`, node `base_uart_driver`). Hardware-disabled and DISARMED by default. Slated for replacement by `rak_hardware` (ADR-0007) |
 | `src/rak_moveit_config` | SRDF, IK, planning config: `demo.launch.py` (legacy five-axis) + `six_axis_sim.launch.py` (fixture). No real trajectory execution path |
 | `src/rak_arm_simulation` | Software-only six-axis trajectory/gripper Action servers (exec `fake_joint_controllers`). No physics, no hardware interface |
@@ -273,10 +285,13 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   interoperate with the old `core/msg/Decision`. External nodes must be rebuilt; old rosbags
   need explicit type migration.
 - The target arm is **standard six axes plus a servo gripper** (a 7th PWM servo) and an
-  eye-in-hand camera (ADR-0008). The five-axis URDF is a demo and the six-axis fixture is
-  test-only — do not present either as the real hardware, and do not invent the missing axis,
-  limits or calibration. Do not configure a real `ros2_control` arm hardware plugin before the
-  Arm Unlock Gates in `docs/hardware_acceptance.md` pass.
+  eye-in-hand camera (ADR-0008). The **real** six-axis model is measured (2026-10-08):
+  `rak_arm.urdf.xacro` + `properties_arm.xacro` + `rak_arm.srdf` (limits, axes, zero mapping;
+  link masses still `TODO(measured)` placeholders). The five-axis URDF is a demo and the
+  six-axis *fixture* (`six_axis_sim.urdf.xacro`) is test-only — do not present either as the
+  real hardware, and do not invent calibration for the parts not measured yet (masses, gripper
+  mapping, eye-in-hand extrinsics). Do not configure a real `ros2_control` arm hardware plugin
+  before the Arm Unlock Gates in `docs/hardware_acceptance.md` pass.
 - `src/vendor/**` is third-party. Read-only; do not reformat or "fix" it.
 - **CAN protocol ownership.** The wire format's source of truth is the leaf-node repo
   (`vehical_rak_chassis/docs/PROTOCOL.md`, CAN v3), not this one. The bus is classic CAN 2.0A

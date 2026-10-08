@@ -19,6 +19,16 @@ endpoint；真实 v2 互操作、传感器 Nav2 和整车安全验收仍未完�
 - 语音硬件尚未接入。先以文字事件验证任务控制，再接 ASR/TTS，避免两类问题混在一起。
 - 叶节点旧协议记录不能证明新的六轴机械臂已经具备相应通道、反馈和限位。
 
+> **2026-10-08 增补（定义性约束，全文适用）**：本机是**手搓平台**——无 CAD 级几何/质量，
+> 机械臂是**普通 PWM 位置舵机**（位置指令、**无关节位置反馈**、机械带宽几 Hz），底盘几何与
+> 臂质量仍多为占位值。**这不是待克服的缺陷，而是架构的定义性约束**：正因硬件不完美，
+> 每一层必须能**独立降级**——HQP 失败→零速+臂保持；lease/E-stop 在 F407 独立兜底；
+> Harness 永不赋权；需要精度的地方（末端）用视觉闭环"买精度"，而不是赌模型精度。
+> 由此：**物理数字孪生（Gazebo/Isaac Sim 级）不适用也不必要**；替代物是"**软件夹具**"
+> （fake controllers：验证契约/时序/状态机，不管物理保真）+ **廉价实测标定** + **台架阶梯**。
+> 本节上方部分条目（底盘 IK 归属、五轴 URDF、v2 未接入等）是 10-04 口径，已被
+> ADR-0007/0008 与 2026-10-08 实机标定/烟测取代；以 `docs/adr/README.md` 索引为准。
+
 系统采用分层选择和技能执行，追求类似 VLA 的交互体验，但当前 Laya 是文本选择模型，
 不是端到端视觉动作模型。感知、几何规划、执行和反馈不能由“选择一个标签”替代。
 
@@ -54,7 +64,10 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_description` | URDF、几何、惯量与可视化 | 导航参数、模型策略 |
 | `rak_navigation` | SLAM、全向 MPPI、smoother/collision-monitor 配置 | 对话理解、LLM 调用 |
 | `rak_task_executor` | 单一任务状态机、文字意图、Nav2 Action 生命周期 | 原始底盘/关节命令、感知算法 |
+| `rak_wbc`（ADR-0011） | 全身运动仲裁：100 Hz 速度级 HQP（Pinocchio + OSQP）、底盘与臂的单一常规写入者；数值层桌面可回归 | 安全裁决、任务生命周期、直接读感知/决策 |
 | `rak_base_driver` | UART v1 历史节点；独立 v2 编解码 | v2 硬件接口 endpoint、MCU 实时环、安全认证 |
+| `rak_hardware` | `ros2_control` SystemInterface：USB v2 到 F407（当前导出 4 轮接口；臂接口待加） | 运动学仲裁、轮/臂语义重定义 |
+| `rak_chassis_bringup` | 底盘 `ros2_control` 组合（CM@100 Hz + mecanum + JSB）与台架联调入口 | 导航/任务策略、整机组合 |
 | `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |
 | `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
 | `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
@@ -72,6 +85,7 @@ rak_base_driver -----> rak_interfaces / serial
 rak_arm_simulation --> standard trajectory/gripper actions
 rak_moveit_config ----> rak_description / rak_arm_simulation (simulation only)
 rak_navigation -------> rak_sensor_bringup / rak_motion_stub / Nav2 / SLAM
+rak_wbc -------------> rak_description（臂 URDF 合并） / mecanum reference / 臂位置控制器（待建）
 rak_sensor_bringup ----> Astra / Orbbec SDK v2 ROS driver / 上游雷达 / laser_filters
 rak_bringup ----------> 各能力的启动入口
 ```
@@ -128,6 +142,15 @@ Jev + Harness VLA。
 `rak_task_executor` 已拥有单一导航任务生命周期，通过 `/task/execute` Action、
 `/task/control` Service、`/task/status` 状态和 Nav2 `NavigateToPose` Action 工作。
 当前不拥有机械臂任务执行，也不直接发速度或关节命令。
+
+`src/rak_wbc`（ADR-0011，2026-10-08 已接受）是底盘与臂之间的**运动仲裁层**：
+100 Hz 速度级 HQP（Pinocchio + OSQP），常规运动的唯一写入者——底盘写
+`mecanum_drive_controller` 的 reference，臂写位置流（伺服模式）。Nav2 的 `/cmd_vel`
+降级为其 P2 输入任务；臂的轨迹模式（MoveIt → JTC）与伺服模式互斥，由技能层仲裁。
+**Harness 与它没有直连**：提案经执行器/技能层转成 `/wbc/*` 结构化目标
+（ADR-0011 D8）；`/wbc/posture_target` 是「呼吸感」表达层的预留缝（门未开、无实现）。
+当前交付为骨架 + 桌面数值回归；硬件接入前置（`rak_hardware` 臂接口、臂质量与底盘几何
+实测）见该 ADR 待闭合项。
 
 每个技能必须定义前置条件、输入、反馈、完成条件、超时、取消和失败语义。
 初期导航技能包括前往配置地点或 map-frame pose、暂停、恢复和取消；状态通过
