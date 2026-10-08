@@ -106,12 +106,26 @@ def main() -> None:
             or chain.get("tip_link") != "tool0":
         fail("SRDF arm group chain must be arm_base_link -> tool0")
     homes = [gs for gs in srdf.findall("group_state") if gs.get("name") == "home"]
-    if not homes or any(float(j.get("value")) != 0.0 for j in homes[0].findall("joint")):
-        fail("SRDF home group_state must set every joint to 0")
-    srdf_joints = {j.get("name") for j in homes[0].findall("joint")}
-    if srdf_joints != set(EXPECTED_JOINTS):
-        fail(f"SRDF home joints {sorted(srdf_joints)} != URDF joints")
-    print("SRDF OK: arm group, home state, joint names agree")
+    if not homes:
+        fail("SRDF missing home group_state")
+    # home = safe pose (user 2026-10-08): commands 0/225/270/0/0/0
+    # → q = cmd − zero_cmd(0/135/180/0/0/0) = J2 +90°, J3 +90°, rest 0
+    expected_home = {
+        "base_yaw_joint": 0.0,
+        "shoulder_pitch_joint": 90.0,
+        "elbow_pitch_joint": 90.0,
+        "forearm_roll_joint": 0.0,
+        "wrist_pitch_joint": 0.0,
+        "wrist_roll_joint": 0.0,
+    }
+    home_joints = {j.get("name"): float(j.get("value")) for j in homes[0].findall("joint")}
+    if set(home_joints) != set(EXPECTED_JOINTS):
+        fail(f"SRDF home joints {sorted(home_joints)} != URDF joints")
+    for name, deg in expected_home.items():
+        got = home_joints[name]
+        if abs(got - deg * 3.141592653589793 / 180.0) > 1e-3:
+            fail(f"SRDF home {name} = {got:.4f} rad, expected {deg} deg")
+    print("SRDF OK: arm group, home (safe pose), joint names agree")
 
     print("ALL OK")
 

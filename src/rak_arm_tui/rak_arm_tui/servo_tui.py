@@ -88,13 +88,15 @@ class V2StreamDecoder:
 # [AI] 2026-10-08 TUI 实测标定（用户探极限后确认，第二轮更新）：
 # 全部 6 轴为位置型 MG995/MG996R，0~270°（J2 机械约束 0~255°）。
 # 零位（q_urdf=0，用户指定）= 自旋轴指令 0°、J2=135°、J3=180°、J5=0°。
+# Home/初始/结束/安全位（用户 2026-10-08 指定）= 0/225/270/0/0/0
+# （对应 q_urdf：J2=+90°、J3=+90°，写入 rak_arm.srdf 的 home group_state）。
 # 连杆长度：1-2:8cm 2-3:10cm 3-4:11cm 4-5:6cm 5-6:9cm（properties_arm.xacro 同步）。
 # J3 俯仰方向与 J2/J5 反向——已反映在 rak_arm.urdf.xacro 的轴定义里。
 JOINTS = (
     # (name, board pin, kind, min_deg, max_deg, home_deg)
     ("J1 waist",       "PB15", "angle",   0.0, 270.0,   0.0),
-    ("J2 shoulder",    "PB14", "angle",   0.0, 255.0, 135.0),
-    ("J3 elbow",       "PC9",  "angle",   0.0, 270.0, 180.0),
+    ("J2 shoulder",    "PB14", "angle",   0.0, 255.0, 225.0),
+    ("J3 elbow",       "PC9",  "angle",   0.0, 270.0, 270.0),
     ("J4 forearm",     "PC8",  "angle",   0.0, 270.0,   0.0),
     ("J5 wrist_pitch", "PC7",  "angle",   0.0, 270.0,   0.0),
     ("J6 wrist_roll",  "PC6",  "angle",   0.0, 270.0,   0.0),

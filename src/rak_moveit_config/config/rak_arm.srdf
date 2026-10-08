@@ -20,10 +20,12 @@
   <!-- 夹爪（第 7 路 PWM 舵机）不进规划组，由独立接口控制（ADR-0008） -->
 
   <group_state name="home" group="arm">
-    <!-- 全直姿态：q_urdf = 0 对应指令（J1..J6）= 0/90/90/0/90/0 -->
+    <!-- Home/初始/结束/安全位（用户 2026-10-08 指定）：固件指令
+         J1=0° J2=225° J3=270° J4=0° J5=0° J6=0°
+         → q_urdf = 指令 − 零位指令（零位见文件头注）= J2 +90°、J3 +90°、其余 0 -->
     <joint name="base_yaw_joint"         value="0"/>
-    <joint name="shoulder_pitch_joint"   value="0"/>
-    <joint name="elbow_pitch_joint"      value="0"/>
+    <joint name="shoulder_pitch_joint"   value="1.5707963"/>
+    <joint name="elbow_pitch_joint"      value="1.5707963"/>
     <joint name="forearm_roll_joint"     value="0"/>
     <joint name="wrist_pitch_joint"      value="0"/>
     <joint name="wrist_roll_joint"       value="0"/>
