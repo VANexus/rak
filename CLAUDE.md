@@ -142,7 +142,7 @@ ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim   # defaul
 ros2 launch rak_bringup base_uart.launch.py          # hardware_enable=false; port not opened
 ros2 run rak_base_driver base_uart_node
 ros2 launch rak_moveit_config demo.launch.py         # legacy five-axis demo
-ros2 run rak_arm_tui arm_servo_tui port:=/dev/wheel_motor   # 舵机示教 TUI（须 port）
+ros2 run rak_arm_tui arm_servo_tui --ros-args -p port:=/dev/wheel_motor   # 舵机示教 TUI（须 port；-p 必须挂 --ros-args，裸 -p/--remap 会被当 remap 吞掉）
 ros2 launch rak_moveit_config six_axis_sim.launch.py # six-axis fixture
 ros2 launch rak_description view_urdf.launch.py
 ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
