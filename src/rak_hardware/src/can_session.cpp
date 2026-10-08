@@ -5,6 +5,8 @@
 //   本类只做编解码与节拍；SocketCAN 收发不占用户态 CPU（用户要求的最丝滑路径）。
 #include "rak_hardware/can_session.hpp"
 
+#include <net/if.h>
+
 #include <linux/can.h>
 #include <linux/can/raw.h>
 #include <sys/ioctl.h>

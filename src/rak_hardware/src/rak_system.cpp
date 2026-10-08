@@ -1,5 +1,8 @@
 #include "rak_hardware/rak_system.hpp"
 
+#include "rak_hardware/can_session.hpp"
+#include "rak_hardware/serial_session.hpp"
+
 #include <hardware_interface/types/hardware_interface_type_values.hpp>
 #include <pluginlib/class_list_macros.hpp>
 
