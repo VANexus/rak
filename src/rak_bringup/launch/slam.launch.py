@@ -24,8 +24,13 @@ from launch.actions import (
 from launch.conditions import IfCondition
 from launch.events import matches_action
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import EqualsSubstitution, LaunchConfiguration
+from launch.substitutions import (
+    EqualsSubstitution,
+    LaunchConfiguration,
+    PythonExpression,  # [AI] ekf 档条件与 publish_tf 布尔
+)
 from launch_ros.actions import LifecycleNode, Node
+from launch_ros.parameter_descriptions import ParameterValue  # [AI] publish_tf 布尔参数
 from launch_ros.event_handlers import OnStateTransition
 from launch_ros.events.lifecycle import ChangeState
 from lifecycle_msgs.msg import Transition
@@ -79,6 +84,8 @@ def generate_launch_description():
             # Odometry: rf2o from laser scan matching. Publishes /odom and the
             # odom -> base_link transform. odom_topic MUST be overridden --
             # rf2o defaults to /odom_rf2o.
+            # [AI] 2026-10-09: odom_source:=ekf 档下 rf2o 仍然运行(喂 EKF 的
+            # odom0), 但 publish_tf=False —— odom->base_link 由 EKF 独占发布。
             Node(
                 package="rf2o_laser_odometry",
                 executable="rf2o_laser_odometry_node",
@@ -90,7 +97,11 @@ def generate_launch_description():
                         "odom_topic": "/odom",
                         "base_frame_id": "base_link",
                         "odom_frame_id": "odom",
-                        "publish_tf": True,
+                        # [AI] True=rf2o 自发布 TF(rf2o 档); False=仅喂 /odom(ekf 档)
+                        "publish_tf": ParameterValue(
+                            PythonExpression(["'", odom_source, "' == 'rf2o'"]),
+                            value_type=bool,
+                        ),
                         "freq": 10.0,
                         # MUST be empty. Upstream defaults this to
                         # /base_pose_ground_truth -- a Gazebo topic that never
@@ -101,7 +112,29 @@ def generate_launch_description():
                         "init_pose_from_topic": "",
                     }
                 ],
-                condition=IfCondition(EqualsSubstitution(odom_source, "rf2o")),
+                # [AI] rf2o 档与 ekf 档都要跑 (ekf 档下它是融合输入源)
+                condition=IfCondition(
+                    PythonExpression(["'", odom_source, "' in ('rf2o', 'ekf')"])
+                ),
+            ),
+            # [AI] EKF: ekf 档下接管 odom->base_link(唯一发布者, 团队 ADR 规矩);
+            # 融合 odom0=/odom(rf2o 激光里程计) + imu0=/imu/data_raw(LSM6DSRTR 航向速率)
+            Node(
+                package="robot_localization",
+                executable="ekf_node",
+                name="ekf_filter_node",
+                output="screen",
+                parameters=[os.path.join(share, "config", "ekf.yaml")],
+                condition=IfCondition(EqualsSubstitution(odom_source, "ekf")),
+            ),
+            # [AI] base_link -> imu_link 静载 TF: EKF 需要 imu0 数据的帧变换;
+            # 安装姿态待装车标定, 暂恒等
+            Node(
+                package="tf2_ros",
+                executable="static_transform_publisher",
+                name="imu_mount_tf",
+                arguments=["0", "0", "0", "0", "0", "0", "base_link", "imu_link"],
+                condition=IfCondition(EqualsSubstitution(odom_source, "ekf")),
             ),
             # Identity odom for testing the slam_toolbox chain with nothing
             # else in the loop. Quality is poor by design.

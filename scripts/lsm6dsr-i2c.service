@@ -1,0 +1,11 @@
+[Unit]
+Description=LSM6DSRTR IMU on i2c-7 (kernel driver + raw register config)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "modprobe st_lsm6dsx_i2c; echo lsm6dsr 0x6a > /sys/bus/i2c/devices/i2c-7/new_device 2>/dev/null || true; sleep 1; echo on > /sys/bus/i2c/devices/7-006a/power/control 2>/dev/null || true; i2cset -f -y 7 0x6a 0x12 0x44; i2cset -f -y 7 0x6a 0x10 0x50; i2cset -f -y 7 0x6a 0x11 0x50"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
