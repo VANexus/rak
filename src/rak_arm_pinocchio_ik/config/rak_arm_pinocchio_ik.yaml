@@ -1,0 +1,4 @@
+# Placeholder — the IK service reads URDF/JointNames/TipFrame from ROS
+# parameters set by `launch/pinocchio_ik.launch.py`. This file exists so
+# `data_files=[("share/" + package_name + "/config", [...])]` has something
+# to install; parameter loading happens in the launch file.
