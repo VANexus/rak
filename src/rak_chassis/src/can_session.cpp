@@ -25,15 +25,23 @@ namespace
 constexpr uint32_t kIdSafety = 0x010U;
 constexpr uint32_t kIdNodeInfo = 0x030U;
 constexpr uint32_t kIdDriveCmd = 0x100U;
+constexpr uint32_t kIdArmCmdA = 0x110U;      // [AI] 冻结版补齐：J1-J4 目标（0.1° u16）
+constexpr uint32_t kIdArmCmdB = 0x111U;      // [AI] J5,J6,夹爪 目标
 constexpr uint32_t kIdWheelPosA = 0x200U;
 constexpr uint32_t kIdWheelPosB = 0x201U;
 constexpr uint32_t kIdWheelSpd = 0x202U;
+constexpr uint32_t kIdServoA = 0x210U;       // [AI] 冻结版补齐：J1-J4 实际角遥测
+constexpr uint32_t kIdServoB = 0x211U;       // [AI] J5,J6,夹爪 实际角遥测
 constexpr uint32_t kIdDiag = 0x220U;
 constexpr uint8_t kDidSafety = 0x01U;
 
 constexpr int kDriveHz = 100;                     // [AI] DRIVE_CMD 周期（v4 §3）
+constexpr int kArmHz = 50;                        // [AI] ARM_CMD 上限节拍（v4 §3，实际事件驱动）
 constexpr double kDriveLsbRadS = 0.01;            // [AI] DRIVE_CMD 量化 0.01 rad/s
 constexpr double kSpdLsbRadS = 0.01;              // [AI] WHEEL_SPD 量化
+// [AI] 舵机角量化 0.1°（v4 §5，0..2700 ↔ 0..270°）；遥测读回同系数
+constexpr double kServoLsbRad = 0.0017453292519943295;  // 0.1° in rad
+constexpr double kServoMaxRad = 4.71238898038469;       // 270° in rad
 constexpr double kWheelCprNominal = 61600.0;      // [AI] 编码器 counts/转（手测名义值，
 // docs/PROTOCOL.md v4 §5；四轮 CPR 未逐一标定，里程计精度与 TUI 航位推算同级）
 constexpr double kTwoPi = 6.283185307179586476925286766559;
@@ -58,6 +66,16 @@ int16_t to_drive_lsb(double rad_s)
   if (v > 32767.0) { return 32767; }
   if (v < -32768.0) { return -32768; }
   return static_cast<int16_t>(v);
+}
+
+// [AI] rad → 0.1° u16（饱和截断到 [0,2700]，负值截到 0——协议 §2：不取模不回绕）
+uint16_t to_servo_lsb(double rad)
+{
+  if (!(rad > 0.0)) { return 0U; }                 // [AI] 同时处理 NaN
+  if (rad > kServoMaxRad) { return 2700U; }
+  const double v = std::lround(rad / kServoLsbRad);
+  if (v > 2700.0) { return 2700U; }
+  return static_cast<uint16_t>(v);
 }
 
 int32_t read_i32(const std::array<uint8_t, 8> &d, size_t off)
@@ -120,10 +138,10 @@ bool CanSession::try_open()
       addr.can_family = AF_CAN;
       addr.can_ifindex = ifr.ifr_ifindex;
       // [AI] 只收这些 ID，减少内核→用户态拷贝（过滤器在内核态生效）
-      can_filter filters[7];
-      const uint32_t ids[7] = {kIdSafety, kIdNodeInfo, kIdDriveCmd, kIdWheelPosA,
-        kIdWheelPosB, kIdWheelSpd, kIdDiag};
-      for (size_t i = 0U; i < 7U; ++i) {
+      can_filter filters[9];
+      const uint32_t ids[9] = {kIdSafety, kIdNodeInfo, kIdDriveCmd, kIdWheelPosA,
+        kIdWheelPosB, kIdWheelSpd, kIdServoA, kIdServoB, kIdDiag};
+      for (size_t i = 0U; i < 9U; ++i) {
         filters[i].can_id = ids[i];
         filters[i].can_mask = CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_SFF_MASK;
       }
@@ -184,6 +202,16 @@ void CanSession::set_wheel_command(const std::array<double, 4> &command)
   }
 }
 
+void CanSession::set_arm_command(const std::array<double, 7> &command)
+{
+  for (size_t i = 0U; i < 7U; ++i) {
+    uint64_t bits = 0U;
+    std::memcpy(&bits, &command[i], sizeof(bits));
+    latest_arm_bits_[i].store(bits, std::memory_order_relaxed);
+  }
+  arm_dirty_.store(true, std::memory_order_relaxed);
+}
+
 void CanSession::set_motion_enabled(bool enabled)
 {
   const bool prev = motion_enabled_.exchange(enabled);
@@ -204,6 +232,9 @@ SessionSnapshot CanSession::snapshot() const
       result.feedback_valid = false;
       result.wheel_position.fill(0.0);
       result.wheel_velocity.fill(0.0);
+      // [AI] 冻结版补齐：轮反馈超时视为链路异常，舵机读回一并撤销防陈旧值
+      result.joint_position.fill(0.0);
+      result.servo_valid_mask = 0U;
     }
   }
   return result;
@@ -280,6 +311,23 @@ void CanSession::process_rx(const std::array<uint8_t, 8> &d, uint32_t can_id)
           static_cast<double>(read_i16(d, i * 2U)) * kSpdLsbRadS;
       }
       break;
+    case kIdServoA:
+      // [AI] 冻结版补齐：J1-J4 实际角（0.1° u16 → rad）。舵机遥测由固件
+      // servo_get_pulse 回读，视为始终有效；夹爪无反馈通道（见 kIdServoB）。
+      for (size_t i = 0U; i < 4U; ++i) {
+        snapshot_.joint_position[i] =
+          static_cast<double>(read_u16(d, i * 2U)) * kServoLsbRad;
+      }
+      snapshot_.servo_valid_mask |= 0x0FU;
+      break;
+    case kIdServoB:
+      // [AI] J5,J6 实际角；byte4-5 = 夹爪回显恒 0（无硬件通道），bit6 不置有效
+      for (size_t i = 0U; i < 2U; ++i) {
+        snapshot_.joint_position[4U + i] =
+          static_cast<double>(read_u16(d, i * 2U)) * kServoLsbRad;
+      }
+      snapshot_.servo_valid_mask |= 0x30U;
+      break;
     case kIdDiag:
       // [AI] STATE 位图 bit0=estop bit2=fault；MODE: 2=ESTOP 3=FAULT
       {
@@ -305,6 +353,7 @@ void CanSession::process_rx(const std::array<uint8_t, 8> &d, uint32_t can_id)
 void CanSession::run()
 {
   auto last_tx = std::chrono::steady_clock::now() - std::chrono::milliseconds(100);
+  auto last_arm_tx = last_tx;              // [AI] ARM 50Hz 节拍（协议 §3 周期上限）
   bool last_motion = false;
   while (!stopping_.load()) {
     // ---- RX ----
@@ -349,6 +398,38 @@ void CanSession::run()
       }
       // [AI] DISARMED 也周期发零目标：MCU 端远程门关着本就拒绝，双保险
       (void)send_frame(kIdDriveCmd, d);
+
+      // [AI] 冻结版补齐：ARM_CMD A/B @≤50Hz，事件驱动——仅 motion_enabled 且有
+      // 新目标时发送（协议 §10.1 #7：固件对舵机命令无门控，许可在本层；
+      // firmware 断流语义=舵机保持当前位置，禁止周期重放旧目标）。
+      // 夹爪（axis 6）无硬件通道：固件只回显不落地，照发保持契约一致。
+      if (now - last_arm_tx >= std::chrono::milliseconds(1000 / kArmHz) &&
+        motion_enabled_.load() && arm_dirty_.exchange(false))
+      {
+        last_arm_tx = now;
+        std::array<uint8_t, 8> a {};
+        std::array<uint8_t, 8> b {};
+        for (size_t i = 0U; i < 4U; ++i) {
+          uint64_t bits = latest_arm_bits_[i].load(std::memory_order_relaxed);
+          double cmd = 0.0;
+          std::memcpy(&cmd, &bits, sizeof(cmd));
+          const uint16_t raw = to_servo_lsb(cmd);
+          a[i * 2U] = static_cast<uint8_t>(raw & 0xFFU);
+          a[i * 2U + 1U] = static_cast<uint8_t>((raw >> 8U) & 0xFFU);
+        }
+        for (size_t i = 0U; i < 3U; ++i) {
+          uint64_t bits = latest_arm_bits_[4U + i].load(std::memory_order_relaxed);
+          double cmd = 0.0;
+          std::memcpy(&cmd, &bits, sizeof(cmd));
+          const uint16_t raw = to_servo_lsb(cmd);
+          b[i * 2U] = static_cast<uint8_t>(raw & 0xFFU);
+          b[i * 2U + 1U] = static_cast<uint8_t>((raw >> 8U) & 0xFFU);
+        }
+        b[6] = 0U;                       // [AI] RSVD16（协议要求保留位发 0）
+        b[7] = 0U;
+        (void)send_frame(kIdArmCmdA, a);
+        (void)send_frame(kIdArmCmdB, b);
+      }
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1));

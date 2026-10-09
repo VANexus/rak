@@ -32,6 +32,7 @@ public:
   void start() override;
   void stop() override;
   void set_wheel_command(const std::array<double, 4> &command) override;
+  void set_arm_command(const std::array<double, 7> &command) override;
   void set_motion_enabled(bool enabled) override;
   SessionSnapshot snapshot() const override;
 
@@ -53,6 +54,11 @@ private:
   std::atomic<bool> motion_enabled_{false};
   std::atomic<bool> motion_request_dirty_{true};  // [AI] 使能沿变化待发 START/STOP
   std::array<std::atomic<uint64_t>, 4> latest_command_bits_{};  // [AI] double 位模式原子交换
+  // [AI] 冻结版补齐：臂 7 轴目标（rad 的 double 位模式）+ 有新目标待发标志。
+  // 发送策略见 session.hpp set_arm_command 注释：仅 motion_enabled 且 dirty，
+  // 事件驱动，防"舵机命令周期重放"（固件侧舵机无远程门/急停门控）。
+  std::array<std::atomic<uint64_t>, 7> latest_arm_bits_{};
+  std::atomic<bool> arm_dirty_{false};
   mutable std::mutex snapshot_mutex_;
   SessionSnapshot snapshot_;
   std::chrono::steady_clock::time_point last_feedback_at_{};

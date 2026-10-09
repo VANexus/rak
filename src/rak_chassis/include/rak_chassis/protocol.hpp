@@ -12,6 +12,7 @@ constexpr uint32_t kRequiredFeatures = 0x07U;
 constexpr uint8_t kTypeHello = 0x01U;
 constexpr uint8_t kTypeHelloAck = 0x02U;
 constexpr uint8_t kTypeDriveCommand = 0x10U;
+constexpr uint8_t kTypeArmCommand = 0x11U;    // [AI] 冻结版补齐：v2 备用链路臂命令（线格式自 R42 冻结未变）
 constexpr uint8_t kTypeDriveState = 0x20U;
 constexpr uint8_t kTypeArmState = 0x21U;
 constexpr uint8_t kTypeDiagnostics = 0x22U;

@@ -131,6 +131,16 @@ void SerialSession::set_motion_enabled(bool enabled)
   motion_enabled_.store(enabled, std::memory_order_relaxed);
 }
 
+void SerialSession::set_arm_command(const std::array<double, 7> &command)
+{
+  for (size_t i = 0U; i < 7U; ++i) {
+    uint64_t bits = 0U;
+    std::memcpy(&bits, &command[i], sizeof(bits));
+    latest_arm_bits_[i].store(bits, std::memory_order_relaxed);
+  }
+  arm_dirty_.store(true, std::memory_order_relaxed);
+}
+
 SessionSnapshot SerialSession::snapshot() const
 {
   std::lock_guard<std::mutex> lock(snapshot_mutex_);
@@ -340,6 +350,23 @@ bool SerialSession::process_frame(const Frame &frame)
       /* [AI] R30 联测修正：状态帧异常丢弃（含 DISARMED 校验不过），不断链 */
       return true;
     }
+    /* [AI] 冻结版补齐：解析 measured_position 进 SessionSnapshot.joint_position。
+       v2 ARM_STATE 布局（app_protocol_v2.h）：echoed_seq u16 + mode u8 +
+       axis_count u8 + measured_valid_mask u8 + measured_source u8 + fault u32 +
+       sample_time_us u64（=18B 头）+ axis_count×command i32 + axis_count×measured i32。
+       measured 为固件回读（舵机无编码器，来源=指令回显），mask 直接透传给消费端。 */
+    {
+      const uint8_t axis_count = frame.payload[3];
+      const uint8_t measured_mask = frame.payload[4];
+      const size_t meas_base = 18U + static_cast<size_t>(axis_count) * 4U;
+      std::lock_guard<std::mutex> lock(snapshot_mutex_);
+      for (size_t i = 0U; i < axis_count && i < 7U; ++i) {
+        snapshot_.joint_position[i] =
+          static_cast<double>(read_i32(&frame.payload[meas_base + i * 4U])) /
+          1000000.0;
+      }
+      snapshot_.servo_valid_mask = static_cast<uint8_t>(measured_mask & 0x7FU);
+    }
   } else if (frame.type == kTypeDiagnostics) {
     if (frame.payload.size() != 36U) {
       return false;
@@ -385,6 +412,9 @@ void SerialSession::revoke_feedback(bool faulted)
   snapshot_.feedback_valid_mask = 0U;
   snapshot_.wheel_position.fill(0.0);
   snapshot_.wheel_velocity.fill(0.0);
+  /* [AI] 冻结版补齐：舵机读回随反馈一并撤销，防陈旧关节角流入上层 */
+  snapshot_.joint_position.fill(0.0);
+  snapshot_.servo_valid_mask = 0U;
   snapshot_.faulted = faulted || fault_latched_.load();
   snapshot_.feedback_age = std::chrono::milliseconds::max();
 }
@@ -496,6 +526,39 @@ void SerialSession::run()
         sent_drive_sequence_count_ = std::min(
           sent_drive_sequence_count_ + 1U, sent_drive_sequences_.size());
         last_drive = now;
+      }
+
+      /* [AI] 冻结版补齐：臂命令 0x11，事件驱动——仅 handshaken + motion_enabled +
+         有新目标时发送（与 CanSession 同一安全契约：舵机许可在本层）。v2 线格式
+         自 R42 冻结未变：mode u8 + lease u16 + axis_count u8 + valid_mask u8 +
+         N×i32 µrad；axis_count 固定 6（J1..J6），夹爪不协商不发。固件断流语义 =
+         舵机保持当前位置，禁止周期重放旧目标。 */
+      if (state.handshaken && motion_enabled_.load(std::memory_order_relaxed) &&
+        arm_dirty_.exchange(false))
+      {
+        Frame arm;
+        arm.type = kTypeArmCommand;
+        arm.sequence = tx_sequence_++;
+        arm.payload.reserve(5U + 6U * 4U);
+        arm.payload.push_back(1U);                      // [AI] mode=ARMED
+        append_u16(arm.payload, kLeaseMs);
+        arm.payload.push_back(6U);                      // [AI] axis_count=6（J1..J6）
+        arm.payload.push_back(0x3FU);                   // [AI] valid_mask
+        for (size_t axis = 0U; axis < 6U; ++axis) {
+          const double rad = command_from_bits(latest_arm_bits_[axis]);
+          int64_t urad = 0;
+          if (std::isfinite(rad) && rad > 0.0) {
+            constexpr double kMaxArmRad = 4.71238898038469;  // 270°
+            const double clamped = std::min(rad, kMaxArmRad);
+            urad = static_cast<int64_t>(std::lround(clamped * 1e6));
+          }
+          append_i32(arm.payload, static_cast<int32_t>(urad));
+        }
+        std::vector<uint8_t> wire;
+        if (!encode_frame(arm, wire) || !write_all(fd, wire, stopping_)) {
+          failed = true;
+          continue;
+        }
       }
     }
 
