@@ -1,6 +1,26 @@
 # 项目总体状态
 
-更新日期：2026-10-07
+更新日期：2026-10-09
+
+## 2026-10-09 增量：CAN v4 主链路 + 工作空间重组（ADR-0012 / ADR-0013）
+
+- **传输层**：合入上游 `Session` 抽象 + `SerialSession`（USB v2 备用）/ `CanSession`
+  （SocketCAN CAN v4 主）双后端；协议事实源升到下位仓 v4。取代 ADR-0007 的
+  "USB 唯一链路"；`transport:=usb|can` 上层无感切换。
+- **工作空间**：按子系统归堆 23 → 18 构建包：`rak_hardware`→`rak_chassis`、新建
+  `rak_commissioning`（双 TUI + chassis_key_test 转正 entry point）与 `rak_intent`
+  （task_intent 自 brain 抽出）；`rak_bringup` 吸收 sensor_bringup/navigation/
+  chassis_bringup 全部 launch/config；`brain/` 迁入 `src/rak_agent`（模块 `rak_ai`→
+  `rak_agent`，语料迁仓库根 `data/episodes/`）；CAN v3 栈归档 `attic/`。
+- **规范守护**：`check_workspace.py` 重写（EXPECTED 18 包、依赖倒置守卫
+  `dependents(rak_agent) ⊆ {rak_bringup}`、launch 引用检查），本机结构检查全绿；
+  并由此暴露并修复历史欠账 `nav2_lifecycle_manager` 未声明。
+- **文档**：ADR-0012/0013、索引、README/architecture/AGENTS/CLAUDE/CONSTRUCTION/
+  migration（新映射表）/TODO 同步完成。
+- **本机验证边界**：x86 开发机（无 Jazzy/JetPack）——已跑通纯 Python 测试
+  （`test_ai.py`、`test_task_intent.py`、模块导入与语料路径断言）；
+  `colcon build/test` 与 `check_workspace --installed` 需在 Jetson 上首次收口
+  （先 `rm -rf build/architecture install/architecture`）。
 
 ## 结论
 
@@ -28,7 +48,7 @@
 
 - 全工作区构建 17 个包完成；安装态 checker 检查 14 个自有包、依赖图和 13 个 launch。
 - CTest 21 项通过；直接 Python ROS 集成测试中，任务/机械臂 4 项、UART 驱动 13 项通过。
-- `brain/tests/test_ai.py` 与 `brain/tests/test_task_intent.py` 通过。
+- `src/rak_agent/test/test_ai.py` 与 `src/rak_intent/test/test_task_intent.py` 通过。
 - fake Nav2 覆盖导航成功、重复 request ID、暂停确认、恢复重规划、Service 取消和 Action 取消。
 - UART ROS 节点通过 PTY peer 验证握手、DISARMED、显式 ARM、速度单位换算和命令过期撤销。
 - 六轴动作测试覆盖六关节轨迹与独立夹爪 Action。

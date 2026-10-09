@@ -38,7 +38,7 @@
   机械臂 `joint_trajectory_controller`、一个 `hardware_interface::SystemInterface` 插件走 USB。
 - **依据**：**ADR-0007（取代 ADR-0001）**。硬件前提已变：只剩一块 F407 同时管 4 轮 + 6 舵机，
   CAN 失效，Jetson 只走 USB。
-- **要做**：① 写 `rak_hardware` C++ 插件（4 轮 velocity + 6 关节 position）；
+- **要做**：① 写 `rak_chassis` C++ 插件（4 轮 velocity + 6 关节 position）；
   ② URDF 加 `<ros2_control>` 标签；③ 固件协议改为"4 轮速度 + 6 关节位置"下行、
   "4 轮速度/位置 + 6 关节位置"上行（**移除 `app_car.c` 的麦轮 IK**）；
   ④ 配 `controller_manager` + spawner；⑤ `enable_odom_tf: false` + 显式 `reference_timeout`。
@@ -65,10 +65,10 @@
 
 ### P0-3 ~~裁定"Jetson 是否在 CAN 总线上"~~ ✅ 已裁定
 
-- **结论（2026-10-05 用户确认）**：**Jetson 只通过 USB 与下位机通信，不接 CAN。**
-  臂板烧毁后 CAN 对端不存在，CAN 层整体失效。
-- **遗留动作**：把 `src/rak_can_driver` 与 `src/rak_serial_link` 明确标记为
-  **废弃 / 保留待用**（当前是"存在但语义悬空"）。TJA1050 电平问题（ADR-0003 §A7）随之作废。
+- **结论（2026-10-05 用户确认）**：Jetson 只通过 USB 与下位机通信——**已被 ADR-0012
+  （2026-10-09）取代：CAN v4 恢复唯一主链路，USB v2 冻结备用**，`Session` 抽象切换。
+- **遗留动作 [2026-10-09 完成]**：`rak_can_driver` 与 `rak_serial_link`（CAN v3 host 栈）
+  已归档至 `attic/`（COLCON_IGNORE，ADR-0013）；活 CAN 路径 = `src/rak_chassis` 的 `CanSession`。
 - **关联**：ADR-0003 §A3（已更新）、ADR-0007
 
 ### P0-4 底盘 UART 实车验收
@@ -116,7 +116,7 @@
 - **现状** `[已核实]`：`docs/architecture.md` §7 明确"`odom_source:=ekf` 预留选项
   **不会自动启动 EKF**"。rf2o 有 `publish_tf` 参数（默认 true），接管时须置 false，
   否则**两个节点抢发 `odom→base_link`**。
-- **验收**：`ros2 launch rak_navigation slam.launch.py odom_source:=ekf` 后
+- **验收**：`ros2 launch rak_bringup slam.launch.py odom_source:=ekf` 后
   `ros2 run tf2_tools view_frames` 只有一个 `odom→base_link` 发布者。
 
 ### P1-3 3D 避障
@@ -155,7 +155,7 @@
   `publish_arm=false`）：验证模型加载 / TF / 100 Hz 时序 / 状态机 / 降级，零运动风险；
   ② wheels-only（P0+P2+P3）上车：测单一写权与 `reference_timeout` 兜底；
   ③ 臂侧留在软件夹具（fake position-stream，mirror `rak_arm_simulation` 模式），
-  待 `rak_hardware` 臂接口就绪后增量接 P1；
+  待 `rak_chassis` 臂接口就绪后增量接 P1；
   ④ 标定冲刺（轮半径/轮距/支撑多边形/质量 CoM/舵机限速）回填占位值（可并行）。
   台架阶梯（轮架空 → 臂 slow 单轴 → Home → 联合低速）不变。
 - **验收**：三级矩阵见 spec §9；台架按 `hardware_acceptance.md` 的 Arm Unlock Gates。
@@ -281,7 +281,7 @@
 
 - **目标**：自然语言指定目标（"抓红色的杯子"）→ 视觉定位 → 抓取位姿。
 - **候选**：VLM 选目标 + P3-1/P3-2 出抓取位姿。
-- **约束** `[已核实]`：`brain/rak_ai/types.py` 是**冻结契约**，`state_text` 逐字存进
+- **约束** `[已核实]`：`src/rak_agent/rak_agent/types.py` 是**冻结契约**，`state_text` 逐字存进
   episode JSONL。新任务协议必须**另行版本化**，不得改写冻结语义。
 - **风险**：S2 延迟 12–30 s，**不能进实时控制环**（`docs/architecture.md` §4）。
 
@@ -291,8 +291,8 @@
 - **形态**（ADR-0008）：**标准 6 轴** + **舵机夹爪**（第 7 个 PWM 舵机）+ 末端摄像头。
   现有五轴 URDF 与六轴夹具**都要重建**。
 - **进度 [2026-10-08]**：固件 R42 已打通 USB v2 `ARM_COMMAND`（7 轴 µrad）→ 舵机 PWM
-  落地（轴序/限位/零位见下位机 `app_car.h`）；Jetson 侧新增 `src/rak_arm_tui`
-  示教 TUI（50 Hz ARM_COMMAND + ARM_STATE 回显）。**剩余**：`rak_hardware`
+  落地（轴序/限位/零位见下位机 `app_car.h`）；Jetson 侧新增示教 TUI（50 Hz ARM_COMMAND + ARM_STATE 回显；2026-10-09 起为
+  `src/rak_commissioning` 的 `arm_servo_tui`）。**剩余**：`rak_chassis`
   ros2_control SystemInterface 插件 + `joint_trajectory_controller` 接入。
 - **验收**：`ros2_control` 硬件接口 + `JointTrajectoryController`，插值/刷新率按固件定。
 - **风险**：**不要把 25 kHz 电机环搬到 ROS**（`docs/architecture.md` §4）。
@@ -348,7 +348,7 @@
 - **不让 Jev（S1）决策直接驱动任务执行器**：见 ADR-0010 —— 只经 Harness 传递、不赋权；
   执行器**不**订阅 `/brain/decision`，Harness 只输出结构化提案，永不发速度/关节命令。
 - **不共用 LLM key 变量**：RAI 慢路径用 `OPENAI_API_KEY`，Harness 用 `ANTHROPIC_API_KEY`。
-- **不改 `brain/rak_ai/types.py` 的冻结语义**：要新协议就版本化。
+- **不改 `src/rak_agent/rak_agent/types.py` 的冻结语义**：要新协议就版本化。
 - **不在本仓定义 CAN 帧字段**：CAN v3 的源在下位机仓（ADR-0003）。
 
 ---

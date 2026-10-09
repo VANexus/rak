@@ -1,6 +1,8 @@
 # ADR-0007: 底盘与机械臂统一走 `ros2_control`，麦轮 IK 移到上位机
 
-- **状态**: 已接受 —— **取代 [ADR-0001](0001-mecanum-kinematics-on-mcu.md)**
+- **状态**: 已接受 —— **取代 [ADR-0001](0001-mecanum-kinematics-on-mcu.md)**；
+  ⚠ 2026-10-09 起"USB 是唯一 Jetson↔MCU 链路"部分被 [ADR-0012](0012-transport-session-can-v4-primary.md) 取代
+  （CAN v4 恢复为主链路，USB 冻结备用）；单 F407、主机侧 IK、EKF 航向等其余决策继续有效
 - **日期**: 2026-10-05
 - **相关**: `src/rak_description` · `src/rak_base_driver` · `src/rak_navigation` · `src/rak_moveit_config` · ADR-0002 · ADR-0003 · `vehical_rak_chassis/Core/Src/app_car.c`、`app_servo.c`
 

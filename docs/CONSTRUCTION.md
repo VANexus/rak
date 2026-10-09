@@ -102,7 +102,7 @@ sudo scripts/rak-mode.sh status
 ```bash
 source /opt/ros/jazzy/setup.bash
 CMAKE_BUILD_PARALLEL_LEVEL=2 colcon build \
-  --base-paths src brain --executor sequential \
+  --base-paths src --executor sequential \
   --build-base build/architecture --install-base install/architecture \
   --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/architecture/local_setup.bash
@@ -115,11 +115,11 @@ python3 scripts/check_workspace.py --installed
 
 ```bash
 colcon test --build-base build/architecture --packages-select rak_description rak_moveit_config
-PYTHONPATH=brain python3 brain/tests/test_ai.py
+PYTHONPATH=src/rak_agent python3 src/rak_agent/test/test_ai.py
 ```
 
 `rak_agent` 是标准 `ament_python` 包，ROS 节点使用系统 Python；依赖由包清单和 rosdep
-管理，不创建独立 venv。普通 Python 测试通过 `PYTHONPATH=brain` 从源码运行。
+管理，不创建独立 venv。普通 Python 测试通过 `PYTHONPATH=src/rak_agent` 从源码运行（ADR-0013）。
 
 ---
 
@@ -128,10 +128,10 @@ PYTHONPATH=brain python3 brain/tests/test_ai.py
 各自独立启动，**不要全开**：
 
 ```bash
-ros2 launch rak_sensor_bringup lidar.launch.py     # N10P → /scan (frame laser_link)
-ros2 launch rak_sensor_bringup depth_camera.launch.py  # 默认 Gemini 335L
-ros2 launch rak_sensor_bringup depth_camera.launch.py camera:=astra
-ros2 launch rak_sensor_bringup stereo.launch.py device:=/dev/video0
+ros2 launch rak_bringup lidar.launch.py     # N10P → /scan (frame laser_link)
+ros2 launch rak_bringup depth_camera.launch.py  # 默认 Gemini 335L
+ros2 launch rak_bringup depth_camera.launch.py camera:=astra
+ros2 launch rak_bringup stereo.launch.py device:=/dev/video0
 ```
 
 雷达的 `lidar_name` 必须是 **`N10_P`**（108 B @ 460800）。写成 `N10` 会导致 CRC 不匹配 ——
@@ -219,8 +219,8 @@ ros2 control list_controllers                # joint_state_broadcaster / mecanum
 ## 7. 启动入口
 
 ```bash
-ros2 launch rak_navigation slam.launch.py [odom_source:=rf2o|ekf|none]
-ros2 launch rak_navigation nav2.launch.py                 # 含 lidar + SLAM + motion stub
+ros2 launch rak_bringup slam.launch.py [odom_source:=rf2o|ekf|none]
+ros2 launch rak_bringup nav2.launch.py                 # 含 lidar + SLAM + motion stub
 ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim   # 默认 sim
 ros2 run rak_task_executor task_cli                        # "go to <别名>"
 ros2 launch rak_moveit_config demo.launch.py               # 旧五轴 demo
@@ -238,7 +238,7 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 ## 8. 部署检查单
 
 - [ ] `colcon build` 通过（17 包），`check_workspace.py --installed` 通过
-- [ ] `brain/tests/test_ai.py` 通过（`env -u PYTHONPATH`）
+- [ ] `src/rak_agent/test/test_ai.py` 通过（`env -u PYTHONPATH`）
 - [ ] 传感器单独跑通：`/scan` 有数据且 frame 是 `laser_link`
 - [ ] `rak-mode.sh headless` 后双目不再 `VIDIOC_REQBUFS` 失败
 - [ ] IMU：`spi0.0 -> st_lsm6dsx_spi`，`/proc/interrupts` 有中断计数

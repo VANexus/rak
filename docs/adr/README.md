@@ -52,8 +52,10 @@
 | [0009](0009-urdf-modeling-and-calibration.md) | 无 CAD 时用「参数化 + 图元近似 + chArUco 标定」建 URDF | 已接受 |
 | [0010](0010-jev-harness-arbitration-and-expression.md) | Jev + Harness 任务仲裁：新包 `src/rak_harness` 作传递式仲裁缝；云端 LLM 走独立 `anthropic` 客户端；「呼吸感」分层预留接口 | 已接受（Harness 本体未实现） |
 | [0011](0011-wbc-hqp-motion-arbitration.md) | 全身运动仲裁层 WBC/HQP：独立节点 `rak_wbc`（ament_python）速度级 HQP（Pinocchio + OSQP），底盘与臂单一运动写权，Harness 传递式融合 | 已接受（2026-10-08；实现与硬件前置见待闭合项） |
+| [0012](0012-transport-session-can-v4-primary.md) | 传输层 Session 抽象：CAN v4 唯一主链路、USB v2 冻结备用、`transport:=usb\|can` 工厂；**部分取代 0007 的"USB 唯一链路"** | 已接受（2026-10-09） |
+| [0013](0013-workspace-subsystem-regroup.md) | 工作空间按子系统归堆 23→18 包：`rak_hardware`→`rak_chassis`、`rak_commissioning`/`rak_intent` 新建、bringup 三合一+navigation 并入、brain→`src/rak_agent`、CAN v3 栈入 `attic/`；"冻结消息契约"定为分层规则 | 已接受（2026-10-09） |
 
-> **当前有效架构 = ADR-0002 + 0003(UART 层) + 0004 + 0005 + 0006 + 0007 + 0008 + 0009 + 0010。**
+> **当前有效架构 = ADR-0002 + 0003(v4 层) + 0004 + 0005 + 0006 + 0007(传输部分被 0012 取代) + 0008 + 0009 + 0010 + 0011 + 0012 + 0013。**
 > 0001 仅作历史记录，不要按其实施。
 > 0008 初稿曾误记末端为吸嘴，同日已更正为舵机夹爪（见该篇修订记录）。
 > 0010 只定义接口与验收，`src/rak_harness` 与 `harness_node` **尚未创建**；「呼吸感」硬件门全关。

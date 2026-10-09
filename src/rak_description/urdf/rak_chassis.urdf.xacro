@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<!-- [AI] 底盘最小 URDF：base_link + 四个连续轮关节 + rak_hardware ros2_control 块。
+<!-- [AI] 底盘最小 URDF：base_link + 四个连续轮关节 + rak_chassis ros2_control 块。
      仅服务 ros2_control 底盘链路烟测；几何为占位值，不代表实测尺寸。
      机械臂关节不在此文件——实机关节接口未 commissioned（ADR-0007）。 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rak_chassis">
@@ -59,7 +59,7 @@
 
   <ros2_control name="rak_chassis_system" type="system">
     <hardware>
-      <plugin>rak_hardware/RakSystemHardware</plugin>
+      <plugin>rak_chassis/RakSystemHardware</plugin>
       <param name="device">$(arg device)</param>
       <param name="host_build_id">$(arg host_build_id)</param>
       <!-- [AI] 运动许可：默认 false=永远 DISARMED；实驱必须显式 allow_motion:=true -->

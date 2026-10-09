@@ -1,6 +1,6 @@
 """[AI] rak_wbc 启动入口（ADR-0011）。
 
-只启动仲裁节点本身；底盘/臂的 ros2_control 由 rak_chassis_bringup 或整机 bringup
+只启动仲裁节点本身；底盘/臂的 ros2_control 由 rak_bringup（chassis_bringup.launch）或整机链路启动
 负责。默认 enabled=false —— 启动后需显式调用 /wbc/enable 且现场安全确认后才发运动。
 
 用法:

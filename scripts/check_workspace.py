@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check package boundaries; --installed also resolves launch files without starting nodes."""
+"""Check package boundaries; --installed also resolves launch files without starting nodes.
+
+Structure per ADR-0013: all owned packages live in src/ (no brain/ special case,
+CAN v3 stack retired to attic/), rak_agent is the decision layer and must have
+zero dependents, and the task-intent contract lives in rak_intent.
+"""
 
 from __future__ import annotations
 
@@ -18,23 +23,22 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     "rak_agent", "rak_arm_simulation", "rak_astra_driver", "rak_base_driver",
-    "rak_bringup", "rak_can_driver", "rak_description", "rak_gpu", "rak_interfaces",
-    "rak_motion_stub", "rak_moveit_config", "rak_navigation", "rak_sensor_bringup",
-    "rak_stereo_driver", "rak_task_executor",
+    "rak_bringup", "rak_chassis", "rak_commissioning", "rak_description",
+    "rak_gpu", "rak_intent", "rak_interfaces", "rak_motion_stub",
+    "rak_moveit_config", "rak_pointcloud", "rak_speech", "rak_stereo_driver",
+    "rak_task_executor", "rak_wbc",
 }
 OLD_NAMES = {"core", "eye", "boot", "brain", "motor_stub", "astra_bridge"}
 
 
 def packages() -> dict[str, tuple[Path, set[str]]]:
     found = {}
-    manifests = sorted((ROOT / "src").glob("rak_*/package.xml"))
-    manifests.append(ROOT / "brain/package.xml")
-    for manifest in manifests:
+    for manifest in sorted((ROOT / "src").glob("rak_*/package.xml")):
         package = ET.parse(manifest).getroot()
         name = package.findtext("name")
         assert name not in found, f"duplicate package: {name}"
         assert re.fullmatch(r"rak_[a-z][a-z0-9_]*", name), name
-        assert manifest.parent.name == name or (name == "rak_agent" and manifest.parent.name == "brain")
+        assert manifest.parent.name == name, (name, manifest.parent.name)
         dependencies = {
             element.text for element in package
             if element.tag == "depend" or element.tag.endswith("_depend")
@@ -49,6 +53,7 @@ def packages() -> dict[str, tuple[Path, set[str]]]:
             assert re.search(rf"project\({name}(?:\s|\))", cmake), name
         found[name] = manifest.parent, dependencies
     assert set(found) == EXPECTED, set(found) ^ EXPECTED
+    assert not (ROOT / "brain").exists(), "brain/ moved to src/rak_agent (ADR-0013)"
     for old in OLD_NAMES:
         assert not (ROOT / "src" / old).exists(), f"legacy source directory: {old}"
     return found
@@ -62,17 +67,36 @@ def check_boundaries(found) -> None:
 
     for name in found:
         visit(name, [])
+    # Foundation packages stay pure.
     assert not found["rak_interfaces"][1] & EXPECTED
     assert not found["rak_gpu"][1] & EXPECTED
+    assert not found["rak_intent"][1] & EXPECTED
+    assert not found["rak_description"][1] & EXPECTED
+    # The decision layer has interfaces as its only internal dependency ...
     assert "rak_interfaces" in found["rak_agent"][1]
     assert "rak_gpu" not in found["rak_agent"][1]
-    assert not found["rak_description"][1] & EXPECTED
+    # ... and (ADR-0013) nothing may import it back. The only legitimate
+    # dependent is the composition layer (rak_bringup launches agent_node);
+    # any other dependent means someone is crossing the /brain/decision seam.
+    dependents = {
+        name for name, (_, deps) in found.items() if "rak_agent" in deps
+    }
+    assert dependents <= {"rak_bringup"}, (
+        f"packages depend on the decision layer beyond bringup: {sorted(dependents - {'rak_bringup'})}"
+    )
+    # Shared intent contract flows downward to its two consumers.
+    assert "rak_intent" in found["rak_task_executor"][1]
+    assert "rak_intent" in found["rak_speech"][1]
+    assert "rak_interfaces" in found["rak_task_executor"][1]
+    # Modeling assets and drivers.
     assert "rak_description" in found["rak_moveit_config"][1]
     assert "rak_interfaces" in found["rak_base_driver"][1]
-    assert "rak_agent" in found["rak_task_executor"][1]
-    assert "rak_interfaces" in found["rak_task_executor"][1]
     assert "rak_gpu" in found["rak_stereo_driver"][1]
     assert "rak_interfaces" not in found["rak_stereo_driver"][1]
+    # Commissioning tools share the USB v2 codec with the base driver.
+    assert "rak_base_driver" in found["rak_commissioning"][1]
+    # Bringup composes the chassis control chain.
+    assert "rak_chassis" in found["rak_bringup"][1]
 
 
 def check_launch_references(found) -> None:
@@ -138,7 +162,8 @@ def check_installed(found) -> None:
     from ament_index_python.packages import get_package_prefix
 
     modules = (
-        ("rak_ai.task_intent", "rak_agent"),
+        ("rak_intent.task_intent", "rak_intent"),
+        ("rak_agent.node", "rak_agent"),
         ("rak_arm_simulation.controllers", "rak_arm_simulation"),
         ("rak_base_driver.node", "rak_base_driver"),
         ("rak_task_executor.node", "rak_task_executor"),
@@ -151,9 +176,9 @@ def check_installed(found) -> None:
 
     agent_node = Path(get_package_prefix("rak_agent")) / "lib/rak_agent/agent_node"
     assert agent_node.is_file(), f"missing ROS console entry point: {agent_node}"
-    assert "rak_ai.node" in agent_node.read_text(), "agent_node is not a ROS console entry point"
+    assert "rak_agent.node" in agent_node.read_text(), "agent_node is not a ROS console entry point"
     result = subprocess.run(
-        [sys.executable, str(ROOT / "brain/tests/test_ros_smoke.py")],
+        [sys.executable, str(ROOT / "src/rak_agent/test/test_ros_smoke.py")],
         cwd="/tmp", text=True, capture_output=True, timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr

@@ -60,40 +60,45 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_gpu` | GPU RAII、TRT/VPI 工具 | 消息生成、机器人策略 |
 | `rak_stereo_driver` | V4L2、nvJPEG、图像发布 | 目标识别、导航目标选择 |
 | `rak_astra_driver` | Astra SDK 与 ROS 数据转换 | 世界状态、抓取规划 |
-| `rak_sensor_bringup` | Astra/Gemini 335L 二选一启动、设备配置 | 任务策略、整机状态机 |
+| `rak_pointcloud` | GPU 点云节点 | 感知策略、任务规划 |
 | `rak_description` | URDF、几何、惯量与可视化 | 导航参数、模型策略 |
-| `rak_navigation` | SLAM、全向 MPPI、smoother/collision-monitor 配置 | 对话理解、LLM 调用 |
-| `rak_task_executor` | 单一任务状态机、文字意图、Nav2 Action 生命周期 | 原始底盘/关节命令、感知算法 |
+| `rak_intent` | 共享版本化文本→意图契约（stdlib-only） | 决策、动作执行、RAI 会话 |
+| `rak_task_executor` | 单一任务状态机、Nav2 Action 生命周期；意图解析来自 `rak_intent` | 原始底盘/关节命令、感知算法 |
+| `rak_speech` | 离线 ASR（Vosk）→ 转写 + 意图发布 | 下发目标、速度/关节命令 |
 | `rak_wbc`（ADR-0011） | 全身运动仲裁：100 Hz 速度级 HQP（Pinocchio + OSQP）、底盘与臂的单一常规写入者；数值层桌面可回归 | 安全裁决、任务生命周期、直接读感知/决策 |
-| `rak_base_driver` | UART v1 历史节点；独立 v2 编解码 | v2 硬件接口 endpoint、MCU 实时环、安全认证 |
-| `rak_hardware` | `ros2_control` SystemInterface：USB v2 到 F407（当前导出 4 轮接口；臂接口待加） | 运动学仲裁、轮/臂语义重定义 |
-| `rak_chassis_bringup` | 底盘 `ros2_control` 组合（CM@100 Hz + mecanum + JSB）与台架联调入口 | 导航/任务策略、整机组合 |
-| `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |
+| `rak_base_driver` | USB v2 编解码（commissioning 共用）；UART v1 历史节点 | v2 硬件接口 endpoint、MCU 实时环、安全认证 |
+| `rak_chassis` | `ros2_control` SystemInterface + `Session` 传输抽象（CAN v4 主 / USB v2 备，ADR-0012；当前导出 4 轮接口；臂接口待加） | 运动学仲裁、轮/臂语义重定义、上层传输分支 |
+| `rak_commissioning` | `drive_tui` / `arm_servo_tui` / `chassis_key_test` + `chassis_test.launch.py` | 生产运动接口、安全认证 |
 | `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
+| `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |
 | `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
 | `rak_agent` | 当前 S1/S2 认知原型 | 电机驱动、同步等待云端后控制 |
 | `rak_harness`（**待创建**，ADR-0010） | Harness 慢路径：任务上下文、工具白名单、预算/超时/事件摘要/失败恢复；独立 `anthropic` 客户端 | 速度/关节命令、第二生命周期所有者、实时安全裁决 |
-| `rak_bringup` | 整机组合、Cyclone DDS（运行 domain 47）、操作入口 | 通用算法或传感器 SDK |
+| `rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent/base_uart）、参数、udev、Cyclone DDS（运行 domain 47）、操作入口（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） | 通用算法或传感器 SDK |
+
+`attic/`（`rak_can_driver`、`rak_serial_link`）为退役 CAN v3 host 栈（ADR-0012/0013），
+COLCON_IGNORE 不构建。
 
 关键依赖方向（箭头表示“依赖”）：
 
 ```text
 rak_agent ------------> rak_interfaces ---> 标准 ROS 消息
 rak_stereo_driver ----> rak_gpu ----------> JetPack SDK
-rak_task_executor ----> rak_interfaces / rak_agent(task intent) / Nav2 Action
+rak_task_executor ----> rak_interfaces / rak_intent / Nav2 Action
+rak_speech -----------> rak_intent
 rak_base_driver -----> rak_interfaces / serial
+rak_commissioning ----> rak_base_driver（USB v2 编解码共用）
 rak_arm_simulation --> standard trajectory/gripper actions
 rak_moveit_config ----> rak_description / rak_arm_simulation (simulation only)
-rak_navigation -------> rak_sensor_bringup / rak_motion_stub / Nav2 / SLAM
 rak_wbc -------------> rak_description（臂 URDF 合并） / mecanum reference / 臂位置控制器（待建）
-rak_sensor_bringup ----> Astra / Orbbec SDK v2 ROS driver / 上游雷达 / laser_filters
-rak_bringup ----------> 各能力的启动入口
+rak_chassis ----------> CAN v4（SocketCAN 主）/ USB v2（备用） — Session 抽象之后上层无感
+rak_bringup ----------> 各能力的启动入口（含 rak_agent，唯一被允许的决策层依赖者）
 ```
 
-`brain/` 是有意保留的源码位置例外，ROS 包名为 `rak_agent`，Python import 为
-`rak_ai`。它由 `colcon` 标准构建、安装为 `ament_python` 包，并通过 console entry
-point 使用 ROS 系统 Python；没有独立 venv 或 Laya 推理子进程。episode 仍保存在
-`brain/data/episodes`。Jev 的 TensorRT 原生后端目标是在该节点进程内加载 Jetson
+所有可构建包位于 `src/`（ADR-0013），ROS 包名 `rak_agent`、Python 模块名 `rak_agent`。
+它由 `colcon` 标准构建、安装为 `ament_python` 包，并通过 console entry
+point 使用 ROS 系统 Python；没有独立 venv 或 Laya 推理子进程。episode 保存在
+仓库根 `data/episodes/`。Jev 的 TensorRT 原生后端目标是在该节点进程内加载 Jetson
 系统 TensorRT Python binding；当前需先确认 ONNX、tokenizer 和输出语义，后端尚未实现。
 
 ## 4. 运行架构与实现状态

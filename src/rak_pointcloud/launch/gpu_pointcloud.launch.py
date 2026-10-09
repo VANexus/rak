@@ -3,7 +3,7 @@
 Run alongside the camera with `enable_point_cloud:=false` so the SDK stops
 building its own cloud:
 
-    ros2 launch rak_sensor_bringup gemini335l.launch.py enable_point_cloud:=false
+    ros2 launch rak_bringup gemini335l.launch.py enable_point_cloud:=false
     ros2 launch rak_pointcloud gpu_pointcloud.launch.py
 
 Measured on the Orin Nano (2026-10-07), 1280x800 input, this node against the
@@ -16,7 +16,7 @@ camera SDK's CPU cloud:
 to what the host pays to build, copy and publish a 16 MB message -- the GPU path
 adds a 16 MB device->host copy on top of the same message cost. What actually
 cut CPU was trimming the camera's streams and decimating the cloud (see
-`rak_sensor_bringup/config/gemini335l.yaml`), not moving the maths.
+`rak_bringup/config/gemini335l.yaml`), not moving the maths.
 
 Use this node when a consumer needs a **full-resolution** cloud and the CPU
 budget allows it; otherwise the SDK path with `point_cloud_decimation_filter_factor`

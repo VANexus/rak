@@ -41,7 +41,7 @@ def generate_launch_description() -> LaunchDescription:
             _param("scene", str),  # SceneState.scene -- see node.py
             _param("flags", str),  # comma separated SceneState.flags
             _param("verbose", bool),
-            # "" -> brain/data/episodes (the CLI's corpus, resolved even when
+            # "" -> <repo>/data/episodes (ADR-0013) (the CLI's corpus, resolved even when
             # this runs from <ws>/install); set it to put ROS runs elsewhere.
             _param("out", str),
             _param("episode_ticks", int),  # 0 = never roll to a new file

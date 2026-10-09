@@ -1,6 +1,6 @@
 """fake_arm_stream — 臂位置流的软件夹具（ADR-0011 D7/③ 路线）。
 
-[AI] 为什么存在：`rak_hardware` 尚未导出臂位置接口（ADR-0011 待闭合 #1），但 HQP 的
+[AI] 为什么存在：`rak_chassis` 尚未导出臂位置接口（ADR-0011 待闭合 #1），但 HQP 的
 P1/伺服模式需要在 ROS 链路上端到端可验。本节点照 `rak_arm_simulation` 的"软件夹具"
 模式实现臂位置流的**消费端**：订阅 `/wbc/arm_setpoints`，回读为 `JointState`。
 

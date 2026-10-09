@@ -151,3 +151,40 @@ E-stop、碰撞停止距离或固件互操作验收。
 CTest 21 项、任务/机械臂 pytest 4 项、UART pytest 13 项以及两组 brain 测试通过。
 硬件 backend 的安装态解析和模式映射通过，但未启动导航运行时或连接设备。
 最新能力和未关闭的验收项见[项目总体状态](project_status.md)。
+
+## 工作空间按子系统归堆（2026-10-09，ADR-0013）
+
+决策与理由见 ADR-0013（分层规则）与 ADR-0012（传输缝）。旧路径 → 新路径映射：
+
+### 包级变更
+
+| 旧 | 新 | 说明 |
+| --- | --- | --- |
+| `src/rak_hardware` | `src/rak_chassis` | 更名。C++ 命名空间 `rak_hardware`→`rak_chassis`；插件名 `rak_hardware_plugin`→`rak_chassis_plugin`；ros2_control 查找名 `rak_hardware/RakSystemHardware`→`rak_chassis/RakSystemHardware`（`rak_chassis.urdf.xacro` 同步） |
+| `src/rak_drive_tui` + `src/rak_arm_tui` + `src/rak_navigation/scripts/chassis_key_test` | `src/rak_commissioning` | 全部标定/示教/调试入口；chassis_key_test 由裸脚本转正为 entry point |
+| `src/rak_sensor_bringup` | 并入 `src/rak_bringup` | launch/config/udev/test 全部迁移 |
+| `src/rak_navigation` | 并入 `src/rak_bringup` | slam/nav2 launch 与 nav2_params 等迁移；包撤销 |
+| `src/rak_chassis_bringup` | 并入 `src/rak_bringup` | `chassis_bringup.launch.py` + `chassis_controllers.yaml` 迁移 |
+| `brain/` | `src/rak_agent` | 模块 `rak_ai` → `rak_agent`；config.toml 随迁 |
+| `brain/rak_ai/task_intent.py` | `src/rak_intent/rak_intent/task_intent.py` | 抽出为共享领域库；executor/speech 改依赖 `rak_intent` |
+| `brain/tests/test_task_intent.py` | `src/rak_intent/test/` | 其余测试迁 `src/rak_agent/test/` |
+| `src/rak_can_driver`、`src/rak_serial_link` | `attic/` | CAN v3 栈退役（ADR-0012）；COLCON_IGNORE，不构建 |
+
+### 命令与路径变更
+
+| 旧 | 新 |
+| --- | --- |
+| `colcon build --base-paths src brain` | `colcon build --base-paths src` |
+| `PYTHONPATH=brain python3 -m rak_ai.loop ...` | `PYTHONPATH=src/rak_agent python3 -m rak_agent.loop ...` |
+| `PYTHONPATH=brain python3 brain/tests/test_ai.py` | `PYTHONPATH=src/rak_agent python3 src/rak_agent/test/test_ai.py` |
+| `PYTHONPATH=brain python3 brain/tests/test_task_intent.py` | `PYTHONPATH=src/rak_intent python3 src/rak_intent/test/test_task_intent.py` |
+| `ros2 launch rak_navigation slam.launch.py` / `nav2.launch.py` | `ros2 launch rak_bringup slam.launch.py` / `nav2.launch.py` |
+| `ros2 launch rak_sensor_bringup lidar|astra|stereo.launch.py` | `ros2 launch rak_bringup ...` |
+| `ros2 launch rak_chassis_bringup chassis_bringup.launch.py` | `ros2 launch rak_bringup chassis_bringup.launch.py` |
+| `ros2 launch rak_navigation chassis_test.launch.py` | `ros2 launch rak_commissioning chassis_test.launch.py` |
+| `ros2 run rak_drive_tui drive_tui` | `ros2 run rak_commissioning drive_tui` |
+| `ros2 run rak_arm_tui arm_servo_tui` | `ros2 run rak_commissioning arm_servo_tui` |
+| episode 语料 `brain/data/episodes/` | `data/episodes/`（仓库根） |
+| `brain/config.toml` | `src/rak_agent/config.toml` |
+
+切换后首次构建需删除旧构建树：`rm -rf build/architecture install/architecture`。

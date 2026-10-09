@@ -21,7 +21,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    navigation_share = get_package_share_directory("rak_navigation")
+    navigation_share = get_package_share_directory("rak_bringup")
     bringup_share = get_package_share_directory("rak_bringup")
     return LaunchDescription([
         DeclareLaunchArgument(

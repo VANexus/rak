@@ -19,21 +19,25 @@
 | `src/rak_gpu` | CUDA / TensorRT / VPI 工具；JetPack 专用 |
 | `src/rak_stereo_driver` | 双目采集；nvJPEG 解码后拷回主机发布 ROS 图像 |
 | `src/rak_astra_driver` | Astra 深度相机适配，保留为 Gemini 的可替换后端 |
-| `src/rak_sensor_bringup` | 雷达配置，以及 Astra/Gemini 335L 互斥选择启动 |
+| `src/rak_pointcloud` | GPU 点云节点（`gpu_pointcloud_node`） |
 | `src/rak_description` | URDF、几何、惯量、可视化；当前仍是旧五轴演示模型 |
-| `src/rak_navigation` | SLAM、全向 MPPI Nav2 与速度平滑/碰撞监控话题链 |
-| `src/rak_task_executor` | 唯一导航任务状态机；文字、暂停、恢复、取消和仿真 Nav2 |
-| `src/rak_base_driver` | UART v1 历史主机节点 + 独立 v2 编解码；默认不打开硬件 |
-| `src/rak_moveit_config` | 旧演示配置与隔离的六轴仿真配置；没有实机轨迹执行链 |
+| `src/rak_task_executor` | 唯一导航任务状态机；文字、暂停、恢复、取消和仿真 Nav2；依赖 `rak_intent` |
+| `src/rak_intent` | 共享的版本化文本→意图契约；task executor 与 speech 共同使用 |
+| `src/rak_speech` | 离线语音识别（Vosk）→ 转写 + 意图发布；不自行下发目标 |
+| `src/rak_wbc` | 全身运动仲裁层（ADR-0011，骨架 + 桌面数值测试，硬件门未开） |
+| `src/rak_base_driver` | USB v2 编解码（示教/驾驶 TUI 共用）+ UART v1 历史主机节点；默认不打开硬件 |
+| `src/rak_chassis` | F407 传输 + `ros2_control` 插件：`Session` 抽象（CAN v4 主 / USB v2 备，`transport:=usb\|can`）；当前导出 4 轮接口 |
+| `src/rak_commissioning` | 标定/示教/调试入口：`drive_tui`、`arm_servo_tui`、`chassis_key_test` + `chassis_test.launch.py`；不是生产运动接口 |
 | `src/rak_arm_simulation` | 软件轨迹/夹爪 Action server；无物理仿真、无硬件接口 |
+| `src/rak_moveit_config` | 旧演示配置与隔离的六轴仿真配置；没有实机轨迹执行链 |
 | `src/rak_motion_stub` | 测试转发与速度估算；不是 CAN 驱动或安全控制器 |
-| `src/rak_bringup` | 整机集成入口、DDS 配置和操作脚本 |
-| `brain/`（ROS 包 `rak_agent`） | Jev / LLM 决策节点；ROS 系统 Python 内运行，模块名 `rak_ai` |
+| `src/rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent/base_uart）、参数、udev、DDS 配置和操作脚本（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） |
+| `src/rak_agent` | （原 `brain/`）Jev / LLM 决策节点；ROS 系统 Python 内运行，模块名 `rak_agent`；语料在仓库根 `data/episodes/` |
+| `attic/` | 退役 CAN v3 栈（`rak_can_driver`、`rak_serial_link`）；COLCON_IGNORE，不构建 |
 | `src/vendor` | 第三方雷达和 rf2o；只读，不随自有包重命名 |
 
-`brain/` 保留在根目录是为沿用现有源码和 episode 数据位置；它由 `colcon` 作为
-标准 `ament_python` ROS 包发现和安装，不创建独立 venv 或模型服务进程。
-`colcon` 同时发现 `src/` 与 `brain/`。
+2026-10-09 起所有可构建包统一在 `src/` 下（ADR-0013）；完整的新旧映射见
+`docs/migration.md`。
 
 ## 当前闭环
 

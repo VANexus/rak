@@ -21,6 +21,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from rak_intent.task_intent import parse_control_command, parse_navigation_intent
+
 from .audio import SAMPLE_RATE, build_source
 
 
@@ -117,16 +119,12 @@ class SpeechAsr(Node):
 
     @staticmethod
     def _parse(text: str) -> dict[str, Any] | None:
-        """Hand the transcript to the task layer's deterministic parser.
+        """Hand the transcript to the shared intent contract (rak_intent, ADR-0013).
 
-        This is the same `rak_ai.task_intent` the executor uses, so a spoken command
-        and a typed one cannot diverge. A transcript that matches nothing is a normal
-        outcome, not an error -- people say things the robot cannot act on.
+        This is the same parser the executor uses, so a spoken command and a typed
+        one cannot diverge. A transcript that matches nothing is a normal outcome,
+        not an error -- people say things the robot cannot act on.
         """
-        try:
-            from rak_ai.task_intent import parse_control_command, parse_navigation_intent
-        except ImportError:
-            return None
         control = parse_control_command(text)
         if control is not None:
             return {"kind": "control", "command": control.value, "source_text": text}
