@@ -18,7 +18,7 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rak_ai.task_intent import (
+from rak_intent.task_intent import (
     ControlCommand,
     PoseProposal,
     RaiWaypointPlanner,

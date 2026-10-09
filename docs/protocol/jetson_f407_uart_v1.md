@@ -1,9 +1,10 @@
-# Jetson to Base F407 UART Protocol v1
+# Jetson to Base F407 UART Protocol v1 (Legacy)
 
-Status: host-side protocol proposal for coordinated F407 implementation. This
-document is not evidence that installed firmware implements v1. Until the base
-firmware reports a compatible version and capabilities, the physical driver
-must remain DISARMED.
+Status: legacy body-twist protocol. F407 R16-R18 firmware implemented and
+bench-tested this wire version, but v1 does not control arm joints or expose
+encoder odometry and is not compatible with
+[USB/UART v2](usb_serial_v2.md). Keep the v1 host node fail-closed; do not
+negotiate v2 as a v1 fallback or treat this document as the target architecture.
 
 ## Ownership and physical link
 

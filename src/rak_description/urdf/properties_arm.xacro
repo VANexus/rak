@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!--
+  properties_arm.xacro — 真实六轴机械臂的全部标定常数（单点定义）。
+  [AI] 数值来源分级（2026-10-08 第二轮标定，用户实测更新）：
+  - 连杆长度：用户提供（1-2:8cm 2-3:10cm 3-4:11cm 4-5:6cm 5-6:9cm），实测口径
+  - 关节限位：TUI 实测（2026-10-08）：J1/J3/J4/J5/J6 0~270°，J2 0~255°（硬件约束）
+  - 零位（q_urdf=0，用户 2026-10-08 指定）：自旋轴(J1/J4/J6)指令 0°；
+    俯仰轴 J2 指令 135°、J3 指令 180°、J5 指令 0°。q_urdf = 指令角 − 零位指令角。
+  - 轴方向：J2/J5 俯仰同向，J3 反向（TUI 实测观察，用户确认）
+  - 质量/惯量：TODO(measured) 占位，按舵机+结构件估重
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- === 连杆长度（m），沿零位姿态的排列方向 === -->
+  <xacro:property name="d_base_to_j2"   value="0.08"/>  <!-- 1-2: 底座安装面到大臂转轴 -->
+  <xacro:property name="d_upper_arm"    value="0.10"/>  <!-- 2-3: 大臂 -->
+  <xacro:property name="d_elbow_offset" value="0.11"/>  <!-- 3-4: 肘段 -->
+  <xacro:property name="d_forearm"      value="0.06"/>  <!-- 4-5: 小臂 -->
+  <xacro:property name="d_wrist"        value="0.09"/>  <!-- 5-6: 腕段 -->
+
+  <!-- === 关节限位（rad，q_urdf = 指令角 − 零位指令角） === -->
+  <!-- J1 base_yaw:  指令 0~270°，零位 0° -->
+  <xacro:property name="j1_lower" value="${0.0 * pi / 180.0}"/>
+  <xacro:property name="j1_upper" value="${270.0 * pi / 180.0}"/>
+  <!-- J2 shoulder_pitch: 指令 0~255°，零位 135° -->
+  <xacro:property name="j2_lower" value="${-135.0 * pi / 180.0}"/>
+  <xacro:property name="j2_upper" value="${120.0 * pi / 180.0}"/>
+  <!-- J3 elbow_pitch: 指令 0~270°，零位 180° -->
+  <xacro:property name="j3_lower" value="${-180.0 * pi / 180.0}"/>
+  <xacro:property name="j3_upper" value="${90.0 * pi / 180.0}"/>
+  <!-- J4 forearm_roll: 指令 0~270°，零位 0° -->
+  <xacro:property name="j4_lower" value="${0.0 * pi / 180.0}"/>
+  <xacro:property name="j4_upper" value="${270.0 * pi / 180.0}"/>
+  <!-- J5 wrist_pitch: 指令 0~270°，零位 0° -->
+  <xacro:property name="j5_lower" value="${0.0 * pi / 180.0}"/>
+  <xacro:property name="j5_upper" value="${270.0 * pi / 180.0}"/>
+  <!-- J6 wrist_roll: 指令 0~270°，零位 0° -->
+  <xacro:property name="j6_lower" value="${0.0 * pi / 180.0}"/>
+  <xacro:property name="j6_upper" value="${270.0 * pi / 180.0}"/>
+
+  <!-- === effort(N·m)/velocity(rad/s) ===
+       effort：舵机规格转述值（MG995≈0.98, MG996R≈1.08 N·m）。TODO(measured)
+       velocity：大臂/肘承重最大，用户要求"尽可能小"→0.5 rad/s(≈29°/s)保守起步；
+       其余轴 1.57 rad/s(90°/s)。TODO(measured)：带载实测后回填 -->
+  <xacro:property name="effort_995"  value="0.98"/>
+  <xacro:property name="effort_996r" value="1.08"/>
+  <xacro:property name="vel_slow"    value="0.5"/>
+  <xacro:property name="vel_fast"    value="1.57"/>
+
+  <!-- === 外观几何 === -->
+  <xacro:property name="link_radius" value="0.020"/>
+
+</robot>

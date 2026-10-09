@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!--
+  rak_arm.srdf — 真实六轴机械臂的语义模型（2026-10-08）。
+  [AI] 与 six_axis_sim.srdf 完全隔离；关节名与 rak_arm.urdf.xacro 一致。
+  零位（home，q=0）对应固件指令：J1=0° J2=135° J3=180° J4=0° J5=0° J6=0°
+  （用户 2026-10-08 指定；q_urdf = 指令角 − 零位指令角）。
+  轴序约定（固件 R42 app_car.h）：axis[0..5] = J1..J6，与 MoveIt joint 顺序一致。
+-->
+<robot name="rak">
+  <!-- 车顶安装：底盘由 Nav2 管，MoveIt 本轮用 fixed（随车规划是后续工作）。
+       注意：arm_base_link 挂在世界系，真实安装高度/朝向由整车 URDF 的
+       base_footprint→arm_base_link 固定关节给出（待安装位姿实测后补）。 -->
+  <virtual_joint name="world_to_arm" type="fixed"
+                 parent_frame="world" child_link="arm_base_link"/>
+
+  <group name="arm">
+    <chain base_link="arm_base_link" tip_link="tool0"/>
+  </group>
+
+  <!-- 夹爪（第 7 路 PWM 舵机）不进规划组，由独立接口控制（ADR-0008） -->
+
+  <group_state name="home" group="arm">
+    <!-- Home/初始/结束/安全位（用户 2026-10-08 指定）：固件指令
+         J1=0° J2=225° J3=270° J4=0° J5=0° J6=0°
+         → q_urdf = 指令 − 零位指令（零位见文件头注）= J2 +90°、J3 +90°、其余 0 -->
+    <joint name="base_yaw_joint"         value="0"/>
+    <joint name="shoulder_pitch_joint"   value="1.5707963"/>
+    <joint name="elbow_pitch_joint"      value="1.5707963"/>
+    <joint name="forearm_roll_joint"     value="0"/>
+    <joint name="wrist_pitch_joint"      value="0"/>
+    <joint name="wrist_roll_joint"       value="0"/>
+  </group_state>
+
+  <disable_collisions link1="arm_base_link"    link2="shoulder_link"      reason="Adjacent"/>
+  <disable_collisions link1="shoulder_link"    link2="upper_arm_link"     reason="Adjacent"/>
+  <disable_collisions link1="upper_arm_link"   link2="forearm_link"       reason="Adjacent"/>
+  <disable_collisions link1="forearm_link"     link2="forearm_roll_link"  reason="Adjacent"/>
+  <disable_collisions link1="forearm_roll_link" link2="wrist_pitch_link"  reason="Adjacent"/>
+  <disable_collisions link1="wrist_pitch_link" link2="tool0"              reason="Adjacent"/>
+  <!-- 有意不禁用：arm_base_link ↔ upper_arm_link 等非相邻对（规划期要真查碰撞） -->
+</robot>

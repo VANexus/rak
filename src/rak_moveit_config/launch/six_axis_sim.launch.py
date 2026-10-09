@@ -5,7 +5,9 @@ import os
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.substitutions import Command
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
@@ -45,6 +47,22 @@ def generate_launch_description():
 
     robot_description = ParameterValue(Command(["xacro ", urdf]), value_type=str)
     return LaunchDescription([
+        # The arm URDF's root link IS `base_link`. Standalone, the fixture needs a
+        # `world -> base_link` to give TF a root; on the mobile robot that frame belongs
+        # to SLAM/Nav2 (`map -> odom -> base_link`) and a second parent would make the
+        # tree ambiguous. Set false when composing with the base.
+        DeclareLaunchArgument(
+            "publish_world_tf",
+            default_value="true",
+            description="Publish static world->base_link. False when a mobile base owns base_link.",
+        ),
+        # RViz needs an X display. This box runs headless by default (gdm masked), where
+        # rviz2 aborts on startup and takes the launch down with it.
+        DeclareLaunchArgument(
+            "rviz",
+            default_value="true",
+            description="Start RViz. Set false headless (see scripts/rak-mode.sh desktop).",
+        ),
         Node(
             package="robot_state_publisher",
             executable="robot_state_publisher",
@@ -61,6 +79,7 @@ def generate_launch_description():
                 "--frame-id", "world", "--child-frame-id", "base_link",
             ],
             output="screen",
+            condition=IfCondition(LaunchConfiguration("publish_world_tf")),
         ),
         Node(
             package="rak_arm_simulation",
@@ -81,5 +100,6 @@ def generate_launch_description():
                 os.path.join(description_share, "config", "rviz_view.rviz"),
             ],
             output="log",
+            condition=IfCondition(LaunchConfiguration("rviz")),
         ),
     ])

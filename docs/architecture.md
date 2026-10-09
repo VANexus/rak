@@ -1,9 +1,9 @@
 # 分层具身智能架构
 
-状态：2026-10-04 统一包迁移与软件任务闭环已实现。文字任务、fake Nav2
-暂停/恢复/取消、UART v1 主机端和隔离六轴动作夹具均有实现。硬件 backend launch
-已通过安装态解析和模式映射检查，但未做设备运行验证；真实传感器 Nav2、F407 固件
-互操作和整车安全验收仍未完成。README 是工程入口，当前进度汇总见
+状态：统一包迁移与软件任务闭环已实现。文字任务、fake Nav2
+暂停/恢复/取消、UART v1 主机/固件以及隔离六轴动作夹具均有软件实现。
+目标 UART v2 的 Jetson 与 F407 独立 codec 已通过 golden vector，但尚未接入控制
+endpoint；真实 v2 互操作、传感器 Nav2 和整车安全验收仍未完成。README 是工程入口，当前进度汇总见
 [项目总体状态](project_status.md)。
 
 ## 1. 目标与硬件事实
@@ -18,6 +18,16 @@
 - 机械臂目标：六个定位关节，夹爪独立。当前旧 URDF 是五轴演示，禁止当作实物模型。
 - 语音硬件尚未接入。先以文字事件验证任务控制，再接 ASR/TTS，避免两类问题混在一起。
 - 叶节点旧协议记录不能证明新的六轴机械臂已经具备相应通道、反馈和限位。
+
+> **2026-10-08 增补（定义性约束，全文适用）**：本机是**手搓平台**——无 CAD 级几何/质量，
+> 机械臂是**普通 PWM 位置舵机**（位置指令、**无关节位置反馈**、机械带宽几 Hz），底盘几何与
+> 臂质量仍多为占位值。**这不是待克服的缺陷，而是架构的定义性约束**：正因硬件不完美，
+> 每一层必须能**独立降级**——HQP 失败→零速+臂保持；lease/E-stop 在 F407 独立兜底；
+> Harness 永不赋权；需要精度的地方（末端）用视觉闭环"买精度"，而不是赌模型精度。
+> 由此：**物理数字孪生（Gazebo/Isaac Sim 级）不适用也不必要**；替代物是"**软件夹具**"
+> （fake controllers：验证契约/时序/状态机，不管物理保真）+ **廉价实测标定** + **台架阶梯**。
+> 本节上方部分条目（底盘 IK 归属、五轴 URDF、v2 未接入等）是 10-04 口径，已被
+> ADR-0007/0008 与 2026-10-08 实机标定/烟测取代；以 `docs/adr/README.md` 索引为准。
 
 系统采用分层选择和技能执行，追求类似 VLA 的交互体验，但当前 Laya 是文本选择模型，
 不是端到端视觉动作模型。感知、几何规划、执行和反馈不能由“选择一个标签”替代。
@@ -50,34 +60,46 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_gpu` | GPU RAII、TRT/VPI 工具 | 消息生成、机器人策略 |
 | `rak_stereo_driver` | V4L2、nvJPEG、图像发布 | 目标识别、导航目标选择 |
 | `rak_astra_driver` | Astra SDK 与 ROS 数据转换 | 世界状态、抓取规划 |
-| `rak_sensor_bringup` | 设备启动、滤波和设备参数 | 任务策略、整机状态机 |
+| `rak_pointcloud` | GPU 点云节点 | 感知策略、任务规划 |
 | `rak_description` | URDF、几何、惯量与可视化 | 导航参数、模型策略 |
-| `rak_navigation` | SLAM、全向 MPPI、smoother/collision-monitor 配置 | 对话理解、LLM 调用 |
-| `rak_task_executor` | 单一任务状态机、文字意图、Nav2 Action 生命周期 | 原始底盘/关节命令、感知算法 |
-| `rak_base_driver` | Jetson-F407 UART v1 编解码、遥测与显式使能门控 | F407 固件、下游 CAN、硬实时安全 |
-| `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |
+| `rak_intent` | 共享版本化文本→意图契约（stdlib-only） | 决策、动作执行、RAI 会话 |
+| `rak_task_executor` | 单一任务状态机、Nav2 Action 生命周期；意图解析来自 `rak_intent` | 原始底盘/关节命令、感知算法 |
+| `rak_speech` | 离线 ASR（Vosk）→ 转写 + 意图发布 | 下发目标、速度/关节命令 |
+| `rak_wbc`（ADR-0011） | 全身运动仲裁：100 Hz 速度级 HQP（Pinocchio + OSQP）、底盘与臂的单一常规写入者；数值层桌面可回归 | 安全裁决、任务生命周期、直接读感知/决策 |
+| `rak_base_driver` | USB v2 编解码（commissioning 共用）；UART v1 历史节点 | v2 硬件接口 endpoint、MCU 实时环、安全认证 |
+| `rak_chassis` | `ros2_control` SystemInterface + `Session` 传输抽象（CAN v4 主 / USB v2 备，ADR-0012；当前导出 4 轮接口；臂接口待加） | 运动学仲裁、轮/臂语义重定义、上层传输分支 |
+| `rak_commissioning` | `drive_tui` / `arm_servo_tui` / `chassis_key_test` + `chassis_test.launch.py` | 生产运动接口、安全认证 |
 | `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
+| `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |
 | `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
 | `rak_agent` | 当前 S1/S2 认知原型 | 电机驱动、同步等待云端后控制 |
-| `rak_bringup` | 整机组合、DDS、操作入口 | 通用算法或传感器 SDK |
+| `rak_harness`（**待创建**，ADR-0010） | Harness 慢路径：任务上下文、工具白名单、预算/超时/事件摘要/失败恢复；独立 `anthropic` 客户端 | 速度/关节命令、第二生命周期所有者、实时安全裁决 |
+| `rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent/base_uart）、参数、udev、Cyclone DDS（运行 domain 47）、操作入口（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） | 通用算法或传感器 SDK |
+
+`attic/`（`rak_can_driver`、`rak_serial_link`）为退役 CAN v3 host 栈（ADR-0012/0013），
+COLCON_IGNORE 不构建。
 
 关键依赖方向（箭头表示“依赖”）：
 
 ```text
 rak_agent ------------> rak_interfaces ---> 标准 ROS 消息
 rak_stereo_driver ----> rak_gpu ----------> JetPack SDK
-rak_task_executor ----> rak_interfaces / rak_agent(task intent) / Nav2 Action
+rak_task_executor ----> rak_interfaces / rak_intent / Nav2 Action
+rak_speech -----------> rak_intent
 rak_base_driver -----> rak_interfaces / serial
+rak_commissioning ----> rak_base_driver（USB v2 编解码共用）
 rak_arm_simulation --> standard trajectory/gripper actions
 rak_moveit_config ----> rak_description / rak_arm_simulation (simulation only)
-rak_navigation -------> rak_sensor_bringup / rak_motion_stub / Nav2 / SLAM
-rak_sensor_bringup ----> 自有相机驱动 / 上游雷达 / laser_filters
-rak_bringup ----------> 各能力的启动入口
+rak_wbc -------------> rak_description（臂 URDF 合并） / mecanum reference / 臂位置控制器（待建）
+rak_chassis ----------> CAN v4（SocketCAN 主）/ USB v2（备用） — Session 抽象之后上层无感
+rak_bringup ----------> 各能力的启动入口（含 rak_agent，唯一被允许的决策层依赖者）
 ```
 
-`brain/` 是有意保留的源码位置例外，ROS 包名为 `rak_agent`，pip 名为 `rak-brain`，
-Python import 为 `rak_ai`。保持已有 venv 和 episode 路径，避免移动虚拟环境后 shebang、
-editable install 和数据定位同时失效。今后若统一物理位置，应独立迁移数据目录与部署环境。
+所有可构建包位于 `src/`（ADR-0013），ROS 包名 `rak_agent`、Python 模块名 `rak_agent`。
+它由 `colcon` 标准构建、安装为 `ament_python` 包，并通过 console entry
+point 使用 ROS 系统 Python；没有独立 venv 或 Laya 推理子进程。episode 保存在
+仓库根 `data/episodes/`。Jev 的 TensorRT 原生后端目标是在该节点进程内加载 Jetson
+系统 TensorRT Python binding；当前需先确认 ONNX、tokenizer 和输出语义，后端尚未实现。
 
 ## 4. 运行架构与实现状态
 
@@ -109,11 +131,15 @@ Harness 只在慢路径管理任务上下文、工具白名单、预算、超时
 
 当前实现边界：`rak_task_executor` 默认只做本地命令解析和已配置地点别名查找；
 未知地点可选调用 RAI 结构化输出，但结果必须是 waypoint 白名单成员。该慢路径
-不是 Laya/Jev 的 System 1，也没有 Harness 持续任务调度。现有 `rak_agent` 与
-task executor 尚未通过共享任务仲裁接口联动；不能描述为完整的 Jev + Harness VLA。
+不是 Laya/Jev 的 System 1，也没有 Harness 持续任务调度。**ADR-0010 已定义**
+`rak_agent`（Jev）与 task executor 之间的共享仲裁缝：Jev → `/brain/decision` →
+Harness（`/harness/request` / `/harness/proposal`）→ 执行器（校验 `task_id`/`revision`/
+`expires_at` 与白名单后接受）。执行器**不**直连 S1，Jev 的影响是传递式、非权威的。
+但 Harness 本体尚未实现（`src/rak_harness` 未创建），所以现在仍**不能**描述为完整的
+Jev + Harness VLA。
 
-先保留 `rak_ai` 的现有文件，不在本次包迁移中改写 `resolve()` 或训练契约。
-未来可在该 Python 包内逐步分出 `state`、`policy`、`harness` 模块，
+`rak_ai` 保持在 `rak_agent` 包内；推理适配器不得另起服务或改变 `resolve()`、
+安全裁决或训练契约。当前 TensorRT 适配仍待模型资产和数值 parity 验收。
 只有独立部署或资源隔离确有必要时才新增进程。
 
 ### 执行侧
@@ -121,6 +147,15 @@ task executor 尚未通过共享任务仲裁接口联动；不能描述为完整
 `rak_task_executor` 已拥有单一导航任务生命周期，通过 `/task/execute` Action、
 `/task/control` Service、`/task/status` 状态和 Nav2 `NavigateToPose` Action 工作。
 当前不拥有机械臂任务执行，也不直接发速度或关节命令。
+
+`src/rak_wbc`（ADR-0011，2026-10-08 已接受）是底盘与臂之间的**运动仲裁层**：
+100 Hz 速度级 HQP（Pinocchio + OSQP），常规运动的唯一写入者——底盘写
+`mecanum_drive_controller` 的 reference，臂写位置流（伺服模式）。Nav2 的 `/cmd_vel`
+降级为其 P2 输入任务；臂的轨迹模式（MoveIt → JTC）与伺服模式互斥，由技能层仲裁。
+**Harness 与它没有直连**：提案经执行器/技能层转成 `/wbc/*` 结构化目标
+（ADR-0011 D8）；`/wbc/posture_target` 是「呼吸感」表达层的预留缝（门未开、无实现）。
+当前交付为骨架 + 桌面数值回归；硬件接入前置（`rak_hardware` 臂接口、臂质量与底盘几何
+实测）见该 ADR 待闭合项。
 
 每个技能必须定义前置条件、输入、反馈、完成条件、超时、取消和失败语义。
 初期导航技能包括前往配置地点或 map-frame pose、暂停、恢复和取消；状态通过
@@ -160,10 +195,12 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 当前 `brain` 回调先推理再 resolve，不能作为实时防碰撞保证。
 安全许可应落实到命令出口，MCU 还要独立处理断联、使能和超时。
 
-`rak_base_driver` 已实现提议中的 UART v1 主机端编解码、100 Hz 命令节拍、状态发布
-和显式 ARM 服务，但默认不打开串口、零速度限值且 DISARMED。仓库没有相匹配的
-F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留在 MCU，MCU 必须独立
-实现命令租约、断联停止、E-stop 和故障锁存。
+`rak_base_driver` 的旧节点实现 UART v1 机体速度命令、状态发布和显式 ARM 服务，
+默认不打开串口且保持 DISARMED。F407 R16-R18 曾实现并台架运行 v1；v1 不提供轮编码器
+里程计或机械臂接口。ADR-0007 的目标是 UART v2 四轮速度 + 关节位置协议：
+host Python codec 与 F407 standalone codec 已通过软件 golden vector，但 v2 尚未接入
+串口、控制环或 ROS hardware plugin。只有完整 endpoint 与实机验收后才能声明互通。
+CAN 双板链路已失效并保留为历史资料。
 
 顶层 `rak_bringup` 的 launch 提供 `motion_backend:=hardware`，并在 bringup 层启动 UART
 节点；`rak_navigation` 不依赖上层 bringup。该路径已通过安装态解析和模式映射检查，
@@ -189,6 +226,9 @@ F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留�
 “呼吸感”首先来自及时确认、自然停顿、连贯动作和可解释的恢复。
 待机姿态、朝向关注、语音节奏等表达只使用空闲资源和有效许可，
 不叠加到活动的导航/抓取控制流上，也不靠随机晃动掩盖系统迟延。
+**ADR-0010** 把这条拆成两层：软件可表达（`/harness/event` 的确认、事件合并、
+可解释恢复 —— 无运动、无 TTS）与硬件可表达（`ExpressionIntent` / `ExpressionGate` /
+`ExpressionSink`，本轮唯一实现是 `NoOpExpressionSink`，门全关）。TTS 引擎尚未选型。
 
 ## 5. 状态、时间与资源
 
@@ -210,8 +250,8 @@ F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留�
 | A：包迁移 | 已完成，详见 `docs/migration.md` | 全工作区构建、安装检查、旧 AI 回归 |
 | B：任务内核 | 软件实现；fake Nav2 覆盖成功、重复请求、暂停/确认/恢复、服务取消和 Action 取消 | 到达/暂停竞态、各种超时、慢规划迟到、重启等剩余竞态仍需扩测 |
 | C：Nav2 接入 | Action、waypoint 和全向参数已接入；hardware 末端 launch 静态检查通过 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链；确认每种 backend 单写者 |
-| D：硬件闭环 | UART v1 host codec/driver 已实现，F407 固件未实现/未核验 | F407 匹配、断联/E-stop、里程计/IMU、限速与人工监督低速测试 |
-| E：语音与智能体 | 文字 CLI 已有；ASR/TTS、task 与 S1/Harness 仲裁未接入 | 无网络本地打断、旧提案拒绝、误识别处理与端到端延迟 |
+| D：硬件闭环 | UART v1 host/firmware 曾台架运行；v2 host/MCU standalone codec 有软件向量 | v2 endpoint、里程计/IMU、断联/E-stop、限速与人工监督低速测试 |
+| E：语音与智能体 | 文字 CLI 已有；ASR 已有（Vosk），TTS 未接入；task 与 S1/Harness 仲裁**已定义（ADR-0010）但未实现** | 无网络本地打断、旧提案拒绝、误识别处理、harness 路径端到端延迟与表达 stub 落地 |
 | F：机械臂 | 六轴隔离夹具和软件动作服务器已实现 | 真实几何/限位/映射/失联策略确认后再做实机适配 |
 
 ## 7. 未因本次重构而解决的问题
@@ -223,7 +263,9 @@ F407 固件；UART 文档/PTY 测试不证明互操作。底盘运动学仍留�
 - 当前 `odom_source:=ekf` 预留选项不会自动启动 EKF；仍需外部提供有效 TF。
 - 相机标定、深度与彩色对齐、硬件 TF、真实里程计质量都需要工程验证。
 - 六轴模型尺寸/限位是测试夹具占位值；没有真实六轴实机支持。
-- `rak_task_executor` 的慢规划是可选 RAI 地点选择，不是当前 Jev/Harness 的统一任务推理。
+- `rak_task_executor` 的慢规划目前只是可选 RAI 地点选择。**ADR-0010 已定义** Jev/Harness
+  的统一仲裁缝与契约，但 `src/rak_harness` 与 `harness_node` 尚未实现，
+  所以这条现在仍是缺口，只是从"没有设计"变成了"有设计、待实现"。
 - `scripts/serial_link_test.py` 是拒绝执行旧 CRC-8 实体串口协议的兼容入口；
   UART v1 PTY-only 测试入口是 `scripts/serial_100hz.py`。
 

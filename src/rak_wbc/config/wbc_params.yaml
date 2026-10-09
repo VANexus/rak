@@ -1,0 +1,57 @@
+# [AI] rak_wbc 节点参数（ADR-0011 / spec §8）。数值来源分级：
+#   - arm_* 限位/速度：properties_arm.xacro 实测标定（TODO(measured) 带载回填）
+#   - base_vmax / wheel_* / support_*：占位值（ADR-0006 · chassis_controllers.yaml 口径）
+#   - 权重档位：spec §5（P1:P2:P3 ≈ 100:10:0.2，桌面闭环实测支撑）
+# 安全：enabled/publish_arm 默认 false；开启需显式 /wbc/enable 且人工确认现场安全。
+wbc:
+  ros__parameters:
+    enabled: false
+    mode: idle            # idle | nav | servo | hold
+    rate_hz: 100.0
+    world_frame: map
+    base_frame: base_link
+
+    cmd_vel_topic: /cmd_vel
+    cmd_timeout: 0.3
+    ee_target_topic: /wbc/ee_target
+    ee_timeout: 0.5
+    joint_states_topic: /joint_states
+    base_reference_topic: /mecanum_drive_controller/reference
+    arm_setpoints_topic: /wbc/arm_setpoints
+    status_topic: /wbc/status
+    publish_arm: false    # 臂接口就绪前保持 false（ADR-0011 待闭合 #1）
+
+    urdf_wbc_base: ""     # 空 = 本包 share/urdf/wbc_base.urdf.xacro
+    urdf_arm: ""          # 空 = rak_description share/urdf/rak_arm.urdf.xacro
+
+    arm_joint_names:
+      ["base_yaw_joint", "shoulder_pitch_joint", "elbow_pitch_joint",
+       "forearm_roll_joint", "wrist_pitch_joint", "wrist_roll_joint"]
+    home_q: [0.0, 1.5707963267948966, 1.5707963267948966, 0.0, 0.0, 0.0]
+    arm_q_min: [0.0, -2.356194490192345, -3.141592653589793, 0.0, 0.0, 0.0]
+    arm_q_max: [4.71238898038469, 2.0943951023931953, 1.5707963267948966,
+                4.71238898038469, 4.71238898038469, 4.71238898038469]
+    arm_qd_max: [1.57, 0.5, 0.5, 1.57, 0.5, 1.57]
+
+    base_vmax: [0.25, 0.15, 0.5]
+    wheel_radius: 0.0325
+    wheel_k: 0.15
+    wheel_wmax: 10.0
+    support_half: [0.15, 0.15]
+    support_margin: 0.02
+
+    w_ee_pos: 100.0
+    w_ee_rot: 20.0
+    w_base_lin: 10.0
+    w_base_yaw: 5.0
+    w_posture: 0.2
+    regularization: 0.001
+    kp_ee: 2.0
+    kr_ee: 1.0
+    k_post: 0.2
+    k_joint: 3.0
+    k_support: 1.5
+    fail_limit: 3
+    eps_abs: 1.0e-6
+    eps_rel: 1.0e-6
+    max_iter: 4000

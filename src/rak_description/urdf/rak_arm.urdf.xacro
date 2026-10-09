@@ -1,0 +1,166 @@
+<?xml version="1.0"?>
+<!--
+  rak_arm.urdf.xacro — 真实六轴机械臂（车顶安装）。
+  [AI] 2026-10-08，与 six_axis_sim.urdf.xacro 完全隔离（fixture 是测试几何，不是本臂）。
+
+  构型（用户确认 + TUI 实测标定，详见 properties_arm.xacro 头注）：
+    J1 腰旋转(Z) → J2 大臂俯仰(+Y) → J3 肘俯仰(−Y，反向) → J4 小臂自旋(Z)
+    → J5 腕俯仰(+Y，与 J2 同向) → J6 腕旋转(Z) → tool0
+  几何约束（用户 2026-10-08 实测确认）：零位姿态下三个俯仰轴同轴共线
+  （均垂直于臂轴、彼此平行），各俯仰舵机绕自身中位 ±90°；三个自旋轴共线。
+  J3 俯仰方向与 J2/J5 相反。
+  零位（q_urdf=0，用户指定）对应固件指令：
+    J1=0°  J2=135°  J3=180°  J4=0°  J5=0°  J6=0°
+  指令角 ↔ URDF 角：q_urdf = 指令_deg − 零位指令_deg。
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rak">
+
+  <xacro:include filename="properties_arm.xacro"/>
+  <xacro:include filename="macros/inertial_macros.xacro"/>
+  <xacro:include filename="macros/materials.xacro"/>
+
+  <!-- ============ 底座：车顶安装面 + J1 腰旋转 ============ -->
+  <link name="arm_base_link">
+    <visual>
+      <geometry><cylinder radius="0.05" length="${d_base_to_j2 * 0.75}"/></geometry>
+      <origin xyz="0 0 ${d_base_to_j2 * 0.375}"/>
+      <material name="base_link_color"/>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="0.05" length="${d_base_to_j2 * 0.75}"/></geometry>
+      <origin xyz="0 0 ${d_base_to_j2 * 0.375}"/>
+    </collision>
+    <!-- TODO(measured): 底座结构件估重 -->
+    <xacro:cylinder_inertial mass="0.15" r="0.05" L="${d_base_to_j2 * 0.75}"
+                             xyz="0 0 ${d_base_to_j2 * 0.375}"/>
+  </link>
+
+  <joint name="base_yaw_joint" type="revolute">
+    <parent link="arm_base_link"/><child link="shoulder_link"/>
+    <origin xyz="0 0 0"/>              <!-- J1 轴即安装面中心，安装面高度计在整车 URDF -->
+    <axis xyz="0 0 1"/>
+    <limit lower="${j1_lower}" upper="${j1_upper}"
+           effort="${effort_995}" velocity="${vel_fast}"/>
+  </joint>
+
+  <link name="shoulder_link">
+    <visual>
+      <geometry><box size="0.05 0.05 0.04"/></geometry>
+      <material name="base_link_color"/>
+    </visual>
+    <collision>
+      <geometry><box size="0.05 0.05 0.04"/></geometry>
+    </collision>
+    <!-- TODO(measured): 腰部舵机+舵盘估重 -->
+    <xacro:box_inertial mass="0.10" Lx="0.05" Ly="0.05" Lz="0.04"/>
+  </link>
+
+  <!-- ============ J2 大臂俯仰（+Y；全直时臂沿 +Z） ============ -->
+  <joint name="shoulder_pitch_joint" type="revolute">
+    <parent link="shoulder_link"/><child link="upper_arm_link"/>
+    <origin xyz="0 0 ${d_base_to_j2}"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${j2_lower}" upper="${j2_upper}"
+           effort="${effort_995}" velocity="${vel_slow}"/>
+  </joint>
+
+  <link name="upper_arm_link">
+    <visual>
+      <geometry><cylinder radius="${link_radius}" length="${d_upper_arm}"/></geometry>
+      <origin xyz="0 0 ${d_upper_arm / 2}"/>
+      <material name="arm_aluminum"/>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${link_radius}" length="${d_upper_arm}"/></geometry>
+      <origin xyz="0 0 ${d_upper_arm / 2}"/>
+    </collision>
+    <!-- TODO(measured): 大臂(11cm)+舵机估重 -->
+    <xacro:cylinder_inertial mass="0.12" r="${link_radius}" L="${d_upper_arm}"
+                             xyz="0 0 ${d_upper_arm / 2}"/>
+  </link>
+
+  <!-- ============ J3 肘俯仰（−Y：与 J2/J5 反向，实测确认） ============ -->
+  <joint name="elbow_pitch_joint" type="revolute">
+    <parent link="upper_arm_link"/><child link="forearm_link"/>
+    <origin xyz="0 0 ${d_upper_arm}"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="${j3_lower}" upper="${j3_upper}"
+           effort="${effort_995}" velocity="${vel_slow}"/>
+  </joint>
+
+  <link name="forearm_link">
+    <visual>
+      <geometry><cylinder radius="${link_radius}" length="${d_elbow_offset}"/></geometry>
+      <origin xyz="0 0 ${d_elbow_offset / 2}"/>
+      <material name="arm_aluminum"/>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${link_radius}" length="${d_elbow_offset}"/></geometry>
+      <origin xyz="0 0 ${d_elbow_offset / 2}"/>
+    </collision>
+    <!-- TODO(measured): 肘部支架估重 -->
+    <xacro:cylinder_inertial mass="0.08" r="${link_radius}" L="${d_elbow_offset}"
+                             xyz="0 0 ${d_elbow_offset / 2}"/>
+  </link>
+
+  <!-- ============ J4 小臂自旋（沿臂轴 Z） ============ -->
+  <joint name="forearm_roll_joint" type="revolute">
+    <parent link="forearm_link"/><child link="forearm_roll_link"/>
+    <origin xyz="0 0 ${d_elbow_offset}"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${j4_lower}" upper="${j4_upper}"
+           effort="${effort_996r}" velocity="${vel_fast}"/>
+  </joint>
+
+  <link name="forearm_roll_link">
+    <visual>
+      <geometry><cylinder radius="${link_radius}" length="${d_forearm}"/></geometry>
+      <origin xyz="0 0 ${d_forearm / 2}"/>
+      <material name="arm_aluminum"/>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${link_radius}" length="${d_forearm}"/></geometry>
+      <origin xyz="0 0 ${d_forearm / 2}"/>
+    </collision>
+    <!-- TODO(measured): 小臂(11cm)+舵机估重 -->
+    <xacro:cylinder_inertial mass="0.12" r="${link_radius}" L="${d_forearm}"
+                             xyz="0 0 ${d_forearm / 2}"/>
+  </link>
+
+  <!-- ============ J5 腕俯仰（+Y，与 J2 同向） ============ -->
+  <joint name="wrist_pitch_joint" type="revolute">
+    <parent link="forearm_roll_link"/><child link="wrist_pitch_link"/>
+    <origin xyz="0 0 ${d_forearm}"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${j5_lower}" upper="${j5_upper}"
+           effort="${effort_996r}" velocity="${vel_slow}"/>
+  </joint>
+
+  <link name="wrist_pitch_link">
+    <visual>
+      <geometry><cylinder radius="${link_radius}" length="${d_wrist}"/></geometry>
+      <origin xyz="0 0 ${d_wrist / 2}"/>
+      <material name="arm_aluminum"/>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${link_radius}" length="${d_wrist}"/></geometry>
+      <origin xyz="0 0 ${d_wrist / 2}"/>
+    </collision>
+    <!-- TODO(measured): 腕段(7cm)+舵机估重 -->
+    <xacro:cylinder_inertial mass="0.10" r="${link_radius}" L="${d_wrist}"
+                             xyz="0 0 ${d_wrist / 2}"/>
+  </link>
+
+  <!-- ============ J6 腕旋转（沿腕轴 Z），子链即工具法兰 ============ -->
+  <joint name="wrist_roll_joint" type="revolute">
+    <parent link="wrist_pitch_link"/><child link="tool0"/>
+    <origin xyz="0 0 ${d_wrist}"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${j6_lower}" upper="${j6_upper}"
+           effort="${effort_996r}" velocity="${vel_fast}"/>
+  </joint>
+
+  <!-- tool0 = 腕旋转输出法兰（约定 tip）。夹爪（第 7 路 PWM 舵机）不在本模型内，
+       见 ADR-0008；夹爪几何待其支架确定后挂在 tool0 下。 -->
+  <link name="tool0"/>
+</robot>

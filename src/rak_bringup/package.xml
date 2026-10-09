@@ -3,7 +3,7 @@
 <package format="3">
   <name>rak_bringup</name>
   <version>0.1.0</version>
-  <description>Robot-level launch composition and operator environment.</description>
+  <description>Single robot-level composition layer: all launch files, params, udev and operator scripts (ADR-0013 absorbs rak_sensor_bringup, rak_navigation, rak_chassis_bringup).</description>
   <maintainer email="xrak@example.com">xrak</maintainer>
   <license>Apache-2.0</license>
 
@@ -12,14 +12,48 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <!-- 传感器链（原 rak_sensor_bringup） -->
+  <exec_depend>lslidar_driver</exec_depend>
+  <exec_depend>laser_filters</exec_depend>
+  <exec_depend>rak_astra_driver</exec_depend>
+  <exec_depend>rak_stereo_driver</exec_depend>
+  <exec_depend>orbbec_camera</exec_depend>
+  <!-- 导航链（原 rak_navigation） -->
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rak_motion_stub</exec_depend>
+  <exec_depend>rf2o_laser_odometry</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_costmap_2d</exec_depend>
+  <exec_depend>nav2_velocity_smoother</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_collision_monitor</exec_depend>
+  <exec_depend>nav2_mppi_controller</exec_depend>
+  <exec_depend>nav2_smoother</exec_depend>
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <!-- 底盘 ros2_control 链（原 rak_chassis_bringup） -->
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>mecanum_drive_controller</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>rak_description</exec_depend>
+  <exec_depend>rak_chassis</exec_depend>
+  <!-- 任务/决策/仿真 -->
   <exec_depend>rak_agent</exec_depend>
   <exec_depend>rak_base_driver</exec_depend>
-  <exec_depend>rak_sensor_bringup</exec_depend>
-  <exec_depend>rak_navigation</exec_depend>
   <exec_depend>rak_task_executor</exec_depend>
   <exec_depend>rak_moveit_config</exec_depend>
   <exec_depend>rmw_cyclonedds_cpp</exec_depend>
   <exec_depend>rviz2</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

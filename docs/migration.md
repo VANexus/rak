@@ -84,16 +84,21 @@ env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH \
 不要继续加载旧 `install/setup.bash`；本次不自动修改个人 `.bashrc`。
 当前 IDE 的包搜索路径同步到新安装目录，IDE 配置仍为本机未跟踪文件。
 
-## Python 与操作脚本
+## 2026-10-06 ROS 系统 Python 运行方式
 
-- `brain/.venv`、`brain/data`、pip 项目名 `rak-brain` 和 `rak_ai` 导入不变。
-- ROS 引导脚本更名为 `agent_node`，支持在仓库外启动及嵌套安装目录；
-  `RAK_BRAIN_PYTHON` 仍可指定解释器。
-- Laya/RAI 仍是可选依赖，stub 不需要 torch。
-- `agent.launch.py` 现在显式透传 `s1_weights`，默认仍为 `auto`。
+本节 supersede 早期迁移记录中的 venv 和 bootstrap 约定。`brain/` 仍作为
+`ament_python` 包 `rak_agent` 由 colcon 发现，不迁移 episode 数据，也不启动独立
+推理进程；`agent_node` 使用标准 `console_scripts` entry point 和 ROS 系统 Python。
+运行依赖由 `package.xml`/rosdep 管理，Pydantic 使用 Ubuntu 系统包，stub 不需要模型。
+
+TensorRT 是 Laya/Jev 的目标原生运行时，计划在 `rak_agent` 节点进程内调用 Jetson
+系统 TensorRT binding。ONNX、tokenizer、输入动态 shape 和输出类别映射尚未确认，
+因此 TensorRT decider 尚未实现或验收；此文档不代表模型当前可运行。
+
 - 操作脚本迁移至 `src/rak_bringup/scripts/`，共享 `environment.sh`。
 - `RAK_WORKSPACE`、`RAK_INSTALL_PREFIX`、DDS 配置与 ROS domain 可覆盖；
-  默认安装目录是 `install/architecture`，不再手工补 Python 包前缀。
+  机器人运行默认使用 Cyclone DDS、domain 47；默认安装目录是
+  `install/architecture`，不再手工补 Python 包前缀。
 - 无 GUI 的雷达、SLAM、Nav2 脚本不再强制设置 DISPLAY；
   RViz/MoveIt demo 才检查可读的 Xauthority 文件。
 - 不要单独复制一个 `run_*.sh` 到 `/tmp`，它现在需要同目录的 `environment.sh`。
@@ -102,7 +107,7 @@ env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH \
 
 `scripts/check_workspace.py` 校验包命名、构建类型、资源标记、依赖图和
 launch 的显式运行依赖。`--installed` 还校验安装资源与源码一致，
-逐个解析 launch、序列化消息并从仓库外验证智能体引导入口。
+逐个解析 launch、序列化消息并从仓库外验证智能体 console entry point。
 launch 检查使用 `--show-args`，不会打开设备或发出运动命令。
 
 描述与 MoveIt 的旧结构测试接入 CTest，缺少资源时失败而不是静默跳过。
@@ -146,3 +151,40 @@ E-stop、碰撞停止距离或固件互操作验收。
 CTest 21 项、任务/机械臂 pytest 4 项、UART pytest 13 项以及两组 brain 测试通过。
 硬件 backend 的安装态解析和模式映射通过，但未启动导航运行时或连接设备。
 最新能力和未关闭的验收项见[项目总体状态](project_status.md)。
+
+## 工作空间按子系统归堆（2026-10-09，ADR-0013）
+
+决策与理由见 ADR-0013（分层规则）与 ADR-0012（传输缝）。旧路径 → 新路径映射：
+
+### 包级变更
+
+| 旧 | 新 | 说明 |
+| --- | --- | --- |
+| `src/rak_hardware` | `src/rak_chassis` | 更名。C++ 命名空间 `rak_hardware`→`rak_chassis`；插件名 `rak_hardware_plugin`→`rak_chassis_plugin`；ros2_control 查找名 `rak_hardware/RakSystemHardware`→`rak_chassis/RakSystemHardware`（`rak_chassis.urdf.xacro` 同步） |
+| `src/rak_drive_tui` + `src/rak_arm_tui` + `src/rak_navigation/scripts/chassis_key_test` | `src/rak_commissioning` | 全部标定/示教/调试入口；chassis_key_test 由裸脚本转正为 entry point |
+| `src/rak_sensor_bringup` | 并入 `src/rak_bringup` | launch/config/udev/test 全部迁移 |
+| `src/rak_navigation` | 并入 `src/rak_bringup` | slam/nav2 launch 与 nav2_params 等迁移；包撤销 |
+| `src/rak_chassis_bringup` | 并入 `src/rak_bringup` | `chassis_bringup.launch.py` + `chassis_controllers.yaml` 迁移 |
+| `brain/` | `src/rak_agent` | 模块 `rak_ai` → `rak_agent`；config.toml 随迁 |
+| `brain/rak_ai/task_intent.py` | `src/rak_intent/rak_intent/task_intent.py` | 抽出为共享领域库；executor/speech 改依赖 `rak_intent` |
+| `brain/tests/test_task_intent.py` | `src/rak_intent/test/` | 其余测试迁 `src/rak_agent/test/` |
+| `src/rak_can_driver`、`src/rak_serial_link` | `attic/` | CAN v3 栈退役（ADR-0012）；COLCON_IGNORE，不构建 |
+
+### 命令与路径变更
+
+| 旧 | 新 |
+| --- | --- |
+| `colcon build --base-paths src brain` | `colcon build --base-paths src` |
+| `PYTHONPATH=brain python3 -m rak_ai.loop ...` | `PYTHONPATH=src/rak_agent python3 -m rak_agent.loop ...` |
+| `PYTHONPATH=brain python3 brain/tests/test_ai.py` | `PYTHONPATH=src/rak_agent python3 src/rak_agent/test/test_ai.py` |
+| `PYTHONPATH=brain python3 brain/tests/test_task_intent.py` | `PYTHONPATH=src/rak_intent python3 src/rak_intent/test/test_task_intent.py` |
+| `ros2 launch rak_navigation slam.launch.py` / `nav2.launch.py` | `ros2 launch rak_bringup slam.launch.py` / `nav2.launch.py` |
+| `ros2 launch rak_sensor_bringup lidar|astra|stereo.launch.py` | `ros2 launch rak_bringup ...` |
+| `ros2 launch rak_chassis_bringup chassis_bringup.launch.py` | `ros2 launch rak_bringup chassis_bringup.launch.py` |
+| `ros2 launch rak_navigation chassis_test.launch.py` | `ros2 launch rak_commissioning chassis_test.launch.py` |
+| `ros2 run rak_drive_tui drive_tui` | `ros2 run rak_commissioning drive_tui` |
+| `ros2 run rak_arm_tui arm_servo_tui` | `ros2 run rak_commissioning arm_servo_tui` |
+| episode 语料 `brain/data/episodes/` | `data/episodes/`（仓库根） |
+| `brain/config.toml` | `src/rak_agent/config.toml` |
+
+切换后首次构建需删除旧构建树：`rm -rf build/architecture install/architecture`。

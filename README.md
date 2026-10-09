@@ -1,11 +1,12 @@
 # rak
 
 面向 Jetson Orin Nano / ROS 2 Jazzy 的分层具身智能小车工程。
-目标是 Jev（本地 Laya）快速选择、云端 LLM + Harness 理解任务，
+目标是 Jev（本地 TensorRT 决策模型，接入待完成）快速选择、云端 LLM + Harness 理解任务，
 通过 Nav2、MoveIt2 和 F407 控制底盘与机械臂，而不是让模型直接控制电机。
 
 设计入口：[项目总体状态](docs/project_status.md) · [整体架构](docs/architecture.md) ·
-[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md)。
+[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md) ·
+[USB/UART v2 规范](docs/protocol/usb_serial_v2.md)。
 包重命名不代表硬件已工程化；下面明确区分现有功能和后续规划。
 
 ## 工程布局
@@ -17,21 +18,26 @@
 | `src/rak_interfaces` | 感知/决策消息，以及任务 Action、控制 Service、底盘遥测 |
 | `src/rak_gpu` | CUDA / TensorRT / VPI 工具；JetPack 专用 |
 | `src/rak_stereo_driver` | 双目采集；nvJPEG 解码后拷回主机发布 ROS 图像 |
-| `src/rak_astra_driver` | 已测试的 Astra 深度相机接入；仍需标定与安装验证 |
-| `src/rak_sensor_bringup` | 雷达、相机的设备配置与独立启动 |
+| `src/rak_astra_driver` | Astra 深度相机适配，保留为 Gemini 的可替换后端 |
+| `src/rak_pointcloud` | GPU 点云节点（`gpu_pointcloud_node`） |
 | `src/rak_description` | URDF、几何、惯量、可视化；当前仍是旧五轴演示模型 |
-| `src/rak_navigation` | SLAM、全向 MPPI Nav2 与速度平滑/碰撞监控话题链 |
-| `src/rak_task_executor` | 唯一导航任务状态机；文字、暂停、恢复、取消和仿真 Nav2 |
-| `src/rak_base_driver` | Jetson-F407 UART v1 主机端；默认不打开硬件且保持 DISARMED |
-| `src/rak_moveit_config` | 旧演示配置与隔离的六轴仿真配置；没有实机轨迹执行链 |
+| `src/rak_task_executor` | 唯一导航任务状态机；文字、暂停、恢复、取消和仿真 Nav2；依赖 `rak_intent` |
+| `src/rak_intent` | 共享的版本化文本→意图契约；task executor 与 speech 共同使用 |
+| `src/rak_speech` | 离线语音识别（Vosk）→ 转写 + 意图发布；不自行下发目标 |
+| `src/rak_wbc` | 全身运动仲裁层（ADR-0011，骨架 + 桌面数值测试，硬件门未开） |
+| `src/rak_base_driver` | USB v2 编解码（示教/驾驶 TUI 共用）+ UART v1 历史主机节点；默认不打开硬件 |
+| `src/rak_chassis` | F407 传输 + `ros2_control` 插件：`Session` 抽象（CAN v4 主 / USB v2 备，`transport:=usb\|can`）；当前导出 4 轮接口 |
+| `src/rak_commissioning` | 标定/示教/调试入口：`drive_tui`、`arm_servo_tui`、`chassis_key_test` + `chassis_test.launch.py`；不是生产运动接口 |
 | `src/rak_arm_simulation` | 软件轨迹/夹爪 Action server；无物理仿真、无硬件接口 |
+| `src/rak_moveit_config` | 旧演示配置与隔离的六轴仿真配置；没有实机轨迹执行链 |
 | `src/rak_motion_stub` | 测试转发与速度估算；不是 CAN 驱动或安全控制器 |
-| `src/rak_bringup` | 整机集成入口、DDS 配置和操作脚本 |
-| `brain/`（ROS 包 `rak_agent`） | Jev / LLM 决策原型；独立 Python 包仍为 `rak_ai` |
+| `src/rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent/base_uart）、参数、udev、DDS 配置和操作脚本（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） |
+| `src/rak_agent` | （原 `brain/`）Jev / LLM 决策节点；ROS 系统 Python 内运行，模块名 `rak_agent`；语料在仓库根 `data/episodes/` |
+| `attic/` | 退役 CAN v3 栈（`rak_can_driver`、`rak_serial_link`）；COLCON_IGNORE，不构建 |
 | `src/vendor` | 第三方雷达和 rf2o；只读，不随自有包重命名 |
 
-`brain/` 保留在根目录是有意的：现有 `.venv`、模型依赖、episode 数据和
-pip 工作流不随 ROS 包名迁移。`colcon` 同时发现 `src/` 与 `brain/`。
+2026-10-09 起所有可构建包统一在 `src/` 下（ADR-0013）；完整的新旧映射见
+`docs/migration.md`。
 
 ## 当前闭环
 
@@ -40,7 +46,8 @@ pip 工作流不随 ROS 包名迁移。`colcon` 同时发现 `src/` 与 `brain/`
                            ├-> 暂停：取消确认 + 新鲜静止遥测
                            └-> 恢复：重发 map 目标并重新规划
 Nav2 -> MPPI Omni -> smoother -> collision monitor -> /cmd_vel -> sim/stub/hardware adapter
-UART v1 -> F407 底盘（主机驱动已实现；匹配固件缺失，未做实机验收）
+UART v1 -> F407 底盘（旧体速度链；下位机 R18 曾台架运行）
+UART v2 -> 四轮/关节位置（主机与MCU独立 codec 已实现；端点尚未互通）
 六轴 MoveIt fixture -> 软件轨迹/夹爪 Action server（仅仿真测试）
 ```
 
@@ -76,22 +83,31 @@ ROS_DOMAIN_ID=77 python3 -m pytest \
   src/rak_task_executor/test src/rak_arm_simulation/test
 ROS_DOMAIN_ID=77 PYTHONPATH=src/rak_base_driver \
   python3 -m pytest src/rak_base_driver/test
-env -u PYTHONPATH brain/.venv/bin/python brain/tests/test_ai.py
+PYTHONPATH=brain python3 brain/tests/test_ai.py
+PYTHONPATH=brain python3 brain/tests/test_task_intent.py
 ```
 
 ROS 集成测试需先 source `install/architecture/local_setup.bash`，并使用独立的
 `ROS_DOMAIN_ID`；测试仅连接 fake action server，不访问真实 UART/CAN。
+机器人运行统一使用 Cyclone DDS 和 domain 47（`~/.bashrc`、`rak_bringup` 操作脚本
+及 Cyclone 配置保持一致）；ROS 集成测试仍隔离在 domain 77/187，避免加入机器人运行图。
 完整构建需要本机 JetPack SDK。只开发决策层可用
 `--packages-up-to rak_agent`，无需构建 GPU 包。
-首次准备 Python 环境：在 `brain/` 下创建 `.venv` 并安装 `-e .`；
-Laya / RAI 分别是可选的 `.[laya]` / `.[rai]`，stub 不依赖模型。
-venv 命令需 `env -u PYTHONPATH`，ROS 节点则必须保留 ROS 的 `PYTHONPATH`。
+首次准备决策包依赖时使用系统包管理：
+`rosdep install --from-paths brain --ignore-src -r -y`。`agent_node` 是标准 ROS
+console entry point，直接使用 ROS 系统 Python；stub 不需要模型或 PyTorch。
+TensorRT 原生 decider 尚未接入，需先取得经验证的 ONNX engine 与 tokenizer 资产。
+导出依赖、固定版本、TensorRT profile 草案和当前内存门槛见
+[Laya TensorRT 导出准备](docs/laya_tensorrt.md)。
 
 ## 启动入口
 
 ```bash
 ros2 launch rak_sensor_bringup lidar.launch.py
 ros2 launch rak_sensor_bringup astra.launch.py
+ros2 launch rak_sensor_bringup depth_camera.launch.py  # 默认 Gemini 335L
+ros2 launch rak_sensor_bringup depth_camera.launch.py camera:=astra
+ros2 launch rak_sensor_bringup gemini335l.launch.py serial_number:=YOUR_SERIAL
 ros2 launch rak_sensor_bringup stereo.launch.py device:=/dev/video0
 ros2 launch rak_navigation slam.launch.py
 ros2 launch rak_navigation nav2.launch.py
@@ -107,6 +123,12 @@ ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
 ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 ```
 
+深度相机选择入口默认启动 Gemini 335L；切换 `camera:=astra` 使用既有 Astra 驱动，
+同一入口每次只启动一个深度相机。335L 使用 Orbbec 官方 SDK v2 ROS 2 包
+`orbbec_camera` 的 `gemini_330_series.launch.py`，该上游包需单独安装并 source；
+本仓不复制或维护厂商 SDK。统一 RGB-D 话题和标定/TF 注意事项见
+[相机接入说明](docs/cameras.md)。
+
 `task_simulation.launch.py` 是无传感器的任务状态机 fixture；`task_navigation.launch.py`
 组合真实 SLAM/Nav2 软件栈，默认底盘后端为仿真估算，且仍需要有效雷达/定位输入。
 硬件后端 wiring 已通过静态 launch 检查，但尚未在真实传感器或 F407 上运行验收；
@@ -118,16 +140,67 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 UART adapter 已通过静态解析，但没有设备运行验证；默认仍使用 sim，硬件开关默认关闭。
 操作脚本见 [rak_bringup/scripts](src/rak_bringup/scripts/README.md)。
 
+## 示教 / 驾驶 TUI 小工具
+
+两个直接对接 F407 USB v2 链路的终端小工具（curses 面板），用于标定、排查和
+人工驾驶。都是**调试工具，不是生产运动接口**；生产路径是 `ros2_control`
+（`rak_hardware`）+ Nav2/MoveIt。
+
+> 串口：板子 USB 枚举为 `/dev/ttyACM0`（WCH），装了 udev 别名的机器用
+> `/dev/wheel_motor`。参数语法必须 `--ros-args -p port:=...`（裸 `-p` 会被
+> 当 remap 规则吞掉）。两工具默认 **DISARMED**，按 `a` 才 ARM；退出自动撤防；
+> 固件侧安全门（lease 看门狗 / 外部故障 / 急停）始终兜底。急停 = 板上按钮长按。
+
+### 舵机示教 `rak_arm_tui`
+
+```bash
+ros2 run rak_arm_tui arm_servo_tui --ros-args -p port:=/dev/ttyACM0
+```
+
+USB v2 `ARM_COMMAND` 6 轴 µrad 位置，50 Hz lease 保活。键位：↑↓选轴、
+←→ ±2°、PgUp/PgDn ±10°、Home 回零位、`a` ARM、`m` 打标、`w` 落盘、
+`q` 退出。机械臂标定口径（限位/零位/Home）见
+[MoveIt 设计 spec](docs/superpowers/specs/2026-10-07-rak-arm-moveit2-design.md)
+与 `rak_description/urdf/properties_arm.xacro`（单点定义）。
+
+### 底盘驾驶 `rak_drive_tui`
+
+```bash
+ros2 run rak_drive_tui drive_tui --ros-args -p port:=/dev/ttyACM0
+```
+
+主机侧麦轮 IK（ADR-0007）→ `DRIVE_COMMAND` 4 轮 urad/s，20 Hz lease 保活。
+键位：↑↓←→ 平移、`q`/`e` 自转、空格全零、PgUp/PgDn 步长、`a` ARM、
+`r` 里程清零、`x` 退出。几何与固件 R30 标定表同源
+（轮半径 32.5 mm，杠杆 150 mm——**杠杆未实测签核**，放大速度前先签核）。
+面板含四轮实测速度/位置与轮式里程航位推算（纯轮式，麦轮 y 向漂移是固有
+代价，仅驾驶参考，正式里程源见 P1-1 四路融合）。
+
+键盘版轮级直通脚本 `scripts/mecanum_tui_v2.py` 保留作参考（其几何为占位值）。
+
+### 上报与 IMU 的分工（易混淆）
+
+- 固件 `DRIVE_STATE`（100 Hz）：4 轮累计位置/速度——**纯编码器**，不含 IMU。
+- 固件**轮级稳定器**（`wheel_stabilize_targets`）：用**下位机 IMU** 的 yaw 角速度
+  做旋转补偿，只作用于轮速命令域；IMU 就绪是 ARM 前提之一（缺 IMU 时 ARM 会被
+  外部故障门挡住）。这就是"板载 IMU 收窄为轮级"的职责（ADR-0007）。
+- **航向权威在 Jetson**：未来经 40-pin SPI 接 LSM6DSRTR，由 EKF 做融合
+  （P0-5 / P1-1）。两者不冲突：下位机 IMU 管 100 Hz 轮级抗扰，Jetson IMU 管
+  全局航向与里程融合。
+
 ## 性能与硬件约束
 
 - 双目历史测量为 1280×720 SBS、30 fps；独立解码线程、双缓冲和固定曝光帧率策略保留。
 - 图像当前发布的是主机内存 `sensor_msgs/Image`，不是已完成的跨节点 GPU 零拷贝管线。
-- Laya 历史测量约 158 ms/次、占约 1.4 GB 统一内存（10 W 模式）；不是急停实时环。
+- 旧 PyTorch/Laya 路径曾测得约 158 ms/次、占约 1.4 GB 统一内存；这是历史基线，
+  不是当前推荐运行方式，也不是急停实时环。目标为待接入的 TensorRT 原生推理。
 - CUDA 13.2、TensorRT、VPI `/opt/nvidia/vpi4`、OrbbecSDK 1.10.18 仍按本机路径构建。
 - `guard()` 保留最终否决权；Jev 进程内直接调用；S2 不得扩大安全许可。
 - `brain/rak_ai/types.py` 和 episode 的 `state_text` 不变；新任务协议另行版本化。
 - CAN 为 classic CAN 2.0A 1 Mbps，禁止 `fd on`。协议以叶节点仓库为准，不能猜测六轴固件映射。
-- UART v1 文档与主机驱动不证明 F407 固件兼容；`serial_100hz.py` 是 PTY-only。
+- UART v1 是已台架运行的旧机体速度接口；目标协议是
+  [UART v2](docs/protocol/usb_serial_v2.md)，目前 host 与 MCU 仅独立 codec 通过向量，
+  尚无 v2 endpoint 互通。`serial_100hz.py` 是 v1 PTY-only 测试。
 - `scripts/serial_link_test.py` 是 refusal-only 兼容入口，拒绝运行旧 CRC-8 实体串口
   协议；不要恢复为可发送版本。`scripts/serial_100hz.py` 才是 UART v1 的 PTY-only 测试。
 - collision monitor/Nav2 配置与软件测试不等于安全认证或物理急停。

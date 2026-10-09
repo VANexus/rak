@@ -1,13 +1,13 @@
 #include "rf2o_laser_odometry/CLaserOdometry2D.hpp"
 
-#include <tf2/convert.h>
-#include <tf2/exceptions.h>
+#include <tf2/convert.hpp>  // [AI] lyrical: tf2 头文件改为 .hpp
+#include <tf2/exceptions.hpp>  // [AI] lyrical
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
-#include <tf2/impl/utils.h>
+#include <tf2/impl/utils.hpp>  // [AI] lyrical
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#include <tf2/utils.h>
+#include <tf2/utils.hpp>  // [AI] lyrical
 
 namespace rf2o {
 

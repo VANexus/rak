@@ -7,6 +7,10 @@
 - **Repo:** `rak` (workspace `/home/xrak/rak`)
 - **ROS Reviewers:** TBD (team leader)
 
+> Historical note: this 2026-10-03 draft records the then-current domain 45.
+> The project runtime now uses Cyclone DDS on domain 47; see
+> `src/rak_bringup/scripts/environment.sh`.
+
 ---
 
 ## 1. Overview

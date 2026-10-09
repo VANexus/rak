@@ -39,7 +39,15 @@ include_directories(
 # Node
 add_executable(lslidar_driver_node src/lslidar_driver_node.cc src/lslidar_driver.cc src/input.cc src/lsiosr.cpp)
 target_link_libraries(lslidar_driver_node ${rclcpp_LIBRARIES} ${libpcap_LIBRARIES} ${Boost_LIBRARIES} Boost::thread)
-ament_target_dependencies(lslidar_driver_node rclcpp std_msgs lslidar_msgs sensor_msgs diagnostic_updater pcl_conversions)
+# [AI] lyrical: ament_target_dependencies 已移除，机械移植为 target_link_libraries
+target_link_libraries(lslidar_driver_node PUBLIC
+  rclcpp::rclcpp
+  std_msgs::std_msgs__rosidl_typesupport_cpp
+  lslidar_msgs::lslidar_msgs__rosidl_typesupport_cpp
+  sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
+  diagnostic_updater::diagnostic_updater
+  pcl_conversions::pcl_conversions
+)
 
 
 install(DIRECTORY launch params rviz

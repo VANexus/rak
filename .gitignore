@@ -29,10 +29,12 @@ Thumbs.db
 # CodeGraph index
 .codegraph/
 
-# brain: venv and the decision corpus
-brain/.venv/
-brain/data/
-brain/**/__pycache__/
+# COLCON_IGNORE 只有 attic/ 里是刻意的（ADR-0013）；其他地方的散落文件不入库
+COLCON_IGNORE
+!attic/COLCON_IGNORE
+
+# 决策语料与本地模型资产（ADR-0013，自 brain/data 迁来）
+data/
 *.egg-info/
 
 # 调试产物：tf 树导出，非交付物
@@ -45,3 +47,8 @@ frames_*.pdf
 
 # TRAE AI IDE workspace state (IDE cache, not project source)
 .trae/
+
+# Mac tar AppleDouble + pycache (sloppy tar from macOS adds these)
+._*
+__pycache__
+*.pyc

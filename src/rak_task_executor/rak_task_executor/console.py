@@ -7,7 +7,7 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rak_ai.task_intent import ControlCommand, parse_control_command
+from rak_intent.task_intent import ControlCommand, parse_control_command
 from rak_interfaces.action import ExecuteTask
 from rak_interfaces.msg import TaskStatus
 from rak_interfaces.srv import TaskControl

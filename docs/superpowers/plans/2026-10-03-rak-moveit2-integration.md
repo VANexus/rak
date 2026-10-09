@@ -10,9 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-03-rak-moveit2-integration-design.md` (commit `4c6f493`). Executors read BOTH this plan AND the spec.
 
----
+> Historical note: this 2026-10-03 plan records the then-current domain 45.
+> The project runtime now uses Cyclone DDS on domain 47; keep test-only domains
+> 77/187 isolated as documented in `README.md`.
 
-## Global Constraints
+---
 
 - **ROS 2 distro:** Jazzy (Ubuntu 24.04, aarch64).
 - **DDS:** Cyclone DDS (`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`), `ROS_DOMAIN_ID=45`, `CYCLONEDDS_URI=file:///home/xrak/rak/install/boot/share/boot/config/cyclonedds.xml` (verified exists at install).

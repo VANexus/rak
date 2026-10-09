@@ -11,5 +11,7 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validate_yamls.py)
   add_test(NAME six_axis_simulation
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validate_six_axis_sim.py)
+  add_test(NAME rak_arm_calibration
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validate_rak_arm.py)
 endif()
 ament_package()

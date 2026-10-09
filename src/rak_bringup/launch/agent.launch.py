@@ -1,7 +1,6 @@
 """Run the brain against live (or simulated) perception.
 
     ros2 launch rak_bringup agent.launch.py                       # stub decider + sim
-    ros2 launch rak_bringup agent.launch.py decider:=laya sim:=true
     ros2 launch rak_bringup agent.launch.py sim:=false            # wait for real
                                                            # /perception/tracked_objects
 
@@ -32,8 +31,7 @@ def _param(name: str, value_type):
 def generate_launch_description() -> LaunchDescription:
     parameters = dict(
         [
-            _param("decider", str),  # stub | laya
-            _param("s1_weights", str),  # auto | fp16 | bf16 | fp32
+            _param("decider", str),  # stub | tensorrt (TensorRT integration pending)
             _param("consultant", str),  # stub | rai | a vendor name
             _param("scenario", str),  # approach | cross | clear
             _param("sim", bool),
@@ -43,7 +41,7 @@ def generate_launch_description() -> LaunchDescription:
             _param("scene", str),  # SceneState.scene -- see node.py
             _param("flags", str),  # comma separated SceneState.flags
             _param("verbose", bool),
-            # "" -> brain/data/episodes (the CLI's corpus, resolved even when
+            # "" -> <repo>/data/episodes (ADR-0013) (the CLI's corpus, resolved even when
             # this runs from <ws>/install); set it to put ROS runs elsewhere.
             _param("out", str),
             _param("episode_ticks", int),  # 0 = never roll to a new file
@@ -53,7 +51,6 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
             _arg("decider", "stub"),
-            _arg("s1_weights", "auto"),
             _arg("consultant", "stub"),
             _arg("scenario", "approach"),
             _arg("sim", "true"),

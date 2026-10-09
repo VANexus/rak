@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rak_intent</name>
+  <version>0.1.0</version>
+  <description>Versioned text-to-intent contract shared by the task executor and the speech front-end (ADR-0013).</description>
+  <maintainer email="xrak@todo.todo">xrak</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <!-- [AI] 仅 RaiWaypointPlanner（可选慢路径）用到；解析函数本身 stdlib-only -->
+  <exec_depend>python3-pydantic</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

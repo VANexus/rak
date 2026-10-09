@@ -1,0 +1,63 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * LSM6DSRTR 走内核 st_lsm6dsx 驱动（最高性能路线）
+ *   · 40-pin SPI1 (3210000.spi) CS0：从 spidev 改为 st,lsm6dsr
+ *   · SPI mode 3, 10 MHz（LSM6DSR 上限）
+ *   · DRDY(INT1) 接 40-pin pin15 = soc_gpio39_pn1 = gpiochip0 line 85
+ *   · 内核驱动启用 FIFO + 硬件时间戳 + DRDY 中断（非轮询）
+ *
+ * 40-pin 接线：
+ *   19 = SPI1_MOSI  -> SDO/SDI
+ *   21 = SPI1_MISO  -> SDO
+ *   23 = SPI1_SCLK  -> SCLK
+ *   24 = SPI1_CS0   -> CS
+ *   15 = PN.01      -> INT1 (DRDY)
+ *   1/17 = 3V3, 6/9/14/20/25/30/34/39 = GND
+ */
+
+/ {
+	overlay-name = "LSM6DSRTR IMU on 40-pin SPI (kernel st_lsm6dsx)";
+	compatible = "nvidia,p3768-0000+p3767-0004",
+	             "nvidia,p3768-0000+p3767-0004-super",
+	             "nvidia,p3767-0004";
+
+	/* --- 1) 40-pin SPI CS0：spidev -> st,lsm6dsr --- */
+	fragment@0 {
+		target-path = "/bus@0/spi@3210000/spi@0";
+
+		__overlay__ {
+			compatible = "st,lsm6dsr";
+			spi-max-frequency = <10000000>;
+			spi-cpol;		/* mode 3 */
+			spi-cpha;
+
+			/* DRDY 中断：line 85 (PN.01), 上升沿 */
+			interrupt-parent = <&gpio>;
+			interrupts = <85 1>;
+
+			/* 告诉驱动用 INT1 作为 DRDY */
+			st,drdy-int-pin = <1>;
+
+			pinctrl-names = "default";
+			pinctrl-0 = <&lsm6dsr_drdy_pin>;
+		};
+	};
+
+	/* --- 2) PN.01 配成 GPIO 输入，作 DRDY 中断脚 --- */
+	fragment@1 {
+		target-path = "/bus@0/pinmux@2430000";
+
+		__overlay__ {
+			lsm6dsr_drdy_pin: lsm6dsr-drdy-pin {
+				hdr40-pin15 {
+					nvidia,pins = "soc_gpio39_pn1";
+					nvidia,function = "gp";
+					nvidia,tristate = <0x00>;
+					nvidia,enable-input = <0x01>;
+				};
+			};
+		};
+	};
+};
