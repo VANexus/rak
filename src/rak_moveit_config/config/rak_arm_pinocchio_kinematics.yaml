@@ -1,0 +1,10 @@
+# Pinocchio IK through MoveIt's stock srv_kinematics_plugin.
+# Plugin class: srv_kinematics_plugin/SrvKinematicsPlugin (apt: ros-jazzy-moveit-kinematics).
+# Default service names match what rak_arm_pinocchio_ik/ik_service_node exposes.
+arm:
+  kinematics_solver: srv_kinematics_plugin/SrvKinematicsPlugin
+  kinematics_solver_service_name: /solve_ik
+  kinematics_solver_info_service_name: /get_ik_solver_info
+  kinematics_solver_search_resolution: 0.005
+  kinematics_solver_timeout: 0.05
+  kinematics_solver_attempts: 3

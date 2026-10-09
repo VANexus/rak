@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<?xml-model
+  href="http://download.ros.org/schema/package_format3.xsd"
+  schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rak_arm_pinocchio_ik</name>
+  <version>0.1.0</version>
+  <description>
+    MoveIt-side inverse-kinematics service backed by Pinocchio.
+    The service interface is `moveit_msgs/srv/GetPositionIK` /
+    `moveit_msgs/srv/GetKinematicSolverInfo`, so this package plugs into
+    MoveIt's stock `srv_kinematics_plugin/SrvKinematicsPlugin`. The math is
+    pure Python pinocchio (no MoveIt C++ pluginlib binding) so iteration
+    does not require a colcon rebuild cycle.
+  </description>
+
+  <maintainer email="xrak@xrak.local">xrak</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>moveit_msgs</depend>
+  <depend>tf2_ros</depend>
+
+  <!--
+    pinocchio ships as a system ROS package on Jazzy (ros-jazzy-pinocchio,
+    not python3-pinocchio). The Python binding lives under
+    /opt/ros/jazzy/lib/python3.12/site-packages and is on sys.path only after
+    sourcing /opt/ros/jazzy/setup.bash. xacro is shipped by ros-jazzy-xacro.
+    The exec must be launched from a shell that has sourced /opt/ros/jazzy.
+  -->
+  <exec_depend>pinocchio</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
