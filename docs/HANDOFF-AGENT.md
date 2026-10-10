@@ -19,6 +19,27 @@ source ~/rak/src/rak_bringup/scripts/environment.sh
 
 ---
 
+### 0.1 2026-10-10 增量（当日会话）
+
+- **CAN 链路软件侧就绪**：底盘 bringup 现支持 `transport:=can`（URDF/launch 透传，默认仍 usb，
+  与团队"CAN 验收后翻转"计划一致）。空载冒烟已过（无 F407：CM+双控制器 active、CanSession
+  在发帧、odometry 话题正常）。**底盘板尚未接**（can0 零流量、无任何 USB 串口设备）。
+- **can0 开机持久化**：Orin CAN pinmux 写入并入 `scripts/can0-up.service`——此前重启后
+  pinmux 回默认 0xC415，can0 照常 UP 但一帧收不到且无报错（人工 devmem 的时代结束）。
+- **IMU 链路修复并运行中**（域 47，`/imu/data_raw`@100Hz）：①芯片地址漂移 0x6a→0x6b，
+  `lsm6dsr-i2c-setup.sh` 与 `iio_imu.py` 均自动探测两地址；②**不再创建内核 i2c 设备**——
+  st_lsm6dsx 驱动绑定后会把 accel ODR（CTRL1_XL=0x10, 12.5Hz）**持续强写回**，覆盖 208Hz
+  配置（实测绑定期间写 0x50 在 0.3s 内被回退；解绑后稳定保持）。数据路径本就是裸 i2c 块读，
+  不需要 IIO 设备。实测 100.0Hz、|a|≈9.9 m/s²。
+- **environment.sh 修复**：工作区探测 marker `brain/package.xml` 在 ADR-0013 重构后不复存在
+  → 所有 run_*.sh 一 source 即退出（`ae6b31f`）；已改以 `src/rak_bringup/package.xml` 为 marker。
+- **预提交门禁恢复并清干净**：b2594ed 修 setup.cfg 后门禁才开始真正执行，暴露三处历史漏并
+  全部补齐（rak_bringup→nav2_lifecycle_manager/robot_localization；rak_moveit_config→
+  rak_arm_pinocchio_ik），`check_workspace.py` 全绿。
+- 栈状态：上午机器重启过，SLAM/Nav2 全栈未起（当前只有 IMU 节点 + 队友 IK 演示栈）。
+
+---
+
 ## 1. 环境与连接
 
 ### 1.1 进入 Jetson
@@ -76,9 +97,11 @@ bash src/rak_bringup/scripts/run_nav2.sh odom_source:=ekf   # EKF 档（推荐�
 
 - **物理**：I2C 接 40 针（SCL→5 脚、SDA→3 脚、VCC→1、GND→6），芯片 @ `0x6a` on `i2c-7`
   （历史弯路：SPI 路线折腾一晚——接触不良+驱动问题；最终 I2C 首探即通，2026-10-09 定案）
-- **内核**：`st_lsm6dsx_i2c` + 运行时实例化，systemd 单元 `scripts/lsm6dsr-i2c.service`（enabled）
-  做三件事：`new_device`（免改设备树）/ 保活 `power/control=on`（防驱动自动休眠）/ **裸寄存器配置**
-  （`i2cset -f -y 7 0x6a CTRL3_C=0x44, CTRL1_XL=0x50, CTRL2_G=0x50`）
+- **systemd 单元** `scripts/lsm6dsr-i2c.service`（enabled）→ 调 `scripts/lsm6dsr-i2c-setup.sh`：
+  地址探测（0x6a/0x6b）+ **裸寄存器配置**（`CTRL3_C=0x44, CTRL1_XL=0x50, CTRL2_G=0x50`）。
+  **2026-10-10 起不再 `new_device`**：内核驱动绑定后会把自己的 12.5Hz accel ODR 强写回
+  CTRL1_XL，覆盖 208Hz 配置（见 §3.1 追补）；数据路径=裸 i2c 块读，不需要 IIO 设备
+  （iio scale 兜底值即正确量程）
 - **ROS 节点**：`scripts/iio_imu.py`（ctypes I2C_RDWR 一次事务块读 0x22..0x2D 12 字节，
   100Hz → `/imu/data_raw`，frame=`imu_link`。**不走内核 sysfs 读数**——见 §3.1）
 - 验证基线：`/imu/data_raw` @100.0Hz；静止 \|a\|≈1.01g、陀螺噪声 ±0.1°/s
@@ -128,8 +151,10 @@ map ──slam_toolbox──► odom ──EKF──► base_link ──┬─ s
 
 ## 3. 已知坑（勿重复踩）
 
-1. **内核驱动 st_lsm6dsx sysfs 写路径 desync**：写 `sampling_frequency` 报成功但**寄存器不写**
-   （解绑/重绑也不修）→ IMU 配置一律**裸 i2cset**；不要依赖 sysfs 的 ODR 写。
+1. **内核驱动 st_lsm6dsx 两宗罪**：①sysfs 写路径 desync——写 `sampling_frequency` 报成功但
+   **寄存器不写**（解绑/重绑也不修）→ IMU 配置一律**裸 i2cset**；②**绑定后会把自己的
+   accel ODR（12.5Hz）持续强写回 CTRL1_XL**，裸 i2cset 写的 208Hz 在 0.3s 内被覆盖
+   （2026-10-10 实测；处置=根本不创建内核 i2c 设备，见 §2.1）。
    *（团队级 bug，值得上报内核社区/ST）*
 2. **CTRL3_C 必须写 0x44**（BDU+IF_INC）。写 0x40 会清掉默认 IF_INC → 块读 12 字节全是同一寄存器
    （症状：陀螺/加计 x=y=z 三轴同值）。
@@ -147,17 +172,20 @@ map ──slam_toolbox──► odom ──EKF──► base_link ──┬─ s
    （udev 别名 `/dev/wheeltec_lidar` 未装；`lidar.launch.py` 有回退逻辑，正常）。
 9. **杜邦线接触不良是本项目最大硬件坑**（IMU 折腾一晚上全因它）。动线后务必复测
    （IMU 用 `i2cget -f -y 7 0x6a 0x0f` 应回 0x6b）。
-10. **IMU 地址可能变**：SA0 状态决定 `0x6a`/`0x6b`；扫描两个地址
-    （`i2cdetect -y -r 7`）。
+10. **IMU 地址可能变**：SA0 线态决定 `0x6a`/`0x6b`（2026-10-10 实翻 0x6b，全链失联）；
+    服务与 `iio_imu.py` 现已自动探测，无需手工；诊断：`i2cdetect -y -r 7` 或
+    `i2cget -f -y 7 0x6b 0x0f`（WHO_AM_I 恒回 0x6b）。
 
 ---
 
 ## 4. 待办路线图（按优先级）
 
-1. **轮式里程计（下一项）**
-   - 接回底盘板（A 板）USB + 电池 + **车轮架空**
-   - **先确认现役传输**：固件已到 R63，**CAN v4 为主 / USB v2 冻结备用**（ADR-0012）；
-     `chassis_bringup.launch.py` 默认还是 USB by-id 路径——跑之前核对团队最新接法
+1. **轮式里程计（下一项；软件侧 2026-10-10 已就绪，等硬件）**
+   - 接线：Jetson 收发器模块（CANH/CANL/GND）↔ A 板 CAN 端子；**H/L 别反、必须共地**
+     （2026-10-09 联调根因，见 ADR-0012）；电池上电；**车轮架空**
+   - 传输：**CAN v4 主链路**（ADR-0012）。`chassis_bringup.launch.py transport:=can`
+     （2026-10-10 起 launch/URDF 已支持切换；默认仍 usb）
+   - 先跑 `python3 scripts/can_link_smoke.py can0`（协议级冒烟，全程不发非零速度指令）
    - 量四轮几何（轮径/轮距/轴距）→ 更新 `config/chassis_controllers.yaml`
      （现为占位值 32.5mm / 0.15m，**未签核**）
    - ros2_control 握手（`allow_motion:=false` 先跑）→ 架空点动 → 读
@@ -187,9 +215,11 @@ map ──slam_toolbox──► odom ──EKF──► base_link ──┬─ s
 | `docs/CONSTRUCTION.md` | 构建规范（§3 命令） |
 | `src/vendor/lslidar/.../CMakeLists.txt` | 已修（签名混用+ament 回正） |
 
-## 6. 交接时刻的服务器快照（2026-10-09 深夜）
+## 6. 交接时刻的服务器快照（2026-10-10 午间）
 
-- 在跑：全栈（lidar + rf2o + slam + nav2×7 + ekf + iio_imu），域 47
-- 地图：`data/maps/rak_room.posegraph`（lifelong 已加载验证）
-- git：rak@`0615f19` 已推送；队友后有 5 提交待快进（被未跟踪 WIP 阻塞，**勿删队友文件**）
-- 固件仓：已同步至 R63（CAN v4 主 / USB v2 冻结；tags: hw-freeze-r43 / can-freeze-r52）
+- 在跑：IMU 节点（域 47，`/imu/data_raw`@100Hz）+ 队友的 IK 演示栈（12:33 起，桌面 :1）
+- can0：UP、1Mbps、pinmux 已持久化；**零流量 = 底盘板未接**
+- 无任何 USB 串口设备（雷达也没插）；SLAM/Nav2 全栈未起（上午重启后未再拉起）
+- 地图：`data/maps/rak_room.posegraph`（lifelong，未动）
+- git：rak@`ae6b31f` (2026-10-10) 已推送；工作树干净（未跟踪 acoustic/ 除外）
+- 固件仓：R63（CAN v4 主 / USB v2 冻结；tags: hw-freeze-r43 / can-freeze-r52）
