@@ -19,9 +19,15 @@ import struct
 import sys
 import time
 
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Imu
+# ROS 依赖延迟可选: --probe 是纯硬件只读自检, 不要求先 source ROS 环境
+try:
+    import rclpy
+    from rclpy.node import Node
+    from sensor_msgs.msg import Imu
+except ImportError:                                    # --probe 模式允许无 ROS 环境
+    rclpy = None
+    Node = object
+    Imu = None
 
 # ---- spidev ioctl 常量 (linux/spi/spidev.h) ----
 SPI_IOC_WR_MODE = 0x40016b01
@@ -225,7 +231,6 @@ class SpiImuNode(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
     if '--probe' in sys.argv:
         dev = '/dev/spidev0.0'
         for a in sys.argv:
@@ -234,8 +239,11 @@ def main(args=None):
         spi = RawSpi(dev)
         print(f'device={dev} mode={spi.mode} speed={spi.speed} bits={spi.bits}')
         rc = probe(spi)
-        rclpy.shutdown()
         sys.exit(rc)
+    if rclpy is None:
+        print('需要 ROS 环境: source src/rak_bringup/scripts/environment.sh', file=sys.stderr)
+        sys.exit(1)
+    rclpy.init(args=args)
     node = SpiImuNode()
     rclpy.spin(node)
     node.destroy_node()
