@@ -31,6 +31,18 @@ source ~/rak/src/rak_bringup/scripts/environment.sh
   st_lsm6dsx 驱动绑定后会把 accel ODR（CTRL1_XL=0x10, 12.5Hz）**持续强写回**，覆盖 208Hz
   配置（实测绑定期间写 0x50 在 0.3s 内被回退；解绑后稳定保持）。数据路径本就是裸 i2c 块读，
   不需要 IIO 设备。实测 100.0Hz、|a|≈9.9 m/s²。
+- **IMU 切 SPI（进行中，当日午后）**：①根因——原厂 stock DTB 下 40 针 SPI1 五脚
+  （PZ3-7）**MUX UNCLAIMED**（spidev 设备在、引脚无信号），且本平台无可靠运行时 pinmux
+  写路径（debugfs pinmux-select 假成功、configfs dt-overlay 未编入内核）→ 必须启动期应用；
+  ②已装 `scripts/lsm6dsr-overlay/rak-imu-spi-pinmux.dts`（pinctrl hog，同 jetson-io 的
+  exp-header-pinmux 机制；属性值取自团队 rak_lsm6dsr.dtb）+ `install-spi-pinmux.sh`
+  （fdtoverlay 预合并 → `/boot/dtb/rak_imu_spi.dtb`，extlinux primary FDT 已切、备份
+  `extlinux.conf.pre-spi-*`，**重启生效**）；③节点 `scripts/spi_imu.py`（spidev0.0
+  mode3@10MHz、1.66kHz ODR→1000Hz 发布、`--probe` 只读自检、无需 ROS 环境）。
+  ④切换次序：模块接线 3/5(I2C)→23/19/21/24(SPI) → 重启 → `spi_imu.py --probe` →
+  起节点；旧 I2C 链（lsm6dsr-i2c.service + iio_imu.py）随之停用。回滚 = 还原 extlinux
+  备份 + 恢复接线。注：LSM6DSR 无恰好 1000Hz 档位（…833/1660），用 1.66kHz 保证
+  1kHz 读取每拍都是新样本。
 - **environment.sh 修复**：工作区探测 marker `brain/package.xml` 在 ADR-0013 重构后不复存在
   → 所有 run_*.sh 一 source 即退出（`ae6b31f`）；已改以 `src/rak_bringup/package.xml` 为 marker。
 - **预提交门禁恢复并清干净**：b2594ed 修 setup.cfg 后门禁才开始真正执行，暴露三处历史漏并
@@ -106,6 +118,7 @@ bash src/rak_bringup/scripts/run_nav2.sh odom_source:=ekf   # EKF 档（推荐�
   100Hz → `/imu/data_raw`，frame=`imu_link`。**不走内核 sysfs 读数**——见 §3.1）
 - 验证基线：`/imu/data_raw` @100.0Hz；静止 \|a\|≈1.01g、陀螺噪声 ±0.1°/s
 - 启动（在团队环境里）：`nohup python3 scripts/iio_imu.py > /tmp/imu_node.log 2>&1 &`
+- **2026-10-10 起向 SPI 迁移**（目标 1000Hz）：pinmux overlay 已装、`scripts/spi_imu.py` 就绪，切换细节见 §0.1；切换后本节 I2C 链降为备用。
 
 ### 2.2 SLAM + lifelong 持久地图
 
