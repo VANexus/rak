@@ -1,0 +1,71 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * [AI] 2026-10-10: 40-pin SPI1 pinmux overlay（LSM6DSRTR 从 I2C 切 SPI 的前置）。
+ *
+ * 背景:
+ *   - 原厂 stock DTB 下 40 针 SPI1 五脚（PZ3/4/5/6/7）默认 MUX UNCLAIMED——
+ *     spidev 设备能开、但引脚没有接到 SPI 控制器，接上线也不会有任何信号；
+ *   - 本平台 pinmux 无可靠运行时写路径：debugfs pinmux-select 写 2430000.pinmux
+ *     返回成功但实际不写（dmesg 无报错）；configfs dt-overlay 接口未编入内核 →
+ *     必须走启动期应用；
+ *   - extlinux 沿用团队验证过的"预合并进 FDT"模式（见 extlinux 注释）：
+ *     install-spi-pinmux.sh 用 fdtoverlay 把本 overlay 合并进 stock dtb 生成
+ *     /boot/dtb/rak_imu_spi.dtb，primary 标签的 FDT 指向它。
+ *
+ * 机制: 与 jetson-io 生成的 exp-header-pinmux 相同——状态节点挂到
+ * /bus@0/pinmux@2430000 下，由 pinmux 节点自身的 pinctrl-0 引用（hog），
+ * 内核 tegra234-pinctrl probe 时统一应用。四个 pin 的属性值逐字取自团队
+ * rak_lsm6dsr.dtb 中同名的 hdr40-pin19/21/23/24 条目（已核对一致）。
+ *
+ * 接线 (40-pin): 19=MOSI->SDI  21=MISO->SDO  23=SCLK->SCL/SPC  24=CS0->CS
+ *                1/17=3V3       6/9/14/20/25/30/34/39=GND
+ */
+/ {
+	overlay-name = "RAK LSM6DSRTR SPI1 pinmux (hdr40 19/21/23/24)";
+	compatible = "nvidia,p3768-0000+p3767-0000", "nvidia,p3768-0000+p3767-0001",
+	             "nvidia,p3768-0000+p3767-0003", "nvidia,p3768-0000+p3767-0004",
+	             "nvidia,p3768-0000+p3767-0005", "nvidia,p3768-0000+p3767-0000-super",
+	             "nvidia,p3768-0000+p3767-0001-super", "nvidia,p3768-0000+p3767-0003-super",
+	             "nvidia,p3768-0000+p3767-0004-super", "nvidia,p3768-0000+p3767-0005-super",
+	             "nvidia,p3509-0000+p3767-0000", "nvidia,p3509-0000+p3767-0001",
+	             "nvidia,p3509-0000+p3767-0003", "nvidia,p3509-0000+p3767-0004",
+	             "nvidia,p3509-0000+p3767-0005";
+
+	fragment@0 {
+		target-path = "/bus@0/pinmux@2430000";
+
+		__overlay__ {
+			pinctrl-names = "default";
+			pinctrl-0 = <&rak_imu_spi_pins>;
+
+			rak_imu_spi_pins: exp-header-pinmux {
+				hdr40-pin19 {
+					nvidia,pins = "spi1_mosi_pz5";
+					nvidia,function = "spi1";
+					nvidia,tristate = <0x00>;
+					nvidia,enable-input = <0x01>;
+				};
+				hdr40-pin21 {
+					nvidia,pins = "spi1_miso_pz4";
+					nvidia,function = "spi1";
+					nvidia,tristate = <0x01>;
+					nvidia,enable-input = <0x01>;
+				};
+				hdr40-pin23 {
+					nvidia,pins = "spi1_sck_pz3";
+					nvidia,function = "spi1";
+					nvidia,tristate = <0x00>;
+					nvidia,enable-input = <0x01>;
+				};
+				hdr40-pin24 {
+					nvidia,pins = "spi1_cs0_pz6";
+					nvidia,function = "spi1";
+					nvidia,tristate = <0x00>;
+					nvidia,enable-input = <0x01>;
+				};
+			};
+		};
+	};
+};
