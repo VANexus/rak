@@ -25,6 +25,8 @@ def _launch_setup(context, *args, **kwargs):
     device = LaunchConfiguration("device").perform(context)
     host_build_id = LaunchConfiguration("host_build_id").perform(context)
     allow_motion = LaunchConfiguration("allow_motion").perform(context)
+    transport = LaunchConfiguration("transport").perform(context)
+    can_channel = LaunchConfiguration("can_channel").perform(context)
 
     urdf_path = LaunchConfiguration("urdf").perform(context)
     controllers_file = LaunchConfiguration("controllers_file").perform(context)
@@ -33,7 +35,7 @@ def _launch_setup(context, *args, **kwargs):
         # [AI] Command 真正执行 xacro，参数直通 URDF 中的 $(arg ...) 占位
         Command(
             f"xacro {urdf_path} device:={device} host_build_id:={host_build_id} "
-            f"allow_motion:={allow_motion}"
+            f"allow_motion:={allow_motion} transport:={transport} can_channel:={can_channel}"
         ),
         value_type=str,
     )
@@ -86,6 +88,13 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "allow_motion", default_value="false",
             description="运动许可开关；false=DISARMED(只握手+遥测)"),
+        # [AI] ADR-0012: CAN v4 为主链路(验收通过后翻转默认)。联调期显式 transport:=can。
+        DeclareLaunchArgument(
+            "transport", default_value="usb",
+            description="链路后端: usb(默认) | can(SocketCAN, ADR-0012 主链路)"),
+        DeclareLaunchArgument(
+            "can_channel", default_value="can0",
+            description="transport:=can 时的 SocketCAN 接口名"),
         DeclareLaunchArgument(
             "urdf",
             default_value=f"{get_package_share_directory('rak_description')}/urdf/rak_chassis.urdf.xacro",

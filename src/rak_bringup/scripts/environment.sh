@@ -3,7 +3,9 @@
 
 if [[ -z "${RAK_WORKSPACE:-}" ]]; then
   RAK_WORKSPACE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-  while [[ "$RAK_WORKSPACE" != / && ! -f "$RAK_WORKSPACE/brain/package.xml" ]]; do
+  # [AI] 2026-10-10: ADR-0013 后 brain/ 已迁入 src/rak_agent，旧 marker 使本脚本
+  # 探测失败 return 1（run_*.sh 一 source 即退出）。改用自身所在包作根 marker。
+  while [[ "$RAK_WORKSPACE" != / && ! -f "$RAK_WORKSPACE/src/rak_bringup/package.xml" ]]; do
     RAK_WORKSPACE="$(dirname "$RAK_WORKSPACE")"
   done
   if [[ "$RAK_WORKSPACE" == / ]]; then

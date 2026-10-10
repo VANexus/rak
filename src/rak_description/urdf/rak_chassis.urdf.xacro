@@ -6,6 +6,9 @@
   <xacro:arg name="device" default="/dev/serial/by-id/usb-WCH.CN_USB_Single_Serial_0002-if00"/>
   <xacro:arg name="host_build_id" default="0xA0DE0002"/>
   <xacro:arg name="allow_motion" default="false"/>
+  <!-- [AI] transport=usb|can: CAN v4 主链路切换(ADR-0012); 默认 usb 保持现行为 -->
+  <xacro:arg name="transport" default="usb"/>
+  <xacro:arg name="can_channel" default="can0"/>
 
   <link name="base_footprint"/>
   <link name="base_link">
@@ -64,6 +67,9 @@
       <param name="host_build_id">$(arg host_build_id)</param>
       <!-- [AI] 运动许可：默认 false=永远 DISARMED；实驱必须显式 allow_motion:=true -->
       <param name="allow_motion">$(arg allow_motion)</param>
+      <!-- [AI] 传输后端: rak_system.cpp 按 transport 选 CanSession/SerialSession; can 时 device 不参与 -->
+      <param name="transport">$(arg transport)</param>
+      <param name="can_channel">$(arg can_channel)</param>
     </hardware>
     <joint name="front_left_wheel">
       <!-- [AI] R37 联调：给 command_interface 显式 min/max，避免 CM JointSaturationLimiter

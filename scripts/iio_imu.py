@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # [AI] IMU 驱动节点(v2, 快路径) —— 一次 I2C 块读拿 6 轴 → sensor_msgs/Imu @100Hz
-# 数据链: LSM6DSRTR ─(I2C i2c-7@0x6a)→ /dev/i2c-7 ioctl 块读(绕过驱动 oneshot 等待)
+# 数据链: LSM6DSRTR ─(I2C i2c-7@0x6a/0x6b 自动探测)→ /dev/i2c-7 ioctl 块读(绕过驱动 oneshot 等待)
 # 内核驱动(st_lsm6dsx_i2c)仍负责: 芯片初始化/量程/ODR(208Hz)/保活(lsm6dsr-i2c.service)
 # 本节点只做数据搬运: 0x22-0x2D 12字节 = gyro xyz + accel xyz (int16 LE)
 # 单位: 原始值 × sysfs 的 scale(与驱动量程一致) → SI
@@ -70,7 +70,7 @@ class ImuNode(Node):
     def __init__(self):
         super().__init__('iio_imu')
         self.declare_parameter('bus', 7)
-        self.declare_parameter('addr', 0x6a)
+        self.declare_parameter('addr', 0)  # [AI] 0=自动探测 0x6a/0x6b (SA0 漂移防护)
         self.declare_parameter('rate_hz', 100.0)
         self.declare_parameter('frame_id', 'imu_link')
         self.declare_parameter('topic', '/imu/data_raw')
@@ -79,15 +79,35 @@ class ImuNode(Node):
         base_g, base_a = 0.000152716, 0.000598205     # 驱动默认量程兜底值
         self.g_scale = read_float(f'{gyro}/in_anglvel_scale', base_g) if gyro else base_g
         self.a_scale = read_float(f'{accel}/in_accel_scale', base_a) if accel else base_a
-        self.bus = RawI2c(int(self.get_parameter('bus').value),
-                          int(self.get_parameter('addr').value))
+        bus_num = int(self.get_parameter('bus').value)
+        addr_param = int(self.get_parameter('addr').value)
+        # [AI] SA0 线态漂移会让芯片在 0x6a/0x6b 之间换址(2026-10-10 实翻 0x6b)。
+        # addr=0 时按 WHO_AM_I(0x0F)=0x6b 探测两个候选地址; 命中即用, 两个都无应答则快速失败。
+        if addr_param == 0:
+            addr = None
+            for cand in (0x6a, 0x6b):
+                probe = RawI2c(bus_num, cand)
+                try:
+                    if probe.read_regs(0x0f, 1)[0] == 0x6b:
+                        addr = cand
+                        break
+                except OSError:
+                    pass
+            if addr is None:
+                raise RuntimeError(
+                    'IMU 在 0x6a/0x6b 均无应答: 检查 40 针供电/接线 '
+                    '(i2cget -f -y 7 0x6a 0x0f 应回 0x6b)')
+        else:
+            addr = addr_param
+        self.addr = addr
+        self.bus = RawI2c(bus_num, addr)
         self.pub = self.create_publisher(Imu, str(self.get_parameter('topic').value), 10)
         self.frame = str(self.get_parameter('frame_id').value)
         self.fail = 0
         rate = float(self.get_parameter('rate_hz').value)
         self.timer = self.create_timer(1.0 / rate, self.step)
         self.get_logger().info(
-            f'IMU 节点就绪(快路径): /dev/i2c-{self.get_parameter("bus").value}@0x{int(self.get_parameter("addr").value):02x} '
+            f'IMU 节点就绪(快路径): /dev/i2c-{bus_num}@0x{self.addr:02x} '
             f'| gyro_scale={self.g_scale:g} accel_scale={self.a_scale:g} | gyro_dev={gyro}')
 
     def step(self):

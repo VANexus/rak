@@ -1,0 +1,18 @@
+[Unit]
+Description=RAK CAN0 up at 1Mbps (v4 protocol, sample-point 0.800) + Orin CAN pinmux
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# [AI] 2026-10-10: 把 Orin CAN pinmux 写入并入本服务——AON pinmux 重启必丢
+# (默认 0xC415=未复用)，漏写时 can0 照常 UP 但一帧都收不到且无任何报错，
+# 极易误判成"接线又坏了"。PAA0=CAN0_DOUT(0xC400) / PAA1=CAN0_DIN(0xC458)。
+ExecStart=/usr/bin/busybox devmem 0x0c303000 32 0xC400
+ExecStart=/usr/bin/busybox devmem 0x0c303008 32 0xC458
+ExecStart=/usr/sbin/ip link set can0 down
+ExecStart=/usr/sbin/ip link set can0 type can bitrate 1000000 sample-point 0.800 restart-ms 100
+ExecStart=/usr/sbin/ip link set can0 up
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

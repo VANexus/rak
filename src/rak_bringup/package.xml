@@ -23,6 +23,8 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>rak_motion_stub</exec_depend>
   <exec_depend>rf2o_laser_odometry</exec_depend>
+  <!-- [AI] launch 直引用声明（check_workspace 门禁） -->
+  <exec_depend>robot_localization</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>nav2_controller</exec_depend>
@@ -35,6 +37,7 @@
   <exec_depend>nav2_mppi_controller</exec_depend>
   <exec_depend>nav2_smoother</exec_depend>
   <exec_depend>nav2_navfn_planner</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
   <!-- 底盘 ros2_control 链（原 rak_chassis_bringup） -->
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>joint_state_broadcaster</exec_depend>
