@@ -81,6 +81,10 @@ class RawSpi:
         fcntl.ioctl(self.fd, req, buf)
         return buf.raw
 
+    def set_speed(self, speed_hz):
+        fcntl.ioctl(self.fd, SPI_IOC_WR_MAX_SPEED_HZ, struct.pack("I", speed_hz))
+        self.speed = struct.unpack("I", self._get_buf(SPI_IOC_RD_MAX_SPEED_HZ, 4))[0]
+
     def xfer(self, payload):
         n = len(payload)
         for i, b in enumerate(payload):
@@ -106,26 +110,43 @@ class RawSpi:
         self.xfer(bytes([reg & 0x7F, val & 0xFF]))
 
 
-def probe(spi):
-    """只读探测: WHO_AM_I(重试) + 突发读 vs 单读一致性。返回 0/1。"""
+def probe(spi, speeds=(10_000_000, 4_000_000, 1_000_000, 400_000)):
+    """只读探测: 逐档速率试 WHO_AM_I（诊断接线/信号完整性）→ 突发读/单读一致性。返回 0/1。"""
     who = None
-    for i in range(50):
-        try:
-            who = spi.read_reg(REG_WHO_AM_I)
-        except OSError as e:
-            print(f"SPI 传输失败: {e}")
-            return 1
+    for spd in speeds:
+        spi.set_speed(spd)
+        for _ in range(3):
+            try:
+                who = spi.read_reg(REG_WHO_AM_I)
+            except OSError as e:
+                print(f"SPI 传输失败: {e}")
+                return 1
+            if who == 0x6B:
+                break
+            time.sleep(0.05)
+        print(f"  {spd / 1e6:g} MHz -> WHO_AM_I = 0x{who:02x}" + ("  ✓" if who == 0x6B else ""))
         if who == 0x6B:
             break
-        time.sleep(0.1)
-    print(f"WHO_AM_I = 0x{who:02x}" + ("" if who == 0x6B else "  (期望 0x6b!)"))
     if who != 0x6B:
+        print("所有速率均读不到 0x6b。逐项检查: 23=SCLK / 19=MOSI / 21=MISO / 24=CS,"
+              " 共地; 若引脚确定接对, 做 19↔21 短接后跑 --loopback 定位是 Jetson 侧还是模块侧。")
         return 1
     burst = spi.read_regs(REG_OUT_START, 12)
     single = [spi.read_reg(REG_OUT_START), spi.read_reg(REG_OUT_START + 1)]
     ok = list(burst[:2]) == single
     print(f"突发读  12B = {burst.hex(' ')}")
     print(f"单读 0x22/0x23 = {single[0]:02x} {single[1]:02x}  -> 自增{'一致' if ok else '不一致(检查 0x40 自增位/IF_INC?)'}")
+    return 0 if ok else 1
+
+
+def loopback(spi, pattern=(0xA5, 0x5A, 0xC3, 0x3C), speed_hz=1_000_000):
+    """环回自测: 需先把 40 针 19(MOSI) 与 21(MISO) 短接。验证 Jetson 侧
+    (spidev→控制器→引脚) 全通; 读回 == 发出 → 侧问题在模块/接线, 不在 Jetson。返回 0/1。"""
+    spi.set_speed(speed_hz)
+    rx = spi.xfer(bytes(pattern))
+    ok = rx == bytes(pattern)
+    print(f"loopback @{speed_hz / 1e6:g}MHz  tx={bytes(pattern).hex(' ')}")
+    print(f"                     rx={rx.hex(' ')}  -> {'环路通 ✓ (Jetson 侧 OK)' if ok else '未通 (检查 19/21 短接与 pinmux)'}")
     return 0 if ok else 1
 
 
@@ -231,14 +252,14 @@ class SpiImuNode(Node):
 
 
 def main(args=None):
-    if '--probe' in sys.argv:
+    if '--probe' in sys.argv or '--loopback' in sys.argv:
         dev = '/dev/spidev0.0'
         for a in sys.argv:
             if a.startswith('--device='):
                 dev = a.split('=', 1)[1]
         spi = RawSpi(dev)
         print(f'device={dev} mode={spi.mode} speed={spi.speed} bits={spi.bits}')
-        rc = probe(spi)
+        rc = loopback(spi) if '--loopback' in sys.argv else probe(spi)
         sys.exit(rc)
     if rclpy is None:
         print('需要 ROS 环境: source src/rak_bringup/scripts/environment.sh', file=sys.stderr)
