@@ -27,6 +27,12 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", ["launch/pinocchio_ik.launch.py"]),
         ("share/" + package_name + "/config", ["config/rak_arm_pinocchio_ik.yaml"]),
+        # ament_python libexec convention marker: launch_ros probes
+        # `lib/<pkg>/` before falling back to PATH. Without this marker,
+        # `ros2 launch` fails with "libexec directory does not exist" the
+        # instant it tries to spawn the Node, even when bin/<exe> is on
+        # PATH. See ament_python/template/setup.py reference.
+        ("lib/" + package_name, ["package.xml"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -38,6 +44,7 @@ setup(
     entry_points={
         "console_scripts": [
             "ik_service_node = rak_arm_pinocchio_ik.ik_service_node:main",
+            "ik_marker_node = rak_arm_pinocchio_ik.ik_interactive_marker:main",
         ],
     },
 )

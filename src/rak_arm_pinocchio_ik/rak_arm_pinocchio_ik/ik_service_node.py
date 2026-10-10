@@ -17,6 +17,10 @@ the service plugin instead of writing a Python KinematicsBase subclass
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
+
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Pose, PoseStamped
@@ -128,7 +132,6 @@ def _pose_to_p_r(pose: Pose):
 
 
 def _quat_to_rot(x, y, z, w):
-    import numpy as np
     n = (x * x + y * y + z * z + w * w) ** 0.5
     if n == 0.0:
         return np.eye(3)
@@ -142,7 +145,6 @@ def _quat_to_rot(x, y, z, w):
 
 def _pose_is_position_only(pose: Pose) -> bool:
     """MoveIt marks position-only IK by setting quaternion components to NaN."""
-    import math
     for v in (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w):
         if isinstance(v, float) and math.isnan(v):
             return True

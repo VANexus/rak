@@ -1,13 +1,15 @@
-"""Six-axis sim with Pinocchio IK (via srv_kinematics_plugin).
+"""Six-axis sim with Pinocchio IK + self-contained drag handle.
 
 Same bringup as six_axis_sim.launch.py except:
   * uses `rak_arm_pinocchio_kinematics.yaml` (srv_kinematics_plugin +
     rak_arm_pinocchio_ik service) instead of stock KDL
-  * starts the pinocchio_ik_service node ahead of move_group
+  * starts pinocchio_ik_service + ik_marker_node ahead of move_group
+  * drops fake_joint_controllers — ik_marker_node publishes /joint_states
+    from drag feedback. MoveIt's robot_interaction server is intentionally
+    skipped (it does not start on Jazzy due to the namespace bug).
 
-RViz is launched separately by `/tmp/run_rviz_arm.sh` — this file only
-starts the MoveIt side so the RViz window already open on :1 can attach
-to the same ROS graph.
+RViz is launched separately — this file only starts the MoveIt side so
+the RViz window on :1 can attach to the same ROS graph.
 """
 
 import os
@@ -81,11 +83,6 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration("publish_world_tf")),
         ),
         Node(
-            package="rak_arm_simulation",
-            executable="fake_joint_controllers",
-            output="screen",
-        ),
-        Node(
             package="rak_arm_pinocchio_ik",
             executable="ik_service_node",
             name="pinocchio_ik_service",
@@ -103,6 +100,15 @@ def generate_launch_description():
                 "tip_frame": "tool0",
                 "group_name": "arm",
             }],
+        ),
+        # Self-contained 6-DOF drag handle on tool0 + IK feedback loop + /joint_states
+        # publish. Bypasses MoveIt's robot_interaction server which fails on Jazzy
+        # due to the `rviz_ssp_<hash>` namespace bug.
+        Node(
+            package="rak_arm_pinocchio_ik",
+            executable="ik_marker_node",
+            name="ik_marker",
+            output="screen",
         ),
         Node(
             package="moveit_ros_move_group",
