@@ -22,10 +22,11 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
-    "rak_agent", "rak_arm_simulation", "rak_astra_driver", "rak_base_driver",
-    "rak_bringup", "rak_chassis", "rak_commissioning", "rak_description",
-    "rak_gpu", "rak_intent", "rak_interfaces", "rak_motion_stub",
-    "rak_moveit_config", "rak_pointcloud", "rak_speech", "rak_stereo_driver",
+    "rak_agent", "rak_arm_pinocchio_ik", "rak_arm_simulation", "rak_astra_driver",
+    "rak_base_driver", "rak_bringup", "rak_can_driver", "rak_chassis",
+    "rak_commissioning", "rak_description", "rak_gpu", "rak_intent",
+    "rak_interfaces", "rak_motion_stub", "rak_moveit_config",
+    "rak_pointcloud", "rak_serial_link", "rak_speech", "rak_stereo_driver",
     "rak_task_executor", "rak_wbc",
 }
 OLD_NAMES = {"core", "eye", "boot", "brain", "motor_stub", "astra_bridge"}
