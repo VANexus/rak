@@ -14,13 +14,22 @@ from __future__ import annotations
 import math
 import struct
 import sys
+import threading
+import time
 import wave
 from pathlib import Path
+from queue import Empty
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rak_speech.asr_node import SpeechAsr  # noqa: E402
-from rak_speech.audio import SAMPLE_RATE, WavFileSource, build_source  # noqa: E402
+from rak_speech.audio import (  # noqa: E402
+    SAMPLE_RATE,
+    AudioInbox,
+    TopicSource,
+    WavFileSource,
+    build_source,
+)
 
 
 def _write_wav(path: Path, seconds: float = 1.0, rate: int = SAMPLE_RATE, channels: int = 1) -> None:
@@ -81,6 +90,86 @@ def test_wav_source_refuses_stereo(tmp_path):
         assert "mono" in str(exc)
     else:
         raise AssertionError("stereo must be refused, not downmixed silently")
+
+
+def test_build_source_topic_needs_an_inbox():
+    try:
+        build_source("topic")
+    except ValueError as exc:
+        assert "audio_inbox" in str(exc)
+    else:
+        raise AssertionError("topic without an audio inbox must fail loudly")
+
+
+def test_topic_source_yields_whole_aligned_chunks():
+    """GStreamer buffer sizes are arbitrary; an S16 sample never splits across calls."""
+    inbox = AudioInbox()
+    stop = threading.Event()
+    chunks = TopicSource(inbox, stop=stop, chunk_bytes=100).chunks()
+
+    inbox.put(b"\x01\x02" * 75)  # 150 bytes -> one chunk now, 50 left over
+    assert next(chunks) == b"\x01\x02" * 50
+
+    inbox.put(b"\x03\x04" * 30)  # 110 buffered -> chunk of old tail + new head
+    second = next(chunks)
+    assert len(second) == 100
+    assert second == b"\x01\x02" * 25 + b"\x03\x04" * 25
+
+    stop.set()
+    assert list(chunks) == [], "a stopped node must not keep draining audio"
+
+
+def test_topic_source_stop_ends_a_waiting_iterator():
+    """A silent topic is a live stream, not an end of file: only stop may end it,
+    and it must end promptly so node shutdown cannot hang on a quiet room."""
+    inbox = AudioInbox()
+    stop = threading.Event()
+    chunks = TopicSource(inbox, stop=stop, chunk_bytes=100).chunks()
+
+    threading.Timer(0.3, stop.set).start()
+    started = time.monotonic()
+    assert list(chunks) == []
+    assert time.monotonic() - started < 3.0, "shutdown waited on a silent topic"
+
+
+def test_inbox_budget_is_bytes_and_evicts_the_oldest():
+    """The recogniser is slower than real time (0.84-1.01x measured), so the
+    stream must be allowed to run ahead -- and overflow must cost the *oldest*
+    audio, never the words just spoken."""
+    inbox = AudioInbox(max_bytes=1000)
+    assert inbox.put(b"a" * 800) == 0
+    assert inbox.put(b"b" * 800) == 1, "over budget must evict the oldest chunk"
+    assert inbox.depth_bytes <= 1000
+    assert inbox.get(timeout=0.1) == b"b" * 800, "the newest audio must survive"
+
+    assert inbox.put(b"c" * 400) == 0  # room again: eviction is not sticky
+    assert inbox.get(timeout=0.1) == b"c" * 400
+
+
+def test_inbox_reports_a_quiet_stream_instead_of_blocking_forever():
+    inbox = AudioInbox()
+    try:
+        inbox.get(timeout=0.05)
+    except Empty:
+        pass
+    else:
+        raise AssertionError("an empty inbox must raise Empty, not block or return junk")
+
+
+def test_find_model_searches_the_repo_data_models(tmp_path):
+    """Since ADR-0013 the assets are at <repo>/data/models, not brain/data/models."""
+    expected = tmp_path / "data" / "models" / "vosk-model-small-cn-0.22"
+    expected.mkdir(parents=True)
+    start = tmp_path / "src" / "rak_speech"  # not created; the walk only goes up
+    found = SpeechAsr._find_model(SpeechAsr.__new__(SpeechAsr), starts=(start,))
+    assert found == str(expected)
+
+
+def test_find_model_says_empty_when_no_model_exists(tmp_path):
+    start = tmp_path / "nowhere"
+    start.mkdir()
+    found = SpeechAsr._find_model(SpeechAsr.__new__(SpeechAsr), starts=(start,))
+    assert found == "", "an absent model must be empty, not a guess"
 
 
 def test_intent_handoff_uses_the_task_layer_parser():

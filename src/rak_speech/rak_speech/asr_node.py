@@ -8,6 +8,14 @@ publishes a transcript and an intent, and never sends a goal of its own.
 Backend is Vosk -- offline, no network at runtime, and an aarch64 wheel, which
 matters on a Jetson that must not grow a PyTorch dependency for speech.
 
+Audio in, three interchangeable sources that all yield 16 kHz mono S16 PCM:
+
+- `topic` (standard): `audio_common_msgs/AudioData` on `audio_topic` (/audio),
+  published by `audio_capture` reading the microphone array over GStreamer/ALSA.
+- `arecord`: a capture device opened directly (fallback, no audio_common needed).
+- `wav`: a file, for fixtures and regression tests.
+
+    ros2 run rak_speech asr_node --ros-args -p source:=topic
     ros2 run rak_speech asr_node --ros-args -p source:=wav -p wav_path:=/tmp/x.wav
 """
 
@@ -15,6 +23,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from typing import Any
 
 import rclpy
@@ -23,16 +32,21 @@ from std_msgs.msg import String
 
 from rak_intent.task_intent import parse_control_command, parse_navigation_intent
 
-from .audio import SAMPLE_RATE, build_source
+from .audio import BYTES_PER_SECOND, DEFAULT_INBOX_SECONDS, SAMPLE_RATE, AudioInbox, build_source
 
 
 class SpeechAsr(Node):
     def __init__(self) -> None:
         super().__init__("speech_asr")
 
-        self.declare_parameter("source", "arecord")  # wav | arecord
+        self.declare_parameter("source", "arecord")  # topic | arecord | wav
         self.declare_parameter("wav_path", "")
         self.declare_parameter("device", "default")
+        self.declare_parameter("audio_topic", "/audio")  # source:=topic input
+        # How far the hand-off may run ahead of the recogniser. vosk-small-cn
+        # decodes at 0.84-1.01x real time on this board, so the stream must be
+        # allowed to lead; past this budget the oldest audio is evicted.
+        self.declare_parameter("audio_queue_seconds", DEFAULT_INBOX_SECONDS)
         self.declare_parameter("model_dir", "")
         self.declare_parameter("transcript_topic", "/speech/transcript")
         self.declare_parameter("intent_topic", "/speech/intent")
@@ -50,6 +64,14 @@ class SpeechAsr(Node):
         self._transcript_pub = self.create_publisher(String, str(g("transcript_topic")), 10)
         self._intent_pub = self.create_publisher(String, str(g("intent_topic")), 10)
 
+        self._inbox = AudioInbox(
+            max_bytes=int(float(g("audio_queue_seconds")) * BYTES_PER_SECOND)
+        )
+        self._dropped_audio = 0
+        self._audio_sub = None
+        if self._source_kind == "topic":
+            self._audio_sub = self._subscribe_audio(str(g("audio_topic")))
+
         self._stop = threading.Event()
         # Recognition blocks on the audio source, so it cannot run on the executor that
         # also serves subscriptions; a daemon thread keeps the node responsive and lets
@@ -57,13 +79,46 @@ class SpeechAsr(Node):
         self._worker = threading.Thread(target=self._run, name="asr", daemon=True)
         self._worker.start()
 
-    def _find_model(self) -> str:
-        """Locate the Vosk model beside the other model assets, the same way the
-        TensorRT decider does -- an installed copy of this module cannot use `__file__`."""
-        from pathlib import Path
+    def _subscribe_audio(self, topic: str):
+        """Subscribe to the standard audio topic.
 
-        relative = Path("brain") / "data" / "models"
-        for start in (Path(__file__).resolve().parent, Path.cwd()):
+        The import stays inside this path so `wav` and `arecord` keep working on
+        a machine where audio_common was never installed.
+        """
+        try:
+            from audio_common_msgs.msg import AudioData
+        except ImportError as exc:
+            raise RuntimeError(
+                "source:=topic needs audio_common_msgs (ros-jazzy-audio-capture)"
+            ) from exc
+        self.get_logger().info(f"audio in: {topic} (audio_common_msgs/AudioData)")
+        return self.create_subscription(AudioData, topic, self._on_audio, 10)
+
+    def _on_audio(self, msg: Any) -> None:
+        """Executor-thread callback: it must never block on the recogniser.
+
+        The inbox accepts the bytes without waiting and, over budget, evicts
+        the oldest audio; the evictions come back here so a shortfall is said
+        out loud rather than hidden as silence.
+        """
+        evicted = self._inbox.put(bytes(msg.data))
+        if evicted:
+            self._dropped_audio += evicted
+            self.get_logger().warning(
+                f"recogniser slower than the audio stream: "
+                f"{self._dropped_audio} chunk(s) dropped",
+                throttle_duration_sec=10.0,
+            )
+
+    def _find_model(self, starts: tuple[Path, ...] | None = None) -> str:
+        """Locate the Vosk model beside the other model assets, the same way the
+        decider does -- an installed copy of this module cannot use `__file__`.
+
+        Assets live under `data/models/` at the repo root since ADR-0013 moved
+        `brain/`; `-p model_dir:=` overrides the search entirely.
+        """
+        relative = Path("data") / "models"
+        for start in starts or (Path(__file__).resolve().parent, Path.cwd()):
             for base in (start, *start.parents):
                 candidate = base / relative
                 if candidate.is_dir():
@@ -82,12 +137,16 @@ class SpeechAsr(Node):
             if not self._model_dir:
                 raise FileNotFoundError(
                     "no Vosk model found; set -p model_dir:= or place one under "
-                    "brain/data/models/vosk-model-*"
+                    "data/models/vosk-model-*"
                 )
             model = vosk.Model(self._model_dir)
             recognizer = vosk.KaldiRecognizer(model, SAMPLE_RATE)
             source = build_source(
-                self._source_kind, wav_path=self._wav_path, device=self._device
+                self._source_kind,
+                wav_path=self._wav_path,
+                device=self._device,
+                inbox=self._inbox,
+                stop=self._stop,
             )
             self.get_logger().info(
                 f"speech up: source={self._source_kind} model={self._model_dir}"

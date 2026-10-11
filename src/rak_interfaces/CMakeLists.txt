@@ -15,8 +15,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Decision.msg"
   "msg/TaskStatus.msg"
   "msg/BaseTelemetry.msg"
+  "msg/WakeEvent.msg"
   "action/ExecuteTask.action"
   "srv/TaskControl.srv"
+  "srv/Say.srv"
   "srv/SendAtomicAction.srv"
   DEPENDENCIES std_msgs geometry_msgs vision_msgs action_msgs
 )

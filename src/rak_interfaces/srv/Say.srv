@@ -1,0 +1,7 @@
+# 合成一句话并从喇叭播出: tts_node → /audio_out → audio_play(audio_common)。
+# 回调只把文本入队——合成要几百毫秒到几秒,不能占住 executor;
+# accepted=true 表示已接受排队,不是已播完。
+string text
+---
+bool accepted
+string message

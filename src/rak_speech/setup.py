@@ -21,5 +21,11 @@ setup(
     description="Offline speech recognition node",
     license="Apache-2.0",
     tests_require=["pytest"],
-    entry_points={"console_scripts": ["asr_node = rak_speech.asr_node:main"]},
+    entry_points={
+        "console_scripts": [
+            "asr_node = rak_speech.asr_node:main",
+            "vtn_node = rak_speech.vtn_node:main",
+            "tts_node = rak_speech.tts_node:main",
+        ]
+    },
 )

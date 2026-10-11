@@ -1,0 +1,21 @@
+# 讯飞 AIUI-RK3328-VTN 降噪板 —— 让 adb 不用每次 chmod
+# ------------------------------------------------------------------
+# 板子: USB 2207:0001 , 串号 bc00143000108801ad0
+#        （2207 是瑞芯微的厂商号；本板跑的是 RK3328）
+#
+# 干什么: 每次插上板子时，自动把它的 USB 设备文件权限设成 0666
+#         → 从此 adb devices 不再报 "no permissions"，不用再手敲 chmod
+#
+# 装法（在 Jetson 上）:
+#     sudo cp 51-iflytek-adb.rules /etc/udev/rules.d/
+#     sudo udevadm control --reload-rules && sudo udevadm trigger
+#     # 然后重插一次 USB（或重启板子）让它生效
+#
+# 卸法（想反悔就删掉）:
+#     sudo rm /etc/udev/rules.d/51-iflytek-adb.rules
+#     sudo udevadm control --reload-rules
+#
+# 验收: 重插板子后 `adb devices` 直接显示 device（前面没有 no permissions）
+# ------------------------------------------------------------------
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{idProduct}=="0001", MODE:="0666"
