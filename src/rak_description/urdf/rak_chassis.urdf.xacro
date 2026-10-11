@@ -1,7 +1,15 @@
 <?xml version="1.0"?>
-<!-- [AI] 底盘最小 URDF：base_link + 四个连续轮关节 + rak_chassis ros2_control 块。
-     仅服务 ros2_control 底盘链路烟测；几何为占位值，不代表实测尺寸。
-     机械臂关节不在此文件——实机关节接口未 commissioned（ADR-0007）。 -->
+<!-- [AI] 全机静态骨架 URDF：底盘几何 + 传感器安装帧 + 机械臂安装帧。
+     仅承载“静态坐标系”（fixed joints）与四轮连续关节；机械臂 6 轴 + 夹爪的
+     运动链在 rak_arm.urdf.xacro（实机关节接口未 commissioned，ADR-0007）。
+     该文件是 robot_state_publisher 的唯一静态几何来源。
+
+     坐标系约定 (REP-103)：X 前，Y 左，Z 上。
+     REP-120：base_footprint 在地面 (z=0) 作导航参考，base_link 为车体中心（轮系几何中心）。
+     车体几何（2026-10-11 用户实测）：轮距（左右轮距）27 cm，轴距（前后轮距）25 cm。
+     装载（用户口述）：雷达在前·中轴，6 阵列麦克风在雷达上方，深度相机在车头最前，
+                      机械臂在后·中轴。
+     z 高度 / 前后精确距离为 TODO(measured) 占位，装车标定后回填。 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rak_chassis">
   <xacro:arg name="device" default="/dev/serial/by-id/usb-WCH.CN_USB_Single_Serial_0002-if00"/>
   <xacro:arg name="host_build_id" default="0xA0DE0002"/>
@@ -9,26 +17,49 @@
   <!-- [AI] transport=usb|can: CAN v4 主链路切换(ADR-0012); 默认 usb 保持现行为 -->
   <xacro:arg name="transport" default="usb"/>
   <xacro:arg name="can_channel" default="can0"/>
+  <!-- [AI] REP-120: base_link(车体中心)离地高度；TODO(measured) -->
+  <xacro:arg name="base_height" default="0.06"/>
+  <!-- [AI] 雷达安装高度（沿用 launch 的 lidar_z）；TODO(measured) -->
+  <xacro:arg name="lidar_z" default="0.10"/>
 
+  <!-- ===== 车体几何（2026-10-11 实测）===== -->
+  <xacro:property name="wheelbase" value="0.25"/>   <!-- 轴距 -->
+  <xacro:property name="track"     value="0.27"/>   <!-- 轮距 -->
+  <xacro:property name="hw" value="${wheelbase/2}"/>  <!-- 半轴距 -->
+  <xacro:property name="ht" value="${track/2}"/>      <!-- 半轮距 -->
+
+  <!-- ===== 传感器/机械臂安装偏移（TODO(measured) 占位）===== -->
+  <xacro:property name="laser_x" value="${hw}"/>      <!-- 雷达 x：前·中轴 -->
+  <xacro:property name="mic_z"   value="0.15"/>       <!-- 麦克风 z：雷达上方 -->
+  <xacro:property name="cam_x"   value="0.15"/>       <!-- 相机 x：车头最前 -->
+  <xacro:property name="cam_z"   value="0.10"/>       <!-- 相机 z：TODO(measured) -->
+  <xacro:property name="imu_x"   value="0.0"/>        <!-- IMU x：TODO(measured) -->
+  <xacro:property name="imu_z"   value="0.06"/>       <!-- IMU z：TODO(measured) -->
+  <xacro:property name="arm_x"   value="${-hw}"/>     <!-- 机械臂 x：后·中轴 -->
+  <xacro:property name="arm_z"   value="0.12"/>       <!-- 机械臂安装面 z：TODO(measured) -->
+
+  <!-- ===== 地面投影 / 车体中心（REP-120 / REP-103）===== -->
   <link name="base_footprint"/>
   <link name="base_link">
     <visual>
-      <origin xyz="0 0 0.1" rpy="0 0 0"/>
+      <origin xyz="0 0 0.06" rpy="0 0 0"/>
       <geometry>
-        <box size="0.28 0.26 0.08"/>
+        <!-- 车体占位盒（长×宽×高）：TODO(measured) 实测外壳 -->
+        <box size="${wheelbase} ${track} 0.08"/>
       </geometry>
     </visual>
     <inertial>
-      <origin xyz="0 0 0.1" rpy="0 0 0"/>
+      <origin xyz="0 0 0.06" rpy="0 0 0"/>
       <mass value="5.0"/>
       <inertia ixx="0.03" ixy="0" ixz="0" iyy="0.03" iyz="0" izz="0.05"/>
     </inertial>
   </link>
 
+  <!-- base_footprint(地面) -> base_link(车体中心)：REP-120 固定竖直偏移 -->
   <joint name="base_footprint_joint" type="fixed">
     <parent link="base_footprint"/>
     <child link="base_link"/>
-    <origin xyz="0 0 0.06" rpy="0 0 0"/>
+    <origin xyz="0 0 $(arg base_height)" rpy="0 0 0"/>
   </joint>
 
   <xacro:macro name="mecanum_wheel" params="prefix x y">
@@ -47,7 +78,7 @@
     <joint name="${prefix}_wheel" type="continuous">
       <parent link="base_link"/>
       <child link="${prefix}_wheel_link"/>
-      <!-- [AI] 轮位为占位几何，仅保证 TF 树合法；控制器运动学参数在 controllers.yaml -->
+      <!-- [AI] 轮位来自实测轮距/轴距；控制器运动学参数在 controllers.yaml -->
       <origin xyz="${x} ${y} 0" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
       <!-- [AI] R37: velocity limit 供 CM JointSaturationLimiter 使用（占位值） -->
@@ -55,10 +86,53 @@
     </joint>
   </xacro:macro>
 
-  <xacro:mecanum_wheel prefix="front_left"  x="0.09"  y="0.09"/>
-  <xacro:mecanum_wheel prefix="front_right" x="0.09"  y="-0.09"/>
-  <xacro:mecanum_wheel prefix="rear_left"   x="-0.09" y="0.09"/>
-  <xacro:mecanum_wheel prefix="rear_right"  x="-0.09" y="-0.09"/>
+  <xacro:mecanum_wheel prefix="front_left"  x="${hw}"  y="${ht}"/>
+  <xacro:mecanum_wheel prefix="front_right" x="${hw}"  y="${-ht}"/>
+  <xacro:mecanum_wheel prefix="rear_left"   x="${-hw}" y="${ht}"/>
+  <xacro:mecanum_wheel prefix="rear_right"  x="${-hw}" y="${-ht}"/>
+
+  <!-- ===== 传感器安装帧（fixed；几何单一来源，勿在 launch 里重复发布）===== -->
+  <!-- 雷达：前·中轴。scan 的 frame_id=laser_link（驱动默认，勿改） -->
+  <link name="laser_link"/>
+  <joint name="laser_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_link"/>
+    <origin xyz="${laser_x} 0 $(arg lidar_z)" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 6 阵列麦克风：雷达正上方（vtn_node 桥接，本身不发 TF） -->
+  <link name="mic_array_link"/>
+  <joint name="mic_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="mic_array_link"/>
+    <origin xyz="${laser_x} 0 ${mic_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 深度相机：车头最前。内参/光学帧(camera_*_optical_frame)由 Orbbec 驱动发布，
+       此处只挂载安装帧 camera_link；base_link->camera_link 外参 TODO(measured) -->
+  <link name="camera_link"/>
+  <joint name="camera_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="${cam_x} 0 ${cam_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- IMU：LSM6DSRTR（SPI）。安装姿态 TODO(measured)，现为恒等 -->
+  <link name="imu_link"/>
+  <joint name="imu_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="${imu_x} 0 ${imu_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 机械臂安装帧：后·中轴。姿态/安装面高度 TODO(measured)；
+       六轴运动链在 rak_arm.urdf.xacro（wbc_base.urdf.xacro 为分析镜像，值须同步） -->
+  <link name="arm_base_link"/>
+  <joint name="arm_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="arm_base_link"/>
+    <origin xyz="${arm_x} 0 ${arm_z}" rpy="0 0 0"/>
+  </joint>
 
   <ros2_control name="rak_chassis_system" type="system">
     <hardware>

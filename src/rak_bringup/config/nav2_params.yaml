@@ -1,5 +1,7 @@
 # xrak nav2 params. Tuned for a 2D N10P lidar + rf2o laser odom + slam_toolbox
-# map. base_link is the robot footprint centre (no URDF, no base_footprint).
+# map. Frame tree (REP-120): world -> map -> odom -> base_footprint -> base_link,
+# published by robot_state_publisher from the URDF; nav2 tracks robot_base_frame
+# = base_link (resolved through TF). EKF owns odom->base_footprint.
 #
 # Design: this file does NOT contain AMCL or map_server. SLAM mode means
 # slam_toolbox is already publishing /map and the map->odom TF, so AMCL

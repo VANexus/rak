@@ -68,4 +68,22 @@
 			};
 		};
 	};
+
+	/*
+	 * [AI] 2026-10-10: RX 采样 tap 修正。
+	 * 原厂 controller-data 里 rx-clk-tap-delay = 0x10、tx-clk-tap-delay = 0。
+	 * 现象：写方向全正常（芯片配置成功、输出寄存器在动），读方向全部畸变，且 10MHz~10kHz
+	 * 同结果（速度无关）、命令地址相关、填充字节无关——即采样点固定偏了半个位周期、
+	 * 恰好落在芯片下一次翻转的边界上（读回来是相邻位的竞争值）。
+	 * 修：rx tap 改 0（与 tx 对称；mode3 下采样点=SCK 上升沿=数据稳定窗口正中）。
+	 */
+	fragment@1 {
+		target-path = "/bus@0/spi@3210000/spi@0";
+
+		__overlay__ {
+			controller-data {
+				nvidia,rx-clk-tap-delay = <0x00>;
+			};
+		};
+	};
 };

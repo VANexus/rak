@@ -100,3 +100,9 @@
 2. `rak_speech/asr_node.py` 的函数内懒 import 改为顶层 import（依赖 rak_intent 后不再需要懒加载）。
 3. 旧安装目录（`build/`、`install/`）与新结构混用时 `ros2 run` 会找不到旧可执行名——
    首次切换需 `rm -rf build/architecture install/architecture` 后全量重建。
+
+## 修订记录
+
+- 2026-10-10：**用户裁定删除 `attic/` 本地归档**（推翻本文"被否决的方案"中"双包直接删除"
+  的否决理由——协议考古改由 git 历史承担，`git show 4f34795^:src/rak_can_driver/...` 可取回）。
+  相关文档（README/architecture/AGENTS/CLAUDE/TODO/project_status）已同步。

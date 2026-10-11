@@ -68,7 +68,8 @@
 - **结论（2026-10-05 用户确认）**：Jetson 只通过 USB 与下位机通信——**已被 ADR-0012
   （2026-10-09）取代：CAN v4 恢复唯一主链路，USB v2 冻结备用**，`Session` 抽象切换。
 - **遗留动作 [2026-10-09 完成]**：`rak_can_driver` 与 `rak_serial_link`（CAN v3 host 栈）
-  已归档至 `attic/`（COLCON_IGNORE，ADR-0013）；活 CAN 路径 = `src/rak_chassis` 的 `CanSession`。
+  已删除（2026-10-10 用户裁定，原 `attic/` 本地归档不再保留；代码仅存 git 历史）；
+  活 CAN 路径 = `src/rak_chassis` 的 `CanSession`。
 - **关联**：ADR-0003 §A3（已更新）、ADR-0007
 
 ### P0-4 底盘 UART 实车验收
@@ -102,7 +103,7 @@
 
 ### P1-1 四路里程计融合
 
-- **目标**：轮式 + IMU + 雷达（rf2o）+ 视觉 四路融合，输出可信的 `odom→base_link`。
+- **目标**：轮式 + IMU + 雷达（rf2o）+ 视觉 四路融合，输出可信的 `odom→base_footprint`（REP-120，ADR-0015）。
 - **前置**：P0-4（轮式遥测）、P0-5（IMU）。
 - **分阶段**（ADR-0002）：F1 = 轮式+IMU → F2 = +雷达 → F3 = +视觉，每阶段实测通过再进下一步。
 - **验收**：横移 1 m 后 y 方向漂移显著小于纯轮式；静止 60 s 无漂移；长直走廊不退化。
@@ -115,9 +116,9 @@
 - **目标**：把预留接缝变成真实现。
 - **现状** `[已核实]`：`docs/architecture.md` §7 明确"`odom_source:=ekf` 预留选项
   **不会自动启动 EKF**"。rf2o 有 `publish_tf` 参数（默认 true），接管时须置 false，
-  否则**两个节点抢发 `odom→base_link`**。
+  否则**两个节点抢发 `odom→base_footprint`**。
 - **验收**：`ros2 launch rak_bringup slam.launch.py odom_source:=ekf` 后
-  `ros2 run tf2_tools view_frames` 只有一个 `odom→base_link` 发布者。
+  `ros2 run tf2_tools view_frames` 只有一个 `odom→base_footprint` 发布者。
 
 ### P1-3 3D 避障
 
@@ -163,6 +164,16 @@
   倾覆约束只能保守运行；Jetson 侧 `pin`/`osqp` Python 依赖可得性待核实（ADR-0011 #6）。
 
 ---
+
+### P1-6 全机坐标系收尾（ADR-0015）
+
+- **已完成**：全机静态骨架入 `rak_chassis.urdf.xacro`（REP-120 `base_footprint`/`base_link` + 四轮实测轮距 27/轴距 25 + 传感器与臂安装帧）；`slam.launch.py` 改由 `robot_state_publisher` 发布、新增 `world→map` 锚点；EKF/恒等里程改发 `odom→base_footprint`。
+- **待办**：
+  ① **装车标定回填** `TODO(measured)`：`base_height`、`lidar_z`、`mic_z`、`cam_x/z`、`imu_x/z`、`arm_x/z`（改 `rak_chassis.urdf.xacro` 的 xacro arg / property；同步 `wbc_base.urdf.xacro` 的 `arm_mount_joint`）。
+  ② **REP-120 迁移上车复测**：`odom→base_footprint` 后 EKF 收敛、rf2o 里程、Nav2 跟踪与 `collision_monitor` 需实机验证；`ros2 run tf2_tools view_frames` 确认每帧唯一发布者。
+  ③ **`world→map` 全局锚点**：现为静态恒等占位，待全局定位/多地图注册模块（无限开放世界）。
+  ④ **相机外参** `base_link→camera_link` 按 ADR-0014 实测（不得臆造）。
+- **运行约束**：nav 栈与 `chassis_bringup` 同跑时，`slam.launch.py` 需 `publish_robot_tf:=false`，避免两个 `base_footprint→base_link` 发布者。
 
 ## P2 — 感知栈与算力
 

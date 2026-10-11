@@ -16,7 +16,11 @@ endpoint；真实 v2 互操作、传感器 Nav2 和整车安全验收仍未完�
 - 底盘：F407 自行完成麦轮运动学与四轮 25 kHz 闭环，上位机给 `(vx, vy, wz)`。
 - 底盘有独立 IMU 做稳定，但是否提供 ROS 可消费的 IMU/协方差/时间戳还需对接。
 - 机械臂目标：六个定位关节，夹爪独立。当前旧 URDF 是五轴演示，禁止当作实物模型。
-- 语音硬件尚未接入。先以文字事件验证任务控制，再接 ASR/TTS，避免两类问题混在一起。
+- 语音 ASR 已接入硬件（2026-10-10：讯飞 XFM-DP 六麦阵列 → `audio_capture` →
+  `/audio` → Vosk 转写，见 `docs/microphone_array.md`）；2026-10-11 起板端
+  唤醒/方位（`vtn_node` → `/speech/wake`）与离线 TTS 播报（`tts_node` →
+  `/audio_out` → `audio_play` → USB 喇叭）也已电气链路实测；任务控制
+  仍以文字事件验证，声学段需真人说话验收。
 - 叶节点旧协议记录不能证明新的六轴机械臂已经具备相应通道、反馈和限位。
 
 > **2026-10-08 增补（定义性约束，全文适用）**：本机是**手搓平台**——无 CAD 级几何/质量，
@@ -64,7 +68,7 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_description` | URDF、几何、惯量与可视化 | 导航参数、模型策略 |
 | `rak_intent` | 共享版本化文本→意图契约（stdlib-only） | 决策、动作执行、RAI 会话 |
 | `rak_task_executor` | 单一任务状态机、Nav2 Action 生命周期；意图解析来自 `rak_intent` | 原始底盘/关节命令、感知算法 |
-| `rak_speech` | 离线 ASR（Vosk）→ 转写 + 意图发布 | 下发目标、速度/关节命令 |
+| `rak_speech` | 离线 ASR（Vosk）：输入为 audio_common `/audio`（`audio_capture` 采阵列）或 arecord 直采 → 转写 + 意图发布；板端唤醒/方位桥（`vtn_node` → `/speech/wake`）；离线 TTS（`tts_node` → `/audio_out` → `audio_play`） | 下发目标、速度/关节命令 |
 | `rak_wbc`（ADR-0011） | 全身运动仲裁：100 Hz 速度级 HQP（Pinocchio + OSQP）、底盘与臂的单一常规写入者；数值层桌面可回归 | 安全裁决、任务生命周期、直接读感知/决策 |
 | `rak_base_driver` | USB v2 编解码（commissioning 共用）；UART v1 历史节点 | v2 硬件接口 endpoint、MCU 实时环、安全认证 |
 | `rak_chassis` | `ros2_control` SystemInterface + `Session` 传输抽象（CAN v4 主 / USB v2 备，ADR-0012；当前导出 4 轮接口；臂接口待加） | 运动学仲裁、轮/臂语义重定义、上层传输分支 |
@@ -76,8 +80,8 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_harness`（**待创建**，ADR-0010） | Harness 慢路径：任务上下文、工具白名单、预算/超时/事件摘要/失败恢复；独立 `anthropic` 客户端 | 速度/关节命令、第二生命周期所有者、实时安全裁决 |
 | `rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent/base_uart）、参数、udev、Cyclone DDS（运行 domain 47）、操作入口（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） | 通用算法或传感器 SDK |
 
-`attic/`（`rak_can_driver`、`rak_serial_link`）为退役 CAN v3 host 栈（ADR-0012/0013），
-COLCON_IGNORE 不构建。
+退役 CAN v3 host 栈（`rak_can_driver`、`rak_serial_link`，ADR-0012/0013）的本地 `attic/`
+归档已于 2026-10-10 删除，代码仅存 git 历史。
 
 关键依赖方向（箭头表示“依赖”）：
 
@@ -85,7 +89,7 @@ COLCON_IGNORE 不构建。
 rak_agent ------------> rak_interfaces ---> 标准 ROS 消息
 rak_stereo_driver ----> rak_gpu ----------> JetPack SDK
 rak_task_executor ----> rak_interfaces / rak_intent / Nav2 Action
-rak_speech -----------> rak_intent
+rak_speech -----------> rak_intent / rak_interfaces / audio_common_msgs（/audio、/audio_out）
 rak_base_driver -----> rak_interfaces / serial
 rak_commissioning ----> rak_base_driver（USB v2 编解码共用）
 rak_arm_simulation --> standard trajectory/gripper actions
@@ -236,6 +240,9 @@ CAN 双板链路已失效并保留为历史资料。
 - ROS 底盘坐标惯例是 x 前、y 左；旧 `SceneState` 使用相机 x 右、z 前。
   在适配层显式变换，不改旧 corpus 的坐标语义。
 - 同一个 TF 子坐标系只能有一个权威发布者；全机模型落地后统一安装外参。
+- 坐标系分层（**ADR-0015**，2026-10-11 接受）：`world → map → odom → base_footprint → base_link → {4 轮, laser_link, mic_array_link, camera_link, imu_link, arm_base_link}`。
+  全程 REP-103（X 前 / Y 左 / Z 上）+ REP-120（`base_footprint` 恒在地面作导航参考，`base_link` 为轮系几何中心）；`world` 是无限开放世界的无界全局根（现为静态恒等占位）。
+  静态几何单一来源 = `rak_chassis.urdf.xacro`（`robot_state_publisher` 发布）；`slam_toolbox` 独占 `map→odom`，EKF 独占 `odom→base_footprint`，传感器挂载帧是 URDF 里的 fixed joint，**不再放 launch 的 `static_transform_publisher`**。
 - 观测优先最新帧；任务与取消命令必须确认、幂等，不能用无限队列保存过期动作。
 - TTL 用清晰的时钟语义；本机超时使用单调时钟，仿真遵循 ROS 时钟，不混用。
 - S1 历史值约 158 ms，S2 约 12–30 s，均不是服务等级保证。
@@ -251,7 +258,7 @@ CAN 双板链路已失效并保留为历史资料。
 | B：任务内核 | 软件实现；fake Nav2 覆盖成功、重复请求、暂停/确认/恢复、服务取消和 Action 取消 | 到达/暂停竞态、各种超时、慢规划迟到、重启等剩余竞态仍需扩测 |
 | C：Nav2 接入 | Action、waypoint 和全向参数已接入；hardware 末端 launch 静态检查通过 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链；确认每种 backend 单写者 |
 | D：硬件闭环 | UART v1 host/firmware 曾台架运行；v2 host/MCU standalone codec 有软件向量 | v2 endpoint、里程计/IMU、断联/E-stop、限速与人工监督低速测试 |
-| E：语音与智能体 | 文字 CLI 已有；ASR 已有（Vosk），TTS 未接入；task 与 S1/Harness 仲裁**已定义（ADR-0010）但未实现** | 无网络本地打断、旧提案拒绝、误识别处理、harness 路径端到端延迟与表达 stub 落地 |
+| E：语音与智能体 | 文字 CLI 已有；ASR 已接阵列硬件（2026-10-10：阵列 → `/audio` → Vosk，实测解码 0.84–1.01× 实时，超预算淘汰最旧音频），TTS 未接入；task 与 S1/Harness 仲裁**已定义（ADR-0010）但未实现** | 阵列声学段真人说话验收、无网络本地打断、旧提案拒绝、误识别处理、harness 路径端到端延迟与表达 stub 落地 |
 | F：机械臂 | 六轴隔离夹具和软件动作服务器已实现 | 真实几何/限位/映射/失联策略确认后再做实机适配 |
 
 ## 7. 未因本次重构而解决的问题

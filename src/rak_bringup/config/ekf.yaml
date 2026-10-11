@@ -1,6 +1,7 @@
-# [AI] robot_localization EKF 配置 —— odom -> base_link 的唯一发布者
-# 团队规矩 (usb_serial_v2.md §5 / README): EKF 独占 odom->base_link;
-# slam_toolbox 独占 map->odom; RF2O/轮式/IMU 都只是 EKF 的输入。
+# [AI] robot_localization EKF 配置 —— odom -> base_footprint 的唯一发布者 (REP-120)
+# 团队规矩 (usb_serial_v2.md §5 / README): EKF 独占 odom->base_footprint;
+# slam_toolbox 独占 map->odom; world->map 由全局锚点(暂静态恒等)发布;
+# RF2O/轮式/IMU 都只是 EKF 的输入。base_footprint->base_link 由 robot_state_publisher(URDF) 提供。
 #
 # 输入分两阶段:
 #   现在:   odom0 = rf2o 激光里程计 (轮式缺位时的临时主力) + imu0 = LSM6DSRTR
@@ -9,10 +10,10 @@
 #
 # 设计要点:
 #   - two_d_mode: 平面机器人, 压掉 z/roll/pitch
-#   - world_frame=odom: 本滤波器只产出 odom->base_link; map->odom 归 slam_toolbox
+#   - world_frame=odom: 本滤波器只产出 odom->base_footprint; map->odom 归 slam_toolbox
 #   - imu0 只用 vyaw: 陀螺 Z 是航向角速率权威; 无磁力计不做绝对航向;
 #     加速度暂不用(零偏未标定)
-#   - imu_link 帧变换由 launch 的静载 TF 提供(安装姿态待装车标定, 现为恒等)
+#   - imu_link 帧变换来自 URDF (base_link->imu_link 固定关节, 安装姿态 TODO(measured))
 
 ekf_filter_node:
   ros__parameters:
@@ -26,7 +27,7 @@ ekf_filter_node:
 
     map_frame: map
     odom_frame: odom
-    base_link_frame: base_link
+    base_link_frame: base_footprint
     world_frame: odom
 
     # --- odom0: rf2o 激光里程计 (10Hz) ---

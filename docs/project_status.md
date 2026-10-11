@@ -1,6 +1,13 @@
 # 项目总体状态
 
-更新日期：2026-10-09
+更新日期：2026-10-11
+
+## 2026-10-11 增量：全机坐标系分层（ADR-0015）
+
+- **坐标系**：确立全机 TF 树 `world → map → odom → base_footprint → base_link → {4 轮, laser_link, mic_array_link, camera_link, imu_link, arm_base_link}`；采用 REP-103 + REP-120，`world` 作无限开放世界的无界全局根（现为静态恒等占位）。
+- **几何**：车体实测轮距 27 cm / 轴距 25 cm 入 `rak_chassis.urdf.xacro`；雷达（前·中轴）、6 阵列麦克风（雷达上方）、深度相机（车头最前）、机械臂（后·中轴）挂载帧同处定义，高度/前后距离以 `TODO(measured)` 占位。
+- **发布者收敛**：静态几何单一来源交给 `robot_state_publisher`；`slam_toolbox` 独占 `map→odom`，EKF 独占 `odom→base_footprint`；移除 launch 里 `base_link→laser_link`/`imu_link` 的临时静态 TF。
+- **本机验证边界**：x86/IDE 侧已过 `xacro` 解析与 `check_workspace.py` 结构检查；`colcon build` 与上车 TF 复测在 Jetson 收口（见 TODO P1-6）。
 
 ## 2026-10-09 增量：CAN v4 主链路 + 工作空间重组（ADR-0012 / ADR-0013）
 
@@ -11,7 +18,8 @@
   `rak_commissioning`（双 TUI + chassis_key_test 转正 entry point）与 `rak_intent`
   （task_intent 自 brain 抽出）；`rak_bringup` 吸收 sensor_bringup/navigation/
   chassis_bringup 全部 launch/config；`brain/` 迁入 `src/rak_agent`（模块 `rak_ai`→
-  `rak_agent`，语料迁仓库根 `data/episodes/`）；CAN v3 栈归档 `attic/`。
+  `rak_agent`，语料迁仓库根 `data/episodes/`）；CAN v3 栈归档 `attic/`（2026-10-10 本地
+  归档已删，仅存 git 历史）。
 - **规范守护**：`check_workspace.py` 重写（EXPECTED 18 包、依赖倒置守卫
   `dependents(rak_agent) ⊆ {rak_bringup}`、launch 引用检查），本机结构检查全绿；
   并由此暴露并修复历史欠账 `nav2_lifecycle_manager` 未声明。
@@ -39,7 +47,7 @@
 | 底盘 UART | v1 主机节点与 F407 R16-R18 曾台架运行；v2 host/MCU standalone codec 有 golden-vector 测试 | v2 串口 endpoint/control loop 尚未接入；真实 encoder odom、E-stop、时序与整车验收未完成 |
 | 硬件启动路径 | 顶层 bringup 有 `motion_backend:=hardware` 到 UART 节点的 launch wiring；静态解析和模式映射检查通过，默认仍为 `sim` | 尚未在真实传感器或 F407 上运行；硬件开关默认为 false，零速度限值阻止 ARM |
 | 机械臂 | 六关节加独立夹爪的软件动作夹具和 MoveIt 配置已实现；v2 wire slots 已定义 | 模型、限位是测试占位；F407 仅有六路 PWM、无关节反馈，夹爪通道和硬件控制器未完成 |
-| 感知与语音 | 雷达/深度相机已有驱动或测试基础；当前以文字入口验证任务 | 传感器融合和完整导航输入链未验收；ASR/TTS 尚未接入 |
+| 感知与语音 | 雷达/深度相机已有驱动或测试基础；语音链已通（2026-10-10：XFM-DP → `audio_capture` → `/audio` → Vosk 转写/意图；2026-10-11：板端唤醒/方位 `vtn_node` → `/speech/wake`、离线 TTS `tts_node` → `/audio_out` → `audio_play` → USB 喇叭，电气链路与真人唤醒均已实测）；当前仍以文字入口验证任务 | 传感器融合和完整导航输入链未验收；阵列声学段需真人说话验收；识别解码 0.84–1.01× 实时，余量不足；TTS 合成约 0.75× 实时（kokoro 24 kHz），播报音色/音量待真人验收；`/speech/say` 尚无决策层消费者 |
 | Jev / Harness | `rak_agent` 保留现有 S1/S2 原型与冻结的数据契约；TensorRT decider 已接入；ADR-0010 定义了 Harness 包、仲裁缝与云端客户端 | `src/rak_harness` / `harness_node` 未创建；S2 回复目前不会驱动执行器；表达层是门控 no-op stub |
 
 ## 已有验证证据

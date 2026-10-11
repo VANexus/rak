@@ -23,7 +23,7 @@
 | `src/rak_description` | URDF、几何、惯量、可视化；当前仍是旧五轴演示模型 |
 | `src/rak_task_executor` | 唯一导航任务状态机；文字、暂停、恢复、取消和仿真 Nav2；依赖 `rak_intent` |
 | `src/rak_intent` | 共享的版本化文本→意图契约；task executor 与 speech 共同使用 |
-| `src/rak_speech` | 离线语音识别（Vosk）→ 转写 + 意图发布；不自行下发目标 |
+| `src/rak_speech` | 离线语音识别（Vosk）→ 转写 + 意图发布；板端唤醒/方位桥（`vtn_node`）与离线 TTS 播报（`tts_node`）；不自行下发目标 |
 | `src/rak_wbc` | 全身运动仲裁层（ADR-0011，骨架 + 桌面数值测试，硬件门未开） |
 | `src/rak_base_driver` | USB v2 编解码（示教/驾驶 TUI 共用）+ UART v1 历史主机节点；默认不打开硬件 |
 | `src/rak_chassis` | F407 传输 + `ros2_control` 插件：`Session` 抽象（CAN v4 主 / USB v2 备，`transport:=usb\|can`）；当前导出 4 轮接口 |
@@ -33,7 +33,6 @@
 | `src/rak_motion_stub` | 测试转发与速度估算；不是 CAN 驱动或安全控制器 |
 | `src/rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent/base_uart）、参数、udev、DDS 配置和操作脚本（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） |
 | `src/rak_agent` | （原 `brain/`）Jev / LLM 决策节点；ROS 系统 Python 内运行，模块名 `rak_agent`；语料在仓库根 `data/episodes/` |
-| `attic/` | 退役 CAN v3 栈（`rak_can_driver`、`rak_serial_link`）；COLCON_IGNORE，不构建 |
 | `src/vendor` | 第三方雷达和 rf2o；只读，不随自有包重命名 |
 
 2026-10-09 起所有可构建包统一在 `src/` 下（ADR-0013）；完整的新旧映射见
@@ -121,6 +120,8 @@ ros2 launch rak_moveit_config six_axis_sim.launch.py
 ros2 launch rak_description view_urdf.launch.py
 ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
 ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
+ros2 launch rak_bringup speech.launch.py  # 阵列:采集→转写/意图 + 板端唤醒 + TTS 播报
+ros2 launch rak_speech asr.launch.py source:=arecord  # 备用直采,不经 audio_common
 ```
 
 深度相机选择入口默认启动 Gemini 335L；切换 `camera:=astra` 使用既有 Astra 驱动，
@@ -128,6 +129,15 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 `orbbec_camera` 的 `gemini_330_series.launch.py`，该上游包需单独安装并 source；
 本仓不复制或维护厂商 SDK。统一 RGB-D 话题和标定/TF 注意事项见
 [相机接入说明](docs/cameras.md)。
+
+六麦克风阵列（讯飞 XFM-DP / R818 降噪板）走标准 audio_common 管线：`speech.launch.py` 用
+`audio_capture` 直连 ALSA 采集 16 kHz 单声道发布 `/audio`（六路波束成形在模块内
+完成，主机侧 UAC 只见处理后的单声道），`asr_node` 订阅后发布 `/speech/transcript`
+与 `/speech/intent`。同一入口还包含 `vtn_node`（板端唤醒+声源方位 →
+`/speech/wake`，经 adb 隧道读板上 vtn socket）和 `tts_node` + `audio_play`
+（`/speech/say` 服务 → sherpa-onnx 离线合成 → USB 喇叭）。设备 id、板端协议、
+QoS、解码/合成速度实测与验收命令见
+[麦克风阵列实测记录](docs/microphone_array.md)。
 
 `task_simulation.launch.py` 是无传感器的任务状态机 fixture；`task_navigation.launch.py`
 组合真实 SLAM/Nav2 软件栈，默认底盘后端为仿真估算，且仍需要有效雷达/定位输入。
@@ -211,21 +221,86 @@ ros2 run rak_drive_tui drive_tui --ros-args -p port:=/dev/ttyACM0
 The touchscreen is shared, not re-created: `x11vnc` attaches to whatever X
 display GDM is currently running (`:0` at the greeter, `:1` once someone logs
 in) and streams that exact framebuffer. There is no `Xvfb`/`Xvnc`, no second
-compositor and no extra window manager — the whole server costs **11.6 MiB RSS**
+compositor and no extra window manager — the whole server costs **~12 MiB RSS**
 and touches 0 CMA.
 
-| Network | Address |
-|---------|---------|
-| LAN | `orin.xrak:5900` (i.e. `192.168.5.215`, wired `192.168.5.108`) |
-| Public (netmaker) | `100.121.213.15:5900` |
+### Quick connect
+
+| Route | Address | Needs |
+|-------|---------|-------|
+| Wired LAN | `jetson.xrak:5900` (`192.168.5.108`) | Ethernet cable attached |
+| WiFi LAN | `orin.xrak:5900` (`192.168.5.215`) | WiFi joined |
+| Public (netmaker) | `100.121.213.20:5900` | netmaker up |
+
+All three are one server on one port — same desktop, same password, pick whichever
+route reaches the board. A name that resolves but then drops the connection is a
+link problem, not a VNC one.
 
 Password: `kali` (the team default — same as sudo).
+
+**Coming from the pre-flash docs** (2026-10-03, board was hostname `orin`):
+
+| Pre-flash | Now |
+|-----------|-----|
+| `orin`, `192.168.5.215` | the same board's **WiFi** route, now named `orin.xrak` |
+| `100.121.213.15` | dead — netmaker re-addressed to `100.121.213.20` |
+| (no wired name) | `jetson.xrak` / `192.168.5.108`, wired only |
+| `x11vnc` | still `x11vnc` — it was never the thing that changed |
 
 Any stock RFB client works, because this is plain VNC and not a vendor
 protocol: macOS **Screen Sharing** (`vnc://orin.xrak:5900`), Linux
 (`remmina`, `tigervnc-viewer`, `virt-viewer`), Windows (RealVNC / TightVNC /
 UltraVNC, or Remmina). `-ncache 0` is set on purpose — client-side caching
 makes macOS Screen Sharing and several Windows viewers render the desktop wrong.
+
+### SSH on the same three routes
+
+Port 22 behind the same names — drop `:5900`:
+
+```bash
+ssh xrak@jetson.xrak        # wired
+ssh xrak@orin.xrak          # WiFi
+ssh xrak@100.121.213.20     # netmaker
+```
+
+**Key-only.** `PasswordAuthentication no` / `PubkeyAuthentication yes`
+(`sshd_config.d`), and `~/.ssh/authorized_keys` holds two ed25519 keys — so
+`kali` will *not* get you an SSH shell even though it is the sudo and VNC
+password. Nothing in this repo re-enables password SSH; adding a key is the way
+in, not a config change.
+
+### Why `x11vnc` and not `vino` (L4T's `README-vnc.txt` answer)
+
+NVIDIA's `README-vnc.txt` ships `vino-server`, and `vino` was what this board ran
+first. It was replaced on 2026-10-10 after measurement, not preference: **vino
+ignores X DAMAGE inside the requested region**, so an incremental full-screen
+request comes back re-encoded from the whole framebuffer. Against a *static*
+desktop, one `incremental=1` full-screen request:
+
+| Server | rects | pixels sent | share of framebuffer |
+|--------|-------|-------------|----------------------|
+| `vino` 3.22.0 | 19 | 612,777 | **99.7 %** |
+| `x11vnc` | 5 | 1,736 | **0.3 %** |
+
+Ten seconds of the same idle screen, two servers, same client traffic:
+
+| Server | CPU | wire rate |
+|--------|-----|-----------|
+| `vino` | **96.4 %** | 2314 KiB/s (a real MacBook saw **19.8 Mbit/s**) |
+| `x11vnc` | 1.6 % | 42 KiB/s |
+
+So `vino` saturated a core to ship a screen that had not changed. 3.22.0-6ubuntu5
+is noble's newest, so there is no upstream fix to wait for. The running service
+now measures **0.1 % CPU over 10 s** with no client connected. The desktop itself
+was ruled out as the cause — `gnome-shell` 6.5 %, `Xorg` 6.1 %, TCP clean
+(`retrans 0/1012`) — and `-xdamage` was confirmed safe under GNOME Shell's
+compositor (29.2 updates/s, 8.9 % CPU on a moving screen) despite x11vnc's own
+warning about it.
+
+`vino` is not uninstalled, just stopped and its autostart renamed to
+`~/.config/autostart/vino-server.desktop.disabled` — it carries
+`X-GNOME-AutoRestart=true`, so killing it alone would let it revive and fight for
+port 5900.
 
 ### VNC vs. the camera — read before you log in
 
@@ -244,6 +319,36 @@ and no GPU memory; the desktop is what costs. So:
   its own against the new `:1`.
 
 So "VNC is down" after a `headless` is the expected state, not a fault.
+
+### If the touchscreen goes dark
+
+Most often it is not a fault: the board rebooted (or gdm restarted), nobody has
+logged in yet — autologin is deliberately off — and the greeter idle-blanks after
+`org.gnome.desktop.session idle-delay` (**300 s** for the `gdm` user, vs 900 s for
+a real session). Touching the panel and typing the password brings it back; the
+reboot itself is the thing worth explaining, not the darkness.
+
+**Which state signals to trust — measured 2026-10-10 with the panel confirmed lit
+by eye:**
+
+| Signal | Reading while the screen was on | Trust it? |
+|--------|--------------------------------|-----------|
+| `/sys/class/drm/card2-DP-1/{dpms,enabled}` | `Off` / `disabled` | **No** |
+| `/sys/kernel/debug/dri/2/state` CRTCs | `active=0` | **No** |
+| `xrandr` | `DP-1 connected primary 1024x600+0+0  60.06*` | yes |
+| `xset q` | `Monitor is On` | yes |
+| `xwd -root` brightness | mean ≈ 131, 66 % non-black | yes |
+
+`card2` is `nv_platform (13800000.display)` — the *tegra* DRM. The NVIDIA
+proprietary driver drives the panel through its own path, so tegra's CRTCs stay
+`active=0` **by design**, and its connector attributes never follow the real
+panel. Diagnosing a dark screen from those files sends you in a circle (it cost a
+lot of this session's time); use `xrandr` / `xset` / a framebuffer capture, or
+just look at the panel.
+
+Also expect X to move: `:0` is the greeter on vt1, `:1` the logged-in session on
+vt2, each with its own `Xauthority`. `x11vnc` follows automatically (see the
+wrapper below).
 
 ### Why a wrapper script
 
@@ -284,7 +389,7 @@ sudo x11vnc -storepasswd <pw> /etc/x11vnc.pass   # to rotate the password
 To check it without a GUI client, the handshake plus auth can be driven from the
 command line (openssl's legacy provider does the VNC DES): the server should
 answer `RFB 003.008`, offer security type `2`, accept `kali`, and return a
-`1024x600` `ServerInit` with desktop name `xrak:1`.
+`1024x600` `ServerInit` with desktop name `jetson:1`.
 
 ## Hardware target
 

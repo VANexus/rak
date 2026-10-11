@@ -2,8 +2,9 @@
 """Check package boundaries; --installed also resolves launch files without starting nodes.
 
 Structure per ADR-0013: all owned packages live in src/ (no brain/ special case,
-CAN v3 stack retired to attic/), rak_agent is the decision layer and must have
-zero dependents, and the task-intent contract lives in rak_intent.
+CAN v3 stack retired; the local attic/ archive was deleted 2026-10-10), rak_agent is the
+decision layer and must have zero dependents, and the task-intent contract lives in
+rak_intent.
 """
 
 from __future__ import annotations
@@ -177,7 +178,20 @@ def check_installed(found) -> None:
 
     agent_node = Path(get_package_prefix("rak_agent")) / "lib/rak_agent/agent_node"
     assert agent_node.is_file(), f"missing ROS console entry point: {agent_node}"
-    assert "rak_agent.node" in agent_node.read_text(), "agent_node is not a ROS console entry point"
+    # Verify the entry point by resolving it, not by string-matching the script:
+    # with the setuptools EASY-INSTALL form, colcon's generated console script
+    # (plain and --symlink-install alike) contains only the distribution/entry-point
+    # spec, never the literal module path. Resolution is generation-independent.
+    from importlib.metadata import distribution as _distribution
+
+    entry_points = {
+        ep.name: ep.value
+        for ep in _distribution("rak-agent").entry_points
+        if ep.group == "console_scripts"
+    }
+    assert entry_points.get("agent_node") == "rak_agent.node:main", (
+        f"agent_node is not the rak_agent.node:main console entry point: {entry_points!r}"
+    )
     result = subprocess.run(
         [sys.executable, str(ROOT / "src/rak_agent/test/test_ros_smoke.py")],
         cwd="/tmp", text=True, capture_output=True, timeout=60,

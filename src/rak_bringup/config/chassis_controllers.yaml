@@ -23,7 +23,7 @@ joint_state_broadcaster:
 mecanum_drive_controller:
   ros__parameters:
     use_sim_time: false
-    # [AI] ADR-0002/0007：odom->base_link TF 归 rf2o/EKF，控制器不发布
+    # [AI] ADR-0002/0007：odom->base_footprint TF 归 rf2o/EKF，控制器不发布
     enable_odom_tf: false
     tf_frame_prefix_enable: false
     # 引用超时：无新鲜 /reference 输入 0.5s 后自动置零（安全停轮）。

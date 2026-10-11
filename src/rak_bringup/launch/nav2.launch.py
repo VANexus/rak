@@ -81,7 +81,7 @@ def generate_launch_description():
             description="Final /cmd_vel adapter; none leaves it to an outer bringup.",
         ),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
-        DeclareLaunchArgument("lidar_z", default_value="0.0"),
+        DeclareLaunchArgument("lidar_z", default_value="0.10"),
         DeclareLaunchArgument("odom_source", default_value="rf2o", choices=["rf2o", "ekf", "none"]),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(nav_share, "launch", "slam.launch.py")),

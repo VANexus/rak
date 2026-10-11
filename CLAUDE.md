@@ -51,7 +51,8 @@ smoke-tested against the F407, firmware R37); arm position interfaces, the arm c
 the gripper axis are not implemented. Its transport seam is the `Session` abstraction:
 `SerialSession` (USB v2, frozen backup) and `CanSession` (SocketCAN CAN v4, primary) behind a
 `transport:=usb\|can` factory. The retired CAN v3 host stack (`rak_can_driver`,
-`rak_serial_link`) is archived in `attic/` (ADR-0012/0013, COLCON_IGNORE) — do not build on
+`rak_serial_link`) was deleted from the tree on 2026-10-10 (was `attic/`, ADR-0012/0013) —
+it lives only in git history; do not build on
 it, and do not assume `rak_base_driver`'s node survives ADR-0007 (its USB v2 codec does: the
 commissioning TUIs depend on it).
 
@@ -70,7 +71,7 @@ Two facts that are easy to get wrong:
   scale all four wheel speeds by one factor when any exceeds the limit — never clamp axis-by-axis,
   or diagonal driving becomes straight driving (ADR-0007 D6).
 - **`enable_odom_tf: false` and an explicit `reference_timeout`** are required once the controller
-  exists, or it fights the EKF for `odom→base_link` (ADR-0002/0007 D4).
+  exists, or it fights the EKF for `odom→base_footprint` (ADR-0002/0007 D4).
 
 ## Layout
 
@@ -95,10 +96,9 @@ lives there; the 2026-10-09 regroup maps 23 packages → 18 buildable + 2 archiv
 | `src/rak_moveit_config` | SRDF, IK, planning config: `demo.launch.py` (legacy five-axis) + `six_axis_sim.launch.py` (fixture). No real trajectory execution path |
 | `src/rak_arm_simulation` | Software-only six-axis trajectory/gripper Action servers (exec `fake_joint_controllers`). No physics, no hardware interface |
 | `src/rak_motion_stub` | Test-only `/cmd_vel` → `/cmd_vel_raw` relay (`cmd_vel_stub`). Not a hardware driver |
-| `src/rak_speech` | Offline ASR (`asr_node`, Vosk) → transcript + intent via `rak_intent`. Never sends goals itself |
+| `src/rak_speech` | Offline ASR (`asr_node`, Vosk) → transcript + intent via `rak_intent`; R818 board bridge (`vtn_node` → `/speech/wake` WakeEvent + latched `/speech/vtn_ready`, codec `vtn_protocol.py` unit-tested) and offline TTS (`tts_node` → `/audio_out` → `audio_play`). Never sends goals itself. Audio in: `/audio` (`audio_common_msgs/AudioData`, `source:=topic`) or a direct `arecord` device; array/board measurements + speed budgets in `docs/microphone_array.md` |
 | `src/rak_bringup` | The single composition layer: all launch (`agent`, `task_navigation`, `base_uart`, `chassis_bringup`, `slam`, `nav2`, `lidar`, `astra`, `depth_camera`, `gemini335l`, `stereo`), params, udev, DDS config, operator scripts (absorbed `rak_sensor_bringup`, `rak_navigation`, `rak_chassis_bringup`) |
 | `src/rak_agent` | (ex `brain/`) Decision layer. `ament_python` ROS package `rak_agent`, module `rak_agent`; system Python runtime; episode corpus at repo-root `data/episodes/` |
-| `attic/` | Retired CAN v3 stack (`rak_can_driver`, `rak_serial_link`), `COLCON_IGNORE`, not built |
 | `src/vendor/*` | Leishen lidar + `rf2o`. Third-party, **read-only** |
 
 `depth` / `mind` / `world` / `forge` / `nerve` are roadmap names; they do not exist here.
@@ -165,6 +165,7 @@ ros2 launch rak_description view_urdf.launch.py
 ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
 ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 ros2 run rak_stereo_driver stereo_node
+ros2 launch rak_bringup speech.launch.py    # array: capture->ASR, board wake->/speech/wake, /speech/say->speaker
 sudo scripts/rak-mode.sh status | headless | desktop   # board memory/DMA mode
 ```
 
@@ -254,7 +255,7 @@ de-facto bringup:
 `lidar → laser_filters → rf2o → slam_toolbox (/map, map→odom) → nav2 → /cmd_vel → cmd_vel_stub → /cmd_vel_raw`.
 The stub forwards Nav2's unicycle `Twist` verbatim. `odom_source` is the seam for odometry
 sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you must supply
-`odom→base_link` yourself, and set rf2o `publish_tf: false` when you do, or both publish it).
+`odom→base_footprint` yourself, and set rf2o `publish_tf: false` when you do, or both publish it).
 
 ## Constraints that are easy to break
 
@@ -312,8 +313,8 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   (`../vehical_rak_chassis/docs/PROTOCOL.md`, **CAN v4** since 2026-10-09; v3 retired), not
   this one. The bus is classic CAN 2.0A @ 1 Mbps — never pass `fd on` (the F407 bxCAN would
   error-frame an FD frame). The host-side v4 implementation is `CanSession` in
-  `src/rak_chassis`; `attic/rak_can_driver` / `attic/rak_serial_link` are the retired v3
-  stack, not live.
+  `src/rak_chassis`; the retired v3 stack (`rak_can_driver` / `rak_serial_link`) lives only
+  in git history since the 2026-10-10 `attic/` deletion, not live.
 
 ## Gotchas
 
@@ -324,7 +325,10 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   stops and disables gdm. GUI launchers (RViz/MoveIt) require `desktop`; the migrated
   sensor/navigation scripts do not. Autologin is off, so returning to the desktop means
   typing the password at the touchscreen once. (VNC via `x11vnc` attaches to whatever display
-  GDM runs; see `README.md`.)
+  GDM runs; see `README.md` for the three routes. **`vino` — what L4T's `README-vnc.txt`
+  recommends — is installed but stopped**, autostart renamed to `vino-server.desktop.disabled`:
+  re-enabling it makes it fight `x11vnc` for port 5900, and it burns a core anyway — it ignores
+  X DAMAGE in the requested region, so an idle screen still ships 99.7 % of the framebuffer.)
 - **The host memory picture changed on 2026-10-05** (`docs/CONSTRUCTION.md` §2.2, not in git):
   zram (zstd ~1.7 G) + a 4 G swapfile now exist, so "out of memory" is less immediately fatal
   than this file previously implied. **swap/zram are not real-time guarantees** — the ~158 ms

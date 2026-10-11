@@ -34,7 +34,7 @@ def generate_launch_description():
         DeclareLaunchArgument("llm_config_path", default_value=""),
         DeclareLaunchArgument("llm_vendor", default_value=""),
         DeclareLaunchArgument("waypoints_file", default_value=""),
-        DeclareLaunchArgument("lidar_z", default_value="0.0"),
+        DeclareLaunchArgument("lidar_z", default_value="0.10"),
         DeclareLaunchArgument("odom_source", default_value="rf2o", choices=["rf2o", "ekf", "none"]),
         # Hardware-backend passthrough (only consumed when motion_backend:=hardware).
         DeclareLaunchArgument("port", default_value="/dev/wheel_motor"),

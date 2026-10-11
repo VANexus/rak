@@ -13,10 +13,11 @@ The arm board burned out. There is now **one** F407 driving 4 wheels + 7 servos.
 protocol v4 in the leaf repo); USB v2 is the frozen backup, selectable via `transport:=usb|can`
 behind the `Session` abstraction in `src/rak_chassis`. Upper layers never see which transport
 is active. **2026-10-09 (ADR-0013): the workspace was regrouped by subsystem** — 23 → 18
-buildable packages, `brain/` moved to `src/rak_agent`, CAN v3 stack retired to `attic/`.
+buildable packages, `brain/` moved to `src/rak_agent`, CAN v3 stack retired (local `attic/`
+archive deleted 2026-10-10 — the code lives only in git history).
 
 - `docs/adr/*` are immutable (append/supersede only), indexed by `docs/adr/README.md`.
-  **ADR-0007 supersedes ADR-0001**; the valid set is 0002 + 0003 (v4 layer) + 0004–0013.
+  **ADR-0007 supersedes ADR-0001**; the valid set is 0002 + 0003 (v4 layer) + 0004–0015.
   **ADR-0011 (WBC/HQP motion arbitration) was accepted 2026-10-08**: `src/rak_wbc`
   (ament_python skeleton + desktop numeric tests) exists; arm interfaces and measured
   masses/geometry remain hard gates — read its closed items before wiring hardware.
@@ -31,9 +32,10 @@ buildable packages, `brain/` moved to `src/rak_agent`, CAN v3 stack retired to `
   exist yet. `src/rak_moveit_config/test/validate_six_axis_sim.py:36` still asserts the
   six-axis **sim fixture** URDF contains no `<ros2_control>` tag — that fixture is not the
   real arm.
-- `attic/rak_can_driver` and `attic/rak_serial_link` are the retired **CAN v3 host stack**
-  (ADR-0012/0013): archived behind `attic/COLCON_IGNORE`, not built, not maintained.
-  The live CAN path is the `CanSession` backend inside `src/rak_chassis`.
+- The **CAN v3 host stack** (`rak_can_driver`, `rak_serial_link`) is retired (ADR-0012/0013);
+  the local `attic/` archive was **deleted on 2026-10-10** — the code lives only in git
+  history (retrievable at commit `4f34795` and earlier). The live CAN path is the
+  `CanSession` backend inside `src/rak_chassis`.
 - Docs disagree by date, not correctness. The 2026-10-04 set (`README.md`,
   `docs/architecture.md`, `docs/project_status.md`) describes the code as it stands;
   `TODO.md`, `docs/CONSTRUCTION.md` and `docs/adr/0007` describe the accepted target.
@@ -68,7 +70,14 @@ package boundaries. 18 buildable packages, every one with a real responsibility:
   depends on `rak_intent`, never on `rak_agent`.
 - `src/rak_intent`: shared versioned text→intent contract (stdlib-only at import time);
   consumed by task executor and speech (ADR-0013).
-- `src/rak_speech`: offline ASR (`asr_node`) + intent publishing over `rak_intent`.
+- `src/rak_speech`: offline ASR (`asr_node`) + intent publishing over `rak_intent`; the R818
+  array board bridge (`vtn_node`: adb-tunneled vtn socket → `/speech/wake` WakeEvent +
+  latched `/speech/vtn_ready`, frame codec `vtn_protocol.py` is unit-tested) and offline TTS
+  (`tts_node`: `/speech/say` Say service → sherpa-onnx → `/audio_out` → `audio_play`).
+  Audio in is `audio_common_msgs/AudioData` on `/audio` (`source:=topic`, published by
+  `audio_capture` in `rak_bringup speech.launch.py`) or a direct `arecord` device; the
+  six-mic array's measured facts, the board protocol and the decode/synthesis speed budget
+  live in `docs/microphone_array.md`.
 - `src/rak_wbc`: velocity-level whole-body arbitration (ADR-0011): ament_python standalone
   node `wbc_node` — single regular motion writer for base + arm; skeleton + desktop numeric
   tests exist, hardware wiring gated by the ADR's closed items. Fixtures/smoke:
@@ -82,8 +91,6 @@ package boundaries. 18 buildable packages, every one with a real responsibility:
 - `src/rak_agent`: (ex `brain/`) the decision layer, ROS package `rak_agent`, module
   `rak_agent`. Episode corpus at repo-root `data/episodes/` (gitignored). Only `rak_bringup`
   may depend on it (it launches `agent_node`); check_workspace enforces this.
-- `attic/`: retired CAN v3 stack (`rak_can_driver`, `rak_serial_link`), COLCON_IGNORE,
-  protocol archaeology only.
 - `src/vendor`: third-party code, read-only.
 
 Target arm: six positioning joints plus an independent gripper. The real six-axis geometry,
@@ -110,6 +117,7 @@ ROS_DOMAIN_ID=77 python3 -m pytest src/rak_task_executor/test src/rak_arm_simula
 ROS_DOMAIN_ID=77 PYTHONPATH=src/rak_base_driver:$PYTHONPATH python3 -m pytest src/rak_base_driver/test
 ros2 run rak_stereo_driver stereo_node
 ros2 launch rak_bringup lidar.launch.py
+ros2 launch rak_bringup speech.launch.py  # array: capture -> ASR, board wake -> /speech/wake, /speech/say -> speaker
 
 # Memory/DMA mode of the board itself: status | headless | desktop (needs sudo; see Gotchas)
 sudo scripts/rak-mode.sh headless
@@ -136,6 +144,11 @@ Each command above has a known, unrelated way to fail:
   packages still build. Their absence also makes `stereo_node` / `lidar.launch.py` fail
   with "package not found", and leaves a partial install entry, so sourcing prints
   `not found: .../local_setup.bash` (harmless).
+  **On a clean tree (empty `build/architecture`+`install/architecture`) `--packages-skip` is
+  not enough**: a skipped dep that an included package declares (`rak_bringup` →
+  `rak_astra_driver`) makes colcon fail sourcing its `package.sh`. Use
+  `--packages-ignore rak_astra_driver` instead — the dep drops out of the graph and the rest
+  builds (2026-10-11: 23 packages, exit 0, with only the Orbbec SDK absent).
 - **`check_workspace.py` is structure law (ADR-0013)**: at HEAD it exits 0. If it fails,
   fix the structure (package.xml deps, launch references, frozen boundaries), never the
   assertion. Historical note: before the 2026-10-09 regroup it failed on its own stale
@@ -143,9 +156,10 @@ Each command above has a known, unrelated way to fail:
 - **`PYTHONPATH=src/rak_base_driver` replaces ROS's own PYTHONPATH** →
   `ModuleNotFoundError: No module named 'rclpy'`. Append `:$PYTHONPATH`; putting
   `src/...` first also makes pytest test your edits without a rebuild.
-- **`test_protocol.py` exists in `rak_base_driver` and in the attic packages**. Two in one
-  pytest run → `ImportPathMismatchError`, even with `--import-mode=importlib`. Run one
-  package per invocation, or `colcon test --packages-select`, which isolates them.
+- **`test_protocol.py` duplicates are a pytest hazard**: `rak_base_driver` has one, and the
+  retired CAN v3 stack (git history only since 2026-10-10) had another. Two in one pytest
+  run → `ImportPathMismatchError`, even with `--import-mode=importlib`. Run one package per
+  invocation, or `colcon test --packages-select`, which isolates them.
 - **ROS pytest needs the install overlay sourced** — `rak_interfaces` exists only there.
   `ROS_DOMAIN_ID=77` keeps it off runtime domain 47, which `~/.bashrc` pins for the operator.
   `colcon test` on `rak_moveit_config` fails `legacy_srdf` until `python3-defusedxml`
@@ -204,11 +218,11 @@ caveats above.
   before ARM; zero is not pass-through. UART v1 is a proposed host protocol; this repository
   has no matching F407 firmware. PTY tests do not prove device compatibility.
   Never change defaults to ARM as a shortcut.
-- **`attic/rak_serial_link`'s `serial_link_node` opens hardware unconditionally** (retired
-  CAN v3 over UART): its `port` parameter defaults to `/dev/wheel_motor` at 921600 and is
-  opened in `__init__` with no `allow_hardware` gate. It is not built anymore — do not
-  resurrect it from `attic/` onto a machine where that device exists unless you mean to
-  own the port.
+- The retired **CAN v3 `serial_link_node`** (git history only since 2026-10-10, was
+  `attic/rak_serial_link`) opens hardware unconditionally: its `port` parameter defaults to
+  `/dev/wheel_motor` at 921600 and is opened in `__init__` with no `allow_hardware` gate.
+  Do not resurrect it from git history onto a machine where that device exists unless you
+  mean to own the port.
 - The six-axis MoveIt fixture and `rak_arm_simulation` action servers are software-only.
   They contain test geometry/limits and must not be connected to hardware.
 - **Two LLM keys, two providers.** RAI's slow path reads `OPENAI_API_KEY` (SiliconFlow,

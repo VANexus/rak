@@ -2,7 +2,7 @@
 #
 # This file deliberately mentions only the `odom` and `base_link` frame names
 # and nothing about where odometry comes from. That is the whole point: the
-# robot currently has no wheel encoders and no IMU, so `odom -> base_link` is
+# robot currently has no wheel encoders and no IMU, so `odom -> base_footprint` is
 # published by rf2o (laser scan matching). When the encoders and IMU arrive it
 # will be published by a robot_localization EKF instead -- and this file does
 # not change. Keep it that way; putting an rf2o-specific parameter here is what
