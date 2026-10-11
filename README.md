@@ -9,6 +9,9 @@
 [USB/UART v2 规范](docs/protocol/usb_serial_v2.md)。
 包重命名不代表硬件已工程化；下面明确区分现有功能和后续规划。
 
+点云抓取开发入口：[离线 GraspNet、RViz 与隔离仿真](docs/grasp_perception.md) ·
+[抓取验收记录](docs/grasp_validation.md)。
+
 ## 工程布局
 
 自有 ROS 包采用 `rak_` 前缀，按职责而非拟人化名称划分。
@@ -20,6 +23,7 @@
 | `src/rak_stereo_driver` | 双目采集；nvJPEG 解码后拷回主机发布 ROS 图像 |
 | `src/rak_astra_driver` | Astra 深度相机适配，保留为 Gemini 的可替换后端 |
 | `src/rak_pointcloud` | GPU 点云节点（`gpu_pointcloud_node`） |
+| `src/rak_grasp_perception` | 同步 RGB-D 快照、离线 GraspNet 候选、RViz ROI 与隔离规划预览；GPU 和实物验收进行中 |
 | `src/rak_description` | URDF、几何、惯量、可视化；当前仍是旧五轴演示模型 |
 | `src/rak_task_executor` | 唯一导航任务状态机；文字、暂停、恢复、取消和仿真 Nav2；依赖 `rak_intent` |
 | `src/rak_intent` | 共享的版本化文本→意图契约；task executor 与 speech 共同使用 |

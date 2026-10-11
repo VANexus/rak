@@ -1,0 +1,57 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Selection
+    Name: Selection
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: camera_depth_optical_frame
+    Background Color: 30; 30; 30
+  Displays:
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Scene
+      Enabled: true
+      Topic:
+        Value: /grasp/scene
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+      Color Transformer: RGB8
+      Size (m): 0.003
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Grasp candidates
+      Enabled: true
+      Topic:
+        Value: /grasp/markers
+        Durability Policy: Transient Local
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Name: ROI and selection
+      Enabled: true
+      Update Topic: /grasp_interactive/update
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+    - Class: moveit_rviz_plugin/Trajectory
+      Name: Simulation planned trajectory
+      Enabled: true
+      Robot Description: robot_description
+      Trajectory Topic: /grasp/display_planned_path
+      Loop Animation: true
+      State Display Time: 0.1 s
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 3.0
+      Pitch: -1.4
+      Yaw: 4.712
+      Focal Point:
+        X: 0.0
+        Y: 0.0
+        Z: 1.0
+Window Geometry:
+  Width: 1280
+  Height: 800

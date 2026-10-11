@@ -1,0 +1,10 @@
+# Example only: edit the VIRTUAL placement for the software fixture.
+# It is not a measured transform and must never be used for physical motion.
+simulation_only: true
+source_frame: camera_depth_optical_frame
+target_frame: base_link
+matrix:
+  - [0.0, 0.0, 1.0, -1.9]
+  - [-1.0, 0.0, 0.0, 0.0]
+  - [0.0, -1.0, 0.0, 0.35]
+  - [0.0, 0.0, 0.0, 1.0]

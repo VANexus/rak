@@ -9,6 +9,9 @@ find_package(vision_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/GraspCandidate.msg"
+  "msg/GraspCandidates.msg"
+  "srv/SelectGrasp.srv"
   "msg/TrackedObject.msg"
   "msg/TrackedObjects.msg"
   "msg/Action.msg"

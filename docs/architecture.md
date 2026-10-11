@@ -65,6 +65,7 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_stereo_driver` | V4L2、nvJPEG、图像发布 | 目标识别、导航目标选择 |
 | `rak_astra_driver` | Astra SDK 与 ROS 数据转换 | 世界状态、抓取规划 |
 | `rak_pointcloud` | GPU 点云节点 | 感知策略、任务规划 |
+| `rak_grasp_perception` | RGB-D 快照、离线候选、RViz 选择、只规划的六轴夹具预览 | 实体执行、在线模型服务、夹持力推断 |
 | `rak_description` | URDF、几何、惯量与可视化 | 导航参数、模型策略 |
 | `rak_intent` | 共享版本化文本→意图契约（stdlib-only） | 决策、动作执行、RAI 会话 |
 | `rak_task_executor` | 单一任务状态机、Nav2 Action 生命周期；意图解析来自 `rak_intent` | 原始底盘/关节命令、感知算法 |

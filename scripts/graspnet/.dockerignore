@@ -1,0 +1,7 @@
+*
+!graspnet-baseline
+!graspnet-baseline/**
+!graspnetAPI
+!graspnetAPI/**
+!compat.py
+!Dockerfile
