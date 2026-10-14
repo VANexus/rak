@@ -1,6 +1,7 @@
 // astra_bridge_node.cpp — Orbbec Astra S → ROS2 Jazzy bridge (Orbbec SDK 1.10.18)
 // Lists all stream profiles for debugging, enables the best color+depth streams.
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_components/register_node_macro.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <libobsensor/ObSensor.hpp>
@@ -14,16 +15,23 @@
 
 class AstraBridgeNode : public rclcpp::Node {
 public:
-  AstraBridgeNode() : Node("astra_bridge_node"), pipe_() {
+  // 组件化 (L2, 2026-10-14): NodeOptions 让 launch_ros 的 ComposableNode 能传
+  // use_intra_process_comms 等选项; 默认构造保持向后兼容, 独立可执行行为不变。
+  explicit AstraBridgeNode(const rclcpp::NodeOptions &opts = rclcpp::NodeOptions())
+      : Node("astra_bridge_node", opts), pipe_() {
     declare_parameter("color_frame_id", "camera_color_frame");
     declare_parameter("depth_frame_id", "camera_depth_frame");
     color_frame_id_ = get_parameter("color_frame_id").as_string();
     depth_frame_id_ = get_parameter("depth_frame_id").as_string();
 
-    color_pub_      = this->create_publisher<sensor_msgs::msg::Image>("/camera/color/image_raw", 10);
-    depth_pub_      = this->create_publisher<sensor_msgs::msg::Image>("/camera/depth/image_raw", 10);
-    color_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/color/camera_info", 10);
-    depth_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/depth/camera_info", 10);
+    // 图片/CameraInfo 是传感流: best-effort (SensorDataQoS) —— 陈旧帧比缺口更糟,
+    // 且与 rak_stereo_driver 的既有约定、ADR-0014 和 docs/perf/ipc_baseline.md §3.1 一致
+    // (reliable 发布方一旦遇到 reliable 消费者会触发重传风暴, 实测 p99 108ms)。
+    // 在仓消费者 (gpu_pointcloud BE、grasp capture BE、sensors_rviz Image=Best Effort) 全部兼容。
+    color_pub_      = this->create_publisher<sensor_msgs::msg::Image>("/camera/color/image_raw", rclcpp::SensorDataQoS());
+    depth_pub_      = this->create_publisher<sensor_msgs::msg::Image>("/camera/depth/image_raw", rclcpp::SensorDataQoS());
+    color_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/color/camera_info", rclcpp::SensorDataQoS());
+    depth_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/depth/camera_info", rclcpp::SensorDataQoS());
 
     auto dev = pipe_.getDevice();
     auto sensor_list = dev->getSensorList();
@@ -495,6 +503,10 @@ private:
   ob::FormatConvertFilter color_converter_;
   ob::Pipeline pipe_;
 };
+
+// 组件注册: 供 component_container 以 "AstraBridgeNode" 加载 (L2, 2026-10-14)。
+// 下方 main() 仍保留, 由 CMake 生成的同名独立可执行使用组件路径, 行为等价。
+RCLCPP_COMPONENTS_REGISTER_NODE(AstraBridgeNode)
 
 int main(int argc, char ** argv) {
   rclcpp::init(argc, argv);

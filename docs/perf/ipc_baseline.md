@@ -48,15 +48,17 @@
 
 ## 3. 立即可做的 L1 改动清单（按收益/风险排序）
 
-### 3.1 图片流 QoS（best_effort）—— 需与驱动改动协调，暂缓
-- 现状：`astra_bridge` 的图片/CameraInfo 发布者用 `create_publisher<Image>(topic, 10)` = **reliable**；
+### 3.1 图片流 QoS（best_effort）—— ✅ 已实施（2026-10-14 晚，第 2 轮）
+- 原状：`astra_bridge` 的图片/CameraInfo 发布者用 `create_publisher<Image>(topic, 10)` = **reliable**；
   在仓消费者（`gpu_pointcloud`）已经是 `QoS(1).best_effort().durability_volatile()`。
-- **RxO 规则**：reliable 写方 + best-effort 读方 = 兼容（现状可跑）；**反过来（BE 写方 + reliable 读方）不匹配**。
-  即：今天不会有事，只有当**某个 reliable 消费者**（如某些 RViz 配置/录制工具）订阅时才会触发重传风暴
+- **RxO 规则**：reliable 写方 + best-effort 读方 = 兼容（原状可跑）；**反过来（BE 写方 + reliable 读方）不匹配**。
+  即：以前不会有事，只有当**某个 reliable 消费者**（如某些 RViz 配置/录制工具）订阅时才会触发重传风暴
   （实测 reliable-reliable 组合 p99 108 ms）。
-- 动作：把发布者改成 `rclcpp::SensorDataQoS()`（与 `rak_stereo_driver` 既有约定、ADR-0014 一致）。
-  **⚠ 该文件（`astra_bridge_node.cpp`）当前有另一会话的在制品（2026-10-14 15:08）**，
-  为避免冲突，此改动**待其落定后合入**。
+- **落定**：`astra_bridge_node.cpp` 于 2026-10-14 20:13（提交 `453be87`）落定在制品，本晚随即改为
+  `rclcpp::SensorDataQoS()` ×4（与 `rak_stereo_driver` 既有约定、ADR-0014 一致）。
+  兼容性复核：在仓全部图像消费者为 BE（`gpu_pointcloud` BE1、grasp `capture.py`
+  `qos_profile_sensor_data`），`sensors_rviz.rviz` 的两个 Image display 显式 **Best Effort** —— 无一被破坏。
+  实测（容器 + astra 冒烟）：`/camera/depth/image_raw` 发布方 = BEST_EFFORT KEEP_LAST(5) ✓。
 
 ### 3.2 内核 UDP 缓冲上限持久化 —— ✅ 已实施（2026-10-14）
 - 原状：`net.core.rmem_max = wmem_max = 212992`（208 KB）→ 已写入
@@ -131,7 +133,7 @@ cd ~/ipc_bench_ws && source /opt/ros/jazzy/setup.bash && colcon build --packages
 |---|---|---|
 | ② 内核缓冲持久化 | ✅ 已实施 | `/etc/sysctl.d/99-rak-ipc.conf`（16 MB，开机生效） |
 | ③ CycloneDDS MaxMessageSize | ✅ 已实施 | `src/rak_bringup/config/cyclonedds.xml`（分片 −4×；延迟增益在噪声内） |
-| ① 图片流 QoS | ⏸ 暂缓（在制文件冲突） | 待 `astra_bridge_node.cpp` 的在制品落定后改 SensorDataQoS |
+| ① 图片流 QoS | ✅ 已实施（第 2 轮，2026-10-14 晚） | `astra_bridge_node.cpp` ×4 发布方改 `SensorDataQoS`，消费者/ RViz 兼容性复核见 §3.1 |
 | ④ 彩色/驱动契约 | 🔄 另一会话在制 | 其改动已含"逐组合试 + 纯深度退化"（与本建议一致） |
 | **L2 组件化（gpu_pointcloud）** | ✅ 已组件化 + 容器实测 | `rak_pointcloud`（组件库 + 同名可执行 + `perception_container.launch.py`） |
 | L2 并入 astra/stereo | ⏳ 待 astra 在制品落定 | 四步配方见容器 launch 头注释 |
@@ -139,3 +141,71 @@ cd ~/ipc_bench_ws && source /opt/ros/jazzy/setup.bash && colcon build --packages
 回归（61 MB/s 跨进程，②③ 生效后）：**240/240 零丢帧**、p50 3.56 ms、p99 8.85 ms、CPU 8%+5%；
 92 MB/s：145/240（**彩色档结构性丢帧，与 ②③ 无关**，根治=组件化零拷贝或关掉彩色）；
 单进程 intra：240/240、p50 0.18 ms、CPU 3%。
+
+## 8. QoS 审计（2026-10-14 晚，第 2 轮）
+
+静态（全仓 `create_publisher/subscription`）+ 实机（`ros2 topic info -v`）对照，判定规则按 RxO：
+**reliable 写 + BE 读 = 兼容；BE 写 + reliable 读 = 断**。
+
+| 端点 | 发布 QoS | 订阅 QoS | 判定 |
+|---|---|---|---|
+| astra `/camera/{color,depth}/{image_raw,camera_info}` ×4 | ~~reliable(10)~~ → **SensorDataQoS(BE5)**（本轮） | BE | ✅ 已统一 |
+| stereo `eye/*` ×4 | SensorDataQoS(BE5) | — | ✅（ADR-0014 约定） |
+| `gpu_pointcloud` 深度/相机信息订 + 点云发 | BE1 volatile | — | ✅ 传感语义 |
+| grasp `capture.py` 订图像/信息 | — | `qos_profile_sensor_data`(BE) | ✅ 与两种相机发布方均兼容 |
+| `sensors_rviz.rviz` 两个 Image display | — | 显式 Best Effort | ✅ 与 BE 发布匹配 |
+| `joint_state_broadcaster` → `/joint_states` | RELIABLE(1) | `robot_state_publisher` BE5 | ✅ 控制类语义用 reliable 正确，RE→BE 兼容 |
+| `lslidar` → `/scan_raw`（vendor，只读） | 默认 reliable(10) | `laser_filters` BE5 | ✅ 可用；不改 vendor |
+| `rak_agent` `/brain/decision` | RELIABLE(10) | — | ✅ 执行类语义（注释明确"consumer is an actuator"） |
+| `rak_agent` perception 仿真流 | BE1 | BE1 | ✅ "only the newest frame matters" |
+| `spi_imu` `/imu/data_raw` | 默认 reliable(10) | rviz 等默认 reliable | ⚠ 有意保留：改 BE 会断掉默认 reliable 的 RViz 消费者，收益仅一致性 |
+| speech/audio/控制类 String、AudioData | 默认 reliable | — | ✅ 小载荷、控制语义 |
+
+**结论：无在场的 RxO 断裂**；唯一实质项（astra reliable→BE）本轮落地。两项"偏差"是**有意保留**
+（IMU/lidar 的 reliable 默认——消费者兼容优先于风格统一）。
+
+## 9. 第 2 轮实施记录 + 复测（2026-10-14 晚）
+
+**复测基线**（先订后发口径，修正 `run_matrix.sh` 先发后订造成的 rx≤195 天花板陷阱——见 §6 教训，
+该脚本未随 §6 修正，比较结论必须用先订后发的数字）：
+
+| 用例 | 本轮实测 | 报告 §2 口径 |
+|---|---|---|
+| A 61 MB/s Cyclone BE5（先订后发） | **239/239 全交付**，p50 2.34 / p99 5.47 ms，CPU 7%+4% | 240/240，p50 3.68 |
+| B 92 MB/s Cyclone BE5（先订后发） | **237/240（98.8%）**，p50 3.58 / p99 8.59 ms | 143/240（60%）✗ 差异见下 |
+| intra 单进程 | 240/240，p50 **0.15 ms**，CPU 2% | 240/240，p50 0.14 |
+
+- **92 MB/s 的"结构性丢 40%"本轮未复现**（两次不同口径均 ~99% 交付）。机器状态（当时 15:19 有并发
+  构建/负载）比配置更能解释差异 → 该档应记为**负载敏感的边际档**，不是恒定丢帧；决策（组件化/关彩色）
+  不变，但理由从"必丢"改为"高负载下会丢"。
+- 环境：MemAvailable ~420 MB、swap 2.9 GB 在用、CmaFree≈0（桌面会话）、load ~1.1 —— 基线均在此状态测得。
+
+**L2 组件化（第 2 轮落地）**：
+- `rak_astra_driver` 完成四步组件化（`AstraBridgeNode(NodeOptions)` + `RCLCPP_COMPONENTS_REGISTER_NODE`
+  + CMake 组件库/同名 `astra_node` 双产物 + `rclcpp_components` 依赖），同一改动里带上 §3.1 的
+  SensorDataQoS ×4；`libOrbbecSDK` 的 RUNPATH 挂在组件库上（容器 dlopen 路径）。
+- `perception_container.launch.py` 新增门控：`camera:=none|astra`、`stereo:=false|true`，
+  与 `intra` 求与（`_pair`；只用组件条件做 If/Unless 会把 intra 开关弄丢——本轮踩过，已修）。
+  `rak_pointcloud/package.xml` 补 `exec_depend` astra/stereo（门禁）。
+- **冒烟实测**（Astra S 在位，域 47）：
+  - `camera:=astra`（intra=true）：容器加载 `astra_bridge` + `gpu_pointcloud` 两组件，
+    depth **29.7 Hz** → camera_info 29.9 Hz → `points_gpu` **30 Hz**，容器 RSS ~222 MB、
+    CPU 8.0%（6s 窗）；`/camera/depth/image_raw` 发布方实测 BE5 ✓。
+  - `intra=false`：恰好加载 2 个组件（不重复、不漏），条件互斥分支验证 ✓。
+  - 独立可执行路径：`ros2 run rak_astra_driver astra_node` 正常推流 ✓（组件库+生成 exe 双路径都通）。
+  - 跨进程对照（同一链路两进程）：depth 29.6 Hz、points 29.8 Hz，astra 4.2% + 点云 1.7% = **5.8%**。
+- **诚实结论——本链当期没有 CPU 收益可拿**：`points_gpu` 消息实测 **0.31 MB ≈ 160×120 点**
+  （`ros2 topic bw`），即 Astra 当前深度档为 **160×120（≈1.1 MB/s）**——比 61 MB/s 档小 ~55×，
+  跨进程本来就便宜（5.8% vs 容器 8.0%，在噪声内，两口径各测一次）。intra 的实证收益（p50 0.15 vs
+  2.34 ms、CPU 2% vs ~11%）属于 §2 的 61–92 MB/s 档，兑现条件是 gemini 上车或 §3.4 的"深度分辨率
+  选太小"修好。**本轮落地的是结构（零拷贝链路已通、随时可吃满载荷），不是当期性能数字。**
+- 未验证项：`stereo:=true` 分支无硬件（`/dev/video0` 不在），机制与 camera 门相同但未实跑；
+  bringup（sensors/depth_camera/grasp_camera）默认**不接**容器——是否切换留相机域决策。
+
+**cmd_stale 自锁（ADR-0017，第 2 轮）**：`rak_system.cpp read()` 的否决集从 `fault_bitmap != 0`
+改为 `(fault_bitmap & ~0x0008) != 0`——bit3 只做诊断，`bat_uv`/`can_recovering` 保留，
+`kStateFaultMask` 不动；`docs/adr/0017` 立档并入索引，AGENTS.md 对应 gotcha 同步改写。
+`rak_chassis` gtest 通过（该测试不覆盖 read 故障逻辑，属回归确认）。
+
+**门禁**：`check_workspace.py --installed` 结构全过（含新 launch 的 `--show-args` 与依赖引用）；
+仅余 `453be87` 提交信息已记载的既有红（TensorRT 引擎缺失 → `test_ros_smoke`），与本轮无关。
