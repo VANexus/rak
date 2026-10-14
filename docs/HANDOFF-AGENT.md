@@ -67,7 +67,9 @@ source ~/rak/src/rak_bringup/scripts/environment.sh
 
 ### 1.2 团队环境（最大坑，写三遍都不过分）
 
-`environment.sh` 一次性设置四件事，缺一看不见栈：
+`environment.sh` 一次性设置四件事，缺一看不见栈（CYCLONEDDS_URI 自 2026-10-14 起改由
+rak_bringup 环境钩子 `env-hooks/rak_cyclonedds.{sh,dsv}` 在 source overlay 时自动设置，
+见 `docs/perf/ipc_baseline.md` §9；显式 export 仍优先）：
 
 | 项 | 值 | 说明 |
 |---|---|---|

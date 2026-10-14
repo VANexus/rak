@@ -27,7 +27,10 @@ source "$RAK_INSTALL_PREFIX/local_setup.bash"
 
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-47}"
-export CYCLONEDDS_URI="${CYCLONEDDS_URI:-file://$(ros2 pkg prefix --share rak_bringup)/config/cyclonedds.xml}"
+# CYCLONEDDS_URI 不在这里设：唯一定义点是上一行 source 的 overlay 里的
+# rak_bringup 环境钩子 env-hooks/rak_cyclonedds.{sh,dsv}（set-if-unset，
+# 显式 export 仍可覆盖）。以前这里的显式 export 是唯一接线，直接 source
+# overlay 的操作入口会漏掉它（见 docs/perf/ipc_baseline.md §9）。
 
 # Non-GUI chains work headless; only visualization launchers call this.
 rak_display() {

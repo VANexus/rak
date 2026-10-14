@@ -27,6 +27,8 @@ ROS_DOMAIN_ID=47 bash src/rak_bringup/scripts/run_nav2.sh
 
 其他可覆盖参数：`RAK_WORKSPACE`、`RAK_INSTALL_PREFIX`、
 `RMW_IMPLEMENTATION`、`ROS_DOMAIN_ID`、`CYCLONEDDS_URI`。
+`CYCLONEDDS_URI` 自 2026-10-14 由工作区 overlay 的 rak_bringup 环境钩子自动设置
+（`env-hooks/rak_cyclonedds.{sh,dsv}`，set-if-unset——显式 export 仍优先）。
 默认 DDS 为 Cyclone，运行 domain 为 47。集成测试使用独立 domain 77/187，
 避免连接到运行中的机器人；不得让同一条运行链路意外使用不同 domain。
 

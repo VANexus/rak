@@ -210,10 +210,15 @@ cd ~/ipc_bench_ws && source /opt/ros/jazzy/setup.bash && colcon build --packages
 **门禁**：`check_workspace.py --installed` 结构全过（含新 launch 的 `--show-args` 与依赖引用）；
 仅余 `453be87` 提交信息已记载的既有红（TensorRT 引擎缺失 → `test_ros_smoke`），与本轮无关。
 
-**遗留发现（第 2 轮收尾时核出，未擅动）**：`CYCLONEDDS_URI` 的接线点是
-`rak_bringup/scripts/environment.sh:30`（`file://…/config/cyclonedds.xml`），但**当天重启前后的
-chassis launch 都没有 source 它**（两个实例的 environ 均无该变量，bashrc 也只设 RMW/域 47）——
-即 §3.3 的 `MaxMessageSize` 写进了配置、bench 里显式传 `TEAMCFG` 时生效，**机器人运行时跑的是
-CycloneDDS 默认配置**。收尾重启刻意保持了与原实例一致的环境（未引入运行时行为变化）。
-要兑现 §3.3，需在操作入口统一 source `environment.sh`（或把该 export 放进 bashrc/launch），
-属运行时 DDS 配置变更，留决策。
+**遗留发现（第 2 轮收尾时核出）→ ✅ 已闭环（2026-10-14，同日）**：`CYCLONEDDS_URI` 原接线点只有
+`rak_bringup/scripts/environment.sh:30`，而**当天重启前后的 chassis launch 都没有 source 它**
+（两个实例的 environ 均无该变量，bashrc 也只设 RMW/域 47）——即 §3.3 的 `MaxMessageSize` 写进了配置、
+bench 里显式传 `TEAMCFG` 时生效，**机器人运行时跑的是 CycloneDDS 默认配置**。
+**统一方案**：接线点收敛为**一个**——`src/rak_bringup/env-hooks/rak_cyclonedds.{sh,dsv}`（ament 环境
+钩子，`ament_environment_hooks()` 注册），任何 `source install/architecture/local_setup.bash`
+（含 `environment.sh` 自身、README 操作配方、agent 会话、colcon test）自动 `set-if-unset`，
+显式 export（bench TEAMCFG 等）仍优先；`environment.sh` 里的旧显式 export 删除并留注释指路。
+实测：fresh source 后 URI 生效且文件存在；覆盖语义生效；**域 77（测试域）在该 XML（`<Domain id="47">`）
+下 pub/echo 正常互通、与域 47 互不可见**；域 47 发现正常、DDS 无解析报错。运行中旧进程保持默认
+配置直至各自下次重启（与 XML 配置兼容：仅 MaxMessageSize=分片尺寸属发送侧策略，发现设置两边等价），
+重启后自然收敛，未为字节一致强杀在跑节点。
