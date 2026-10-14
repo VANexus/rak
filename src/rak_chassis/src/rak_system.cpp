@@ -295,7 +295,14 @@ hardware_interface::return_type RakSystemHardware::read(
    * 反馈有效性只看 valid + 新鲜度；mask 保留为诊断信息。 */
   if (!state.connected || !state.handshaken || !state.feedback_valid ||
     state.faulted ||
-    state.fault_bitmap != 0U || state.feedback_age > std::chrono::milliseconds(120))
+    /* [AI] ADR-0017: cmd_stale(STATE.bit3=0x0008) 不作反馈失效判据——它描述命令路径/
+     * 固件门控状态(协议 §6.2: DRIVE_CMD 断流100ms→IDLE→置位), 不是"反馈可信吗"的证据:
+     * 反馈真断了 feedback_age(120ms) 必然先超限。而且它是自锁环的一环——read() ERROR→
+     * CM 停用硬件→on_deactivate 关运动使能→该位被本层动作保持→永远过不去, 只能 relaunch。
+     * 保留 bat_uv/can_recovering(不由停用引起, 不自锁); estop/fault_active 由 state.faulted
+     * 覆盖; kStateFaultMask/fault_bitmap 内容不变(诊断照常发布)。 */
+    (state.fault_bitmap & ~0x0008U) != 0U ||
+    state.feedback_age > std::chrono::milliseconds(120))
   {
     wheel_position_.fill(0.0);
     wheel_velocity_.fill(0.0);

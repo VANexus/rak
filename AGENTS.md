@@ -372,15 +372,17 @@ caveats above.
 - **A `read() lost feedback` line is usually a downstream symptom, and `cmd_stale` is not
   a fault.** `kStateFaultMask = 0x003D` in `can_session.cpp` includes `STATE.bit3
   cmd_stale`, which the F407 sets whenever `DRIVE_CMD` stops for 100 ms (PROTOCOL v4
-  §6.2) — that is, exactly when no controller is active. So the chain is: controllers
-  fail to load → nobody sends `DRIVE_CMD` → deadman trips → `fault_bitmap=0x0008` →
-  `read()` errors → controller_manager deactivates the hardware → the controllers can
-  never load. **Only a full relaunch escapes it.** The healthy case prints
+  §6.2). Historically the extra `fault_bitmap != 0` check inside `read()` pulled bit3 into
+  the feedback veto, producing the self-latching chain: no controller active → deadman →
+  `fault_bitmap=0x0008` → `read()` errors → controller_manager deactivates the hardware →
+  controllers can never load → only a full relaunch escaped. **Settled by ADR-0017
+  (2026-10-14): `read()` now vetoes on `(fault_bitmap & ~0x0008) != 0`** — cmd_stale is
+  diagnostic only (still published in `fault_bitmap`), `bat_uv`/`can_recovering` remain
+  vetoes, and `kStateFaultMask` is untouched. The healthy log shape was
   `connected=1 handshaken=1 feedback_valid=1 faulted=0 feedback_age=2ms` with `0x0008` the
-  only nonzero field; do not read that as a hardware fault. `faulted` itself correctly
-  excludes bit3 (it tests `state & 0x0005` plus MODE) — it is the extra
-  `fault_bitmap != 0` check inside `read()` that pulls it in, which is a self-latching
-  design flaw to be settled with ADR-0017, not by editing the mask ad hoc.
+  only nonzero field; after the fix a `lost feedback` line means something other than
+  bit3 (or `feedback_age > 120 ms`) actually failed — read the printed fields, and do not
+  re-add `fault_bitmap != 0` wholesale or edit the mask to "fix" a log line.
 - **Never run two `chassis_bringup` instances.** Both put a node named
   `/controller_manager` on the domain, so the second launch's `spawner`s reach the first
   one's manager and die with `Failed to configure controller` / `Failed loading
