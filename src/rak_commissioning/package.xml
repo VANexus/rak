@@ -3,17 +3,19 @@
 <package format="3">
   <name>rak_commissioning</name>
   <version>0.1.0</version>
-  <description>Commissioning and teach tools: drive TUI, arm servo TUI, keyboard chassis test (ADR-0013). Not production motion interfaces.</description>
+  <description>Commissioning tools speaking standard ROS interfaces (ADR-0013/0016): keyboard chassis test publishes Twist, chassis/arm TUIs jog over controller topics and FollowJointTrajectory actions — never a transport. Not production motion interfaces.</description>
   <maintainer email="xrak@todo.todo">xrak</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <!-- [AI] 两个 TUI 共用 rak_base_driver 的 USB v2 编解码（R30/R42 协议） -->
   <depend>rclpy</depend>
-  <depend>rak_base_driver</depend>
   <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <!-- [AI] arm_tui：只经标准 ROS 接口对话（ADR-0016 决策 2），无任何传输层依赖 -->
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <test_depend>python3-pytest</test_depend>

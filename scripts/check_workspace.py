@@ -24,11 +24,11 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     "rak_agent", "rak_arm_pinocchio_ik", "rak_arm_simulation", "rak_astra_driver",
-    "rak_base_driver", "rak_bringup", "rak_can_driver", "rak_chassis",
+    "rak_bringup", "rak_can_driver", "rak_chassis",
     "rak_commissioning", "rak_description", "rak_gpu", "rak_grasp_perception",
     "rak_intent",
     "rak_interfaces", "rak_motion_stub", "rak_moveit_config",
-    "rak_pointcloud", "rak_serial_link", "rak_speech", "rak_stereo_driver",
+    "rak_pointcloud", "rak_speech", "rak_stereo_driver",
     "rak_task_executor", "rak_wbc",
 }
 OLD_NAMES = {"core", "eye", "boot", "brain", "motor_stub", "astra_bridge"}
@@ -93,11 +93,10 @@ def check_boundaries(found) -> None:
     assert "rak_interfaces" in found["rak_task_executor"][1]
     # Modeling assets and drivers.
     assert "rak_description" in found["rak_moveit_config"][1]
-    assert "rak_interfaces" in found["rak_base_driver"][1]
     assert "rak_gpu" in found["rak_stereo_driver"][1]
     assert "rak_interfaces" not in found["rak_stereo_driver"][1]
-    # Commissioning tools share the USB v2 codec with the base driver.
-    assert "rak_base_driver" in found["rak_commissioning"][1]
+    # Commissioning tools speak standard ROS interfaces only (no transport deps).
+    assert "rak_chassis" not in found["rak_commissioning"][1]
     # Bringup composes the chassis control chain.
     assert "rak_chassis" in found["rak_bringup"][1]
 
@@ -168,7 +167,6 @@ def check_installed(found) -> None:
         ("rak_intent.task_intent", "rak_intent"),
         ("rak_agent.node", "rak_agent"),
         ("rak_arm_simulation.controllers", "rak_arm_simulation"),
-        ("rak_base_driver.node", "rak_base_driver"),
         ("rak_task_executor.node", "rak_task_executor"),
     )
     for module_name, package_name in modules:

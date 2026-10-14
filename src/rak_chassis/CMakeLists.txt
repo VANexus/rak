@@ -19,7 +19,6 @@ pluginlib_export_plugin_description_file(hardware_interface rak_chassis_plugin.x
 
 add_library(rak_chassis_plugin SHARED
   src/protocol.cpp
-  src/serial_session.cpp
   src/can_session.cpp
   src/rak_system.cpp
 )
@@ -56,17 +55,7 @@ if(BUILD_TESTING)
     target_link_libraries(system_interface_test rak_chassis_plugin)
     target_link_libraries(system_interface_test hardware_interface::hardware_interface)
   endif()
-
-  add_executable(pty_peer_test
-    test/pty_peer_test.cpp
-    src/protocol.cpp
-    src/serial_session.cpp
-  )
-  target_include_directories(pty_peer_test PRIVATE include)
-  target_compile_options(pty_peer_test PRIVATE -UNDEBUG)
-  target_link_libraries(pty_peer_test PRIVATE Threads::Threads util)
-  add_test(NAME pty_peer_test COMMAND pty_peer_test)
-  set_tests_properties(pty_peer_test PROPERTIES TIMEOUT 15)
+  # [AI] ADR-0016: Session 接口的唯一实现是 CanSession
 endif()
 
 ament_package()

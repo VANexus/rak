@@ -34,6 +34,14 @@ constexpr uint32_t kIdServoA = 0x210U;       // [AI] 冻结版补齐：J1-J4 实
 constexpr uint32_t kIdServoB = 0x211U;       // [AI] J5,J6,夹爪 实际角遥测
 constexpr uint32_t kIdDiag = 0x220U;
 constexpr uint8_t kDidSafety = 0x01U;
+/* [AI] STATE 位图里"坏消息"的位掩码（协议真源 PROTOCOL.md §5，v4 冻结）：
+ * bit0 estop_latched / bit2 fault_active / bit3 cmd_stale / bit4 bat_uv /
+ * bit5 can_recovering。
+ * 不进掩码的两段都必须排除，否则 ros2_control 会把健康态当故障：
+ *   bit1 remote_running —— ARM(START) 后必然为 1；
+ *   bit6-10 驱动门自诊断（dg_remote/dg_cal/dg_imu/dg_snapshot/dg_stab）
+ *     —— 1 = 放行链正常，固件一收到 DRIVE_CMD 流就会点亮（实测 0x0180）。 */
+constexpr uint16_t kStateFaultMask = 0x003DU;
 
 constexpr int kDriveHz = 100;                     // [AI] DRIVE_CMD 周期（v4 §3）
 constexpr int kArmHz = 50;                        // [AI] ARM_CMD 上限节拍（v4 §3，实际事件驱动）
@@ -329,7 +337,8 @@ void CanSession::process_rx(const std::array<uint8_t, 8> &d, uint32_t can_id)
       snapshot_.servo_valid_mask |= 0x30U;
       break;
     case kIdDiag:
-      // [AI] STATE 位图 bit0=estop bit2=fault；MODE: 2=ESTOP 3=FAULT
+      // [AI] STATE 位图只把坏消息位写进 fault_bitmap（见 kStateFaultMask 注释）；
+      // MODE: 2=ESTOP 3=FAULT
       {
         const uint16_t state = read_u16(d, 4U);
         const uint8_t mode = d[6];
@@ -337,7 +346,7 @@ void CanSession::process_rx(const std::array<uint8_t, 8> &d, uint32_t can_id)
           (state & 0x0005U) != 0U || mode == 2U || mode == 3U;
         fault_latched_.store(fault);
         snapshot_.faulted = fault;
-        snapshot_.fault_bitmap = state;
+        snapshot_.fault_bitmap = static_cast<uint16_t>(state & kStateFaultMask);
         snapshot_.encoder_epoch = 0U;   // [AI] CAN v4 无 epoch 概念，恒 0
         snapshot_.sample_time_us =
           static_cast<uint64_t>(

@@ -1,5 +1,5 @@
 // Copyright 2026 RAK project
-// [AI] R49: CAN v4 传输后端（SocketCAN），与 SerialSession 同公开 API。
+// [AI] R49: CAN v4 传输后端（SocketCAN）—— ADR-0016 后为唯一实现，Session 接口的唯一落点。
 // 协议：../vehical_rak_chassis/docs/PROTOCOL.md v4 + protocol-signals.yaml。经典帧 1 Mbps，
 // 仅 SAFETY_CMD 为 e2e 帧（counter+CRC8/DID 种子），其余 raw8。
 #ifndef RAK_CHASSIS__CAN_SESSION_HPP_

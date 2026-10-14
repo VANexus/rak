@@ -56,8 +56,9 @@
 | [0013](0013-workspace-subsystem-regroup.md) | 工作空间按子系统归堆 23→18 包：`rak_hardware`→`rak_chassis`、`rak_commissioning`/`rak_intent` 新建、bringup 三合一+navigation 并入、brain→`src/rak_agent`、CAN v3 栈入 `attic/`；"冻结消息契约"定为分层规则 | 已接受（2026-10-09） |
 | [0014](0014-camera-contract.md) | RGB-D 相机契约：深度流（`/camera/depth/image_raw`+`camera_info`）必修、彩色可选；单一后端 `camera:=astra|gemini335l` 参数切换；SDK 隔离；`eye/*` 立体相机不并入；外参不得臆造 | 已接受（2026-10-10） |
 | [0015](0015-frame-tree.md) | 全机坐标系分层：REP-120 body 树（`base_footprint` 地面 / `base_link` 轮系中心）+ 无界 `world` 根 + 传感器/机械臂挂载帧；几何单一来源=`rak_chassis.urdf.xacro`，每帧唯一发布者 | 已接受（2026-10-11） |
+| [0016](0016-retire-usb-transport.md) | 删除 USB v2 链路：CAN v4 唯一传输；工具只经 topic/action/service 与驱动节点对话，禁止直连硬件；`transport`/`device` 参数、`rak_base_driver`、`rak_serial_link`、直连 TUI、串口脚本与 `docs/protocol/` 全部删除 | 已接受（2026-10-14） |
 
-> **当前有效架构 = ADR-0002 + 0003(v4 层) + 0004 + 0005 + 0006 + 0007(传输部分被 0012 取代) + 0008 + 0009 + 0010 + 0011 + 0012 + 0013 + 0014 + 0015。**
+> **当前有效架构 = ADR-0002 + 0003(v4 层) + 0004 + 0005 + 0006 + 0007(传输部分被 0012 取代) + 0008 + 0009 + 0010 + 0011 + 0012(备用链路部分被 0016 取代) + 0013 + 0014 + 0015 + 0016。**
 > 0001 仅作历史记录，不要按其实施。
 > 0008 初稿曾误记末端为吸嘴，同日已更正为舵机夹爪（见该篇修订记录）。
 > 0010 只定义接口与验收，`src/rak_harness` 与 `harness_node` **尚未创建**；「呼吸感」硬件门全关。

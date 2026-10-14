@@ -5,8 +5,9 @@ WASD/QE 调节机体目标速度, 20 Hz 持续发布 geometry_msgs/Twist, 经
 Nav2/速度平滑/mecanum_drive_controller 链路驱动四轮, 用于观察
 前后/左右/自转的运动能力。它只是测试输入源, 不替代 Nav2。
 
-默认发布 /cmd_vel_unstamped (mecanum_drive_controller 的未Stamped入口);
-参数 --ros-args -p topic:=/cmd_vel -p stamped:=true 可切换 TwistStamped。
+默认发布 /mecanum_drive_controller/reference (TwistStamped) —— Jazzy 版
+mecanum_drive_controller 只订阅 ~/reference, 没有未 Stamped 入口。
+参数 --ros-args -p topic:=/cmd_vel -p stamped:=false 可切换旧话题/类型。
 键位: w/s 前后  a/d 左右  q/e 自转  空格全零  x 退出。
 """
 import select
@@ -14,6 +15,7 @@ import sys
 import termios
 import threading
 import time
+import tty
 
 import rclpy
 from geometry_msgs.msg import Twist, TwistStamped
@@ -34,8 +36,8 @@ class ChassisKeyTest(Node):
 
     def __init__(self):
         super().__init__("chassis_key_test")
-        self.declare_parameter("topic", "/cmd_vel_unstamped")
-        self.declare_parameter("stamped", False)
+        self.declare_parameter("topic", "/mecanum_drive_controller/reference")
+        self.declare_parameter("stamped", True)
         self.declare_parameter("rate", 20.0)
         topic = self.get_parameter("topic").value
         self.stamped = bool(self.get_parameter("stamped").value)
@@ -45,6 +47,9 @@ class ChassisKeyTest(Node):
         self.vx = self.vy = self.wz = 0.0
         try:
             self.old_term = termios.tcgetattr(0)
+            # [AI] 必须切到 cbreak: 否则终端保持行缓冲, 按键攒到回车才送达,
+            # 表现为"w 按了没反应、vx 恒 0"。shutdown() 恢复 old_term。
+            tty.setcbreak(0)
             self.running = True
             self.keys = threading.Thread(target=self._key_loop, daemon=True)
             self.keys.start()

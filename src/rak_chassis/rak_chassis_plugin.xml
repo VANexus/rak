@@ -3,6 +3,6 @@
     name="rak_chassis/RakSystemHardware"
     type="rak_chassis::RakSystemHardware"
     base_class_type="hardware_interface::SystemInterface">
-    <description>四轮 ros2_control 硬件插件；Session 抽象双后端 transport:=usb|can（CAN v4 主 / USB v2 备，ADR-0012）</description>
+    <description>四轮 ros2_control 硬件插件；唯一后端 CanSession（CAN v4，SocketCAN）。见 ADR-0016。</description>
   </class>
 </library>

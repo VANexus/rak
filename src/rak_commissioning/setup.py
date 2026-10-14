@@ -18,9 +18,9 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "drive_tui = rak_commissioning.drive_tui:main",
-            "arm_servo_tui = rak_commissioning.servo_tui:main",
             "chassis_key_test = rak_commissioning.chassis_key_test:main",
+            "chassis_tui = rak_commissioning.chassis_tui:main",
+            "arm_tui = rak_commissioning.arm_tui:main",
         ],
     },
 )

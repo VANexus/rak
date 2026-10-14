@@ -1,5 +1,5 @@
 # [AI] robot_localization EKF 配置 —— odom -> base_footprint 的唯一发布者 (REP-120)
-# 团队规矩 (usb_serial_v2.md §5 / README): EKF 独占 odom->base_footprint;
+# 团队规矩 (README / docs/architecture): EKF 独占 odom->base_footprint;
 # slam_toolbox 独占 map->odom; world->map 由全局锚点(暂静态恒等)发布;
 # RF2O/轮式/IMU 都只是 EKF 的输入。base_footprint->base_link 由 robot_state_publisher(URDF) 提供。
 #

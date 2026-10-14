@@ -1,7 +1,13 @@
 <?xml version="1.0"?>
 <!-- [AI] 全机静态骨架 URDF：底盘几何 + 传感器安装帧 + 机械臂安装帧。
      仅承载“静态坐标系”（fixed joints）与四轮连续关节；机械臂 6 轴 + 夹爪的
-     运动链在 rak_arm.urdf.xacro（实机关节接口未 commissioned，ADR-0007）。
+     **运动链几何**在 rak_arm.urdf.xacro（独立 robot，不并入本文件——两边都定义
+     arm_base_link）。<ros2_control> 里的 7 轴臂**位置接口**则在本文件
+     （2026-10-14 落地，ADR-0012 待闭合项 #1；名称/行程见
+     docs/arm_moveit_contract.md §1 与下方注释），并配套一条**零长度控制桩链**
+     挂在 arm_base_link 下——Jazzy component_parser 要求 <ros2_control> 的关节必须
+     同时存在于运动学树，否则 controller_manager 拒绝初始化；桩链只提供句柄与
+     指令角域 <limit>，真实几何仍只在 rak_arm.urdf.xacro。
      该文件是 robot_state_publisher 的唯一静态几何来源。
 
      坐标系约定 (REP-103)：X 前，Y 左，Z 上。
@@ -11,11 +17,17 @@
                       机械臂在后·中轴。
      z 高度 / 前后精确距离为 TODO(measured) 占位，装车标定后回填。 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rak_chassis">
-  <xacro:arg name="device" default="/dev/serial/by-id/usb-WCH.CN_USB_Single_Serial_0002-if00"/>
   <xacro:arg name="host_build_id" default="0xA0DE0002"/>
   <xacro:arg name="allow_motion" default="false"/>
-  <!-- [AI] transport=usb|can: CAN v4 主链路切换(ADR-0012); 默认 usb 保持现行为 -->
-  <xacro:arg name="transport" default="usb"/>
+  <!-- [AI] 每轮极性（装配事实，顺序 FL FR RL RR）：+1 正常，-1 该轮命令+反馈同时取反。
+       2026-10-14 实车标定：左侧 FL/RL 的电机装向与右侧相反 —— 命令全 +（DRIVE_CMD
+       [++++]，本应直进）时左轮后滚、右轮前滚，车体原地转；表现为 W/S 变自转、
+       Q/E 变前后、A/D 三自由度全对消（轮子转车不动）。
+       注意这**不是**端口置换：[++++] 在任何置换下都不变，只有取反能解释。
+       实测确认值 -1 1 -1 1；反例 1 -1 1 -1 会让 W 变后退（已验证排除）。
+       缺省即实测值；换轮/重接线后重新标定改这里，不用重编译。 -->
+  <xacro:arg name="wheel_sign" default="-1 1 -1 1"/>
+  <!-- [AI] ADR-0016: 链路唯一实现是 CAN v4（SocketCAN），无 transport/device 参数 -->
   <xacro:arg name="can_channel" default="can0"/>
   <!-- [AI] REP-120: base_link(车体中心)离地高度；TODO(measured) -->
   <xacro:arg name="base_height" default="0.06"/>
@@ -29,11 +41,11 @@
   <xacro:property name="ht" value="${track/2}"/>      <!-- 半轮距 -->
 
   <!-- ===== 传感器/机械臂安装偏移（TODO(measured) 占位）===== -->
-  <xacro:property name="laser_x" value="${hw}"/>      <!-- 雷达 x：前·中轴 -->
+  <xacro:property name="laser_x" value="0.11"/>      <!-- 雷达 x：2026-10-14 实测（距轴中点 11 cm，在前轴平面后 1.5 cm） -->
   <xacro:property name="mic_z"   value="0.15"/>       <!-- 麦克风 z：雷达上方 -->
-  <xacro:property name="cam_x"   value="0.15"/>       <!-- 相机 x：车头最前 -->
+  <xacro:property name="cam_x"   value="0.15"/>       <!-- 相机 x：2026-10-14 实测 0.15，车头最前（与占位一致） -->
   <xacro:property name="cam_z"   value="0.10"/>       <!-- 相机 z：TODO(measured) -->
-  <xacro:property name="imu_x"   value="0.0"/>        <!-- IMU x：TODO(measured) -->
+  <xacro:property name="imu_x"   value="0.08"/>       <!-- IMU x：2026-10-14 实测 0.08 -->
   <xacro:property name="imu_z"   value="0.06"/>       <!-- IMU z：TODO(measured) -->
   <xacro:property name="arm_x"   value="${-hw}"/>     <!-- 机械臂 x：后·中轴 -->
   <xacro:property name="arm_z"   value="0.12"/>       <!-- 机械臂安装面 z：TODO(measured) -->
@@ -100,7 +112,7 @@
     <origin xyz="${laser_x} 0 $(arg lidar_z)" rpy="0 0 0"/>
   </joint>
 
-  <!-- 6 阵列麦克风：雷达正上方（vtn_node 桥接，本身不发 TF） -->
+  <!-- 6 阵列麦克风：雷达正上方（vtn_node 桥接，本身不发 TF）。x 实测 0.11 与雷达同 x，借 laser_x -->
   <link name="mic_array_link"/>
   <joint name="mic_mount_joint" type="fixed">
     <parent link="base_link"/>
@@ -117,12 +129,15 @@
     <origin xyz="${cam_x} 0 ${cam_z}" rpy="0 0 0"/>
   </joint>
 
-  <!-- IMU：LSM6DSRTR（SPI）。安装姿态 TODO(measured)，现为恒等 -->
+  <!-- IMU：LSM6DSRTR（SPI）。2026-10-14 实测安装姿态：芯片"正着放"后绕车体 Y 轴
+       顺时针（自车右侧看）转 90°——芯片 +Z(顶面) 朝车后、+X 朝上、+Y 朝左，
+       即 rpy pitch=-90°。spi_imu.py 的 frame_id=imu_link，EKF(imu0/vyaw) 靠 TF
+       把测量转到 base 系——此姿态写反，航向融合会把滚转当偏航。 -->
   <link name="imu_link"/>
   <joint name="imu_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="imu_link"/>
-    <origin xyz="${imu_x} 0 ${imu_z}" rpy="0 0 0"/>
+    <origin xyz="${imu_x} 0 ${imu_z}" rpy="0 ${-pi/2} 0"/>
   </joint>
 
   <!-- 机械臂安装帧：后·中轴。姿态/安装面高度 TODO(measured)；
@@ -134,15 +149,76 @@
     <origin xyz="${arm_x} 0 ${arm_z}" rpy="0 0 0"/>
   </joint>
 
+  <!-- [AI] 臂控制用运动学桩链（ADR-0012 待闭合项 #1，2026-10-14）。
+       为什么必须存在：Jazzy hardware_interface/component_parser.cpp 对
+       <ros2_control> 的每个 joint 都要在 URDF 模型里 getJoint() 一次，查不到就抛
+       "Joint 'x' not found in URDF"；controller_manager 的 import_joint_limiters
+       捕到后放弃初始化（实测卡死在 "Waiting for data on 'robot_description'"）。
+       为什么是零长度桩：本文件 <limit> 是**指令角域**（0..270°，契约
+       docs/arm_moveit_contract.md §1），真实几何/轴向/q_urdf 在 rak_arm.urdf.xacro
+       ——两套约定不能混进同一棵树。限幅取 <limit> 与 <command_interface> min/max
+       的交集（update_interface_limits），故这里必须写契约值，否则会被截错。
+       轴方向与真实臂一致（J2/J5 +Y、J3 −Y）；7 帧与 arm_base_link 重合、无几何。 -->
+  <link name="arm_ctrl_j1_link"/>
+  <joint name="j1_base" type="revolute">
+    <parent link="arm_base_link"/><child link="arm_ctrl_j1_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
+  </joint>
+  <link name="arm_ctrl_j2_link"/>
+  <joint name="j2_shoulder" type="revolute">
+    <parent link="arm_ctrl_j1_link"/><child link="arm_ctrl_j2_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <!-- J2 实测硬件限 0..255°（properties_arm.xacro），不是 270° -->
+    <limit lower="0.0" upper="4.45059" effort="5.0" velocity="6.0"/>
+  </joint>
+  <link name="arm_ctrl_j3_link"/>
+  <joint name="j3_elbow" type="revolute">
+    <parent link="arm_ctrl_j2_link"/><child link="arm_ctrl_j3_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
+  </joint>
+  <link name="arm_ctrl_j4_link"/>
+  <joint name="j4_forearm" type="revolute">
+    <parent link="arm_ctrl_j3_link"/><child link="arm_ctrl_j4_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
+  </joint>
+  <link name="arm_ctrl_j5_link"/>
+  <joint name="j5_wrist_pitch" type="revolute">
+    <parent link="arm_ctrl_j4_link"/><child link="arm_ctrl_j5_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
+  </joint>
+  <link name="arm_ctrl_j6_link"/>
+  <joint name="j6_wrist_roll" type="revolute">
+    <parent link="arm_ctrl_j5_link"/><child link="arm_ctrl_j6_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
+  </joint>
+  <link name="arm_ctrl_gripper_link"/>
+  <joint name="gripper_joint" type="revolute">
+    <parent link="arm_ctrl_j6_link"/><child link="arm_ctrl_gripper_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0.0" upper="4.71239" effort="2.0" velocity="6.0"/>
+  </joint>
+
   <ros2_control name="rak_chassis_system" type="system">
     <hardware>
       <plugin>rak_chassis/RakSystemHardware</plugin>
-      <param name="device">$(arg device)</param>
       <param name="host_build_id">$(arg host_build_id)</param>
       <!-- [AI] 运动许可：默认 false=永远 DISARMED；实驱必须显式 allow_motion:=true -->
       <param name="allow_motion">$(arg allow_motion)</param>
-      <!-- [AI] 传输后端: rak_system.cpp 按 transport 选 CanSession/SerialSession; can 时 device 不参与 -->
-      <param name="transport">$(arg transport)</param>
+      <!-- [AI] 每轮极性（装配事实）：命令与反馈按此取反，缺省全 1 -->
+      <param name="wheel_sign">$(arg wheel_sign)</param>
+      <!-- [AI] ADR-0016: 链路唯一实现是 SocketCAN（can_channel） -->
       <param name="can_channel">$(arg can_channel)</param>
     </hardware>
     <joint name="front_left_wheel">
@@ -178,6 +254,65 @@
       </command_interface>
       <state_interface name="position"/>
       <state_interface name="velocity"/>
+    </joint>
+
+    <!-- [AI] 7 轴臂位置接口（ADR-0012 待闭合项 #1；2026-10-14 随 ADR-0016 的
+         ROS 化重建落地）。名称/行程按 docs/arm_moveit_contract.md §1（FROZEN）：
+         命令域是舵机指令角（rad，0..270°，Home=0/225/270/0/0/0），**不是**
+         rak_arm.urdf.xacro 的 q_urdf（两者零位差一个换算，见该文件头注）。
+         min/max 必填：controller_manager 的 JointSaturationLimiter 靠它限幅，
+         与 Session 层饱和（负值截 0、>270° 截 270°）构成双保险。
+         J2 上限 255°（properties_arm.xacro 实测硬件约束，非 270°）。 -->
+    <joint name="j1_base">
+      <command_interface name="position">
+        <param name="min">0.0</param>
+        <param name="max">4.71239</param>
+      </command_interface>
+      <state_interface name="position"/>
+    </joint>
+    <joint name="j2_shoulder">
+      <command_interface name="position">
+        <param name="min">0.0</param>
+        <param name="max">4.45059</param>
+      </command_interface>
+      <state_interface name="position"/>
+    </joint>
+    <joint name="j3_elbow">
+      <command_interface name="position">
+        <param name="min">0.0</param>
+        <param name="max">4.71239</param>
+      </command_interface>
+      <state_interface name="position"/>
+    </joint>
+    <joint name="j4_forearm">
+      <command_interface name="position">
+        <param name="min">0.0</param>
+        <param name="max">4.71239</param>
+      </command_interface>
+      <state_interface name="position"/>
+    </joint>
+    <joint name="j5_wrist_pitch">
+      <command_interface name="position">
+        <param name="min">0.0</param>
+        <param name="max">4.71239</param>
+      </command_interface>
+      <state_interface name="position"/>
+    </joint>
+    <joint name="j6_wrist_roll">
+      <command_interface name="position">
+        <param name="min">0.0</param>
+        <param name="max">4.71239</param>
+      </command_interface>
+      <state_interface name="position"/>
+    </joint>
+    <!-- 夹爪（第 7 路）：命令通道协议已预留，**无物理反馈通道**（回读恒 0、
+         servo_valid_mask bit6 恒无效，契约 §2.3）——故刻意没有 state_interface，
+         屏显/上层只能显示命令值。 -->
+    <joint name="gripper_joint">
+      <command_interface name="position">
+        <param name="min">0.0</param>
+        <param name="max">4.71239</param>
+      </command_interface>
     </joint>
   </ros2_control>
 </robot>

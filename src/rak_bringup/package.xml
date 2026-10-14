@@ -48,7 +48,6 @@
   <exec_depend>rak_chassis</exec_depend>
   <!-- 任务/决策/仿真 -->
   <exec_depend>rak_agent</exec_depend>
-  <exec_depend>rak_base_driver</exec_depend>
   <exec_depend>rak_task_executor</exec_depend>
   <!-- 语音链:audio_common 采集阵列 → /audio → asr_node;vtn_node 唤醒桥;
        tts_node → /audio_out → audio_play 播报 -->

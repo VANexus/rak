@@ -1,6 +1,6 @@
-# [AI] 底盘 ros2_control 控制器配置（USB v2 硬件链路烟测）。
+# [AI] ros2_control 控制器配置（CAN v4 硬件链路）：四轮 + 7 轴臂 + 夹爪。
 # ⚠️ wheels_radius / sum_of_robot_center_projection_on_X_Y_axis 为占位值（未实测签核），
-#    来源与 scripts/mecanum_tui_v2.py 相同的占位几何；实车标定后必须更新。
+#    实车标定后必须更新。
 # [AI] lyrical：type 查找段在 controller_manager 下；控制器运行参数经 spawner -p 载入。
 controller_manager:
   ros__parameters:
@@ -16,9 +16,62 @@ controller_manager:
     mecanum_drive_controller:
       type: mecanum_drive_controller/MecanumDriveController
 
+    # [AI] ADR-0007 D2 + ADR-0012 待闭合项 #1（2026-10-14 闭合）：臂走标准
+    # joint_trajectory_controller，上层（MoveIt / 示教 TUI）只发 FollowJointTrajectory，
+    # 永远不直连 CAN（ADR-0016 决策 2）。
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    # [AI] 夹爪第 7 路独立成组：无物理反馈（回读恒 0，契约 §2.3），JTC 的目标容差
+    # 对它永远不成立，故不进 arm_controller；用位置话题直接下发。
+    gripper_controller:
+      type: position_controllers/JointGroupPositionController
+
 joint_state_broadcaster:
   ros__parameters:
     use_sim_time: false
+
+arm_controller:
+  ros__parameters:
+    use_sim_time: false
+    # [AI] 名称/顺序 = docs/arm_moveit_contract.md §1（FROZEN），与 URDF
+    # <ros2_control> 一一对应；命令域是舵机指令角 rad（0..270°，Home 0/225/270/0/0/0）。
+    joints:
+      - j1_base
+      - j2_shoulder
+      - j3_elbow
+      - j4_forearm
+      - j5_wrist_pitch
+      - j6_wrist_roll
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+    state_publish_rate: 50.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+    # [AI] Jazzy JTC 不再做"起点=当前状态"容差校验（validate_trajectory_msg 只查结构），
+    # 故单点 goal 可直接被接受；轨迹从**回读**（state_current_）插值到目标——回读是
+    # 固件指令回声，天然滞后一拍，可接受。刻意不用已废弃的 open_loop_control。
+    # allow_motion=false 时回读不动，goal 会因容差超时 abort（TUI 屏上给出提示）。
+    constraints:
+      # [AI] 舵机无编码器：回读=指令回声（±1° 实测），容差按 2026-10-09 实测口径放宽，
+      # 不假装毫米级精度（契约 §2.2：碰撞/卡死检测不可用该反馈）。
+      stopped_velocity_tolerance: 0.05
+      goal_time: 1.0
+      j1_base: {trajectory: 0.35, goal: 0.05}
+      j2_shoulder: {trajectory: 0.35, goal: 0.05}
+      j3_elbow: {trajectory: 0.35, goal: 0.05}
+      j4_forearm: {trajectory: 0.35, goal: 0.05}
+      j5_wrist_pitch: {trajectory: 0.35, goal: 0.05}
+      j6_wrist_roll: {trajectory: 0.35, goal: 0.05}
+
+gripper_controller:
+  ros__parameters:
+    use_sim_time: false
+    joints:
+      - gripper_joint
+    interface_name: position
 
 mecanum_drive_controller:
   ros__parameters:

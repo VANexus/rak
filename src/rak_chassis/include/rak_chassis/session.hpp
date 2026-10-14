@@ -1,8 +1,8 @@
 // Copyright 2026 RAK project
-// [AI] R49: 传输层抽象——rak_chassis 与下位机的会话接口。
-// USB v2 串口（SerialSession）与 CAN v4（CanSession）实现同一公开 API，
-// 上层（RakSystemHardware / ros2_control）完全无感，按 hardware_parameters
-// 的 transport 字段选择后端（协议事实源：../vehical_rak_chassis/docs/PROTOCOL.md v4 §10）。
+// [AI] 传输层抽象——rak_chassis 与下位机的会话接口。
+// [AI] ADR-0016: Session 接口的唯一实现是 CAN v4（CanSession）。上层
+// （RakSystemHardware / ros2_control）只经 ros2_control 接口与本 API 说话，不感知链路
+// （协议事实源：../vehical_rak_chassis/docs/PROTOCOL.md v4）。
 #ifndef RAK_CHASSIS__SESSION_HPP_
 #define RAK_CHASSIS__SESSION_HPP_
 
@@ -15,8 +15,8 @@
 namespace rak_chassis
 {
 
-// [AI] 会话快照：单位约定与 SerialSession 保持一致（position/velocity = rad），
-// 使上层在两种传输之间零改动切换。
+// [AI] 会话快照：position/velocity 单位恒为 rad（接口契约，见 ADR-0016：链路唯一实现
+// 是 CanSession，上层零改动）。
 struct SessionSnapshot
 {
   bool connected{};
@@ -31,8 +31,8 @@ struct SessionSnapshot
   uint64_t sample_time_us{};
   std::array<double, 4> wheel_position{};
   std::array<double, 4> wheel_velocity{};
-  // [AI] 冻结版补齐：舵机实际角读回（rad，J1..J6+夹爪）——CAN=SERVO_STATE_A/B @50Hz，
-  // USB v2=ARM_STATE。servo_valid_mask bit0..5=J1..J6 读回有效；bit6 夹爪无反馈
+  // [AI] 冻结版补齐：舵机实际角读回（rad，J1..J6+夹爪）——CAN=SERVO_STATE_A/B @50Hz。
+  // servo_valid_mask bit0..5=J1..J6 读回有效；bit6 夹爪无反馈
   // 通道恒 0（协议保留位，固件遥测恒发 0，消费端不得当真实反馈用）。
   std::array<double, 7> joint_position{};
   uint8_t servo_valid_mask{};
@@ -56,10 +56,9 @@ public:
   // [AI] 运动许可：true→START/使能指令流，false→STOP/零目标
   virtual void set_motion_enabled(bool enabled) = 0;
   // [AI] 冻结版补齐：臂 7 轴位置目标（rad，J1..J6+夹爪，行程 0..4.712 rad）。
-  // 实现内部按协议量化（CAN=0.1° u16 @0x110/111；v2=µrad i32）。安全契约（PROTOCOL
+  // 实现内部按协议量化（CAN=0.1° u16 @0x110/111）。安全契约（PROTOCOL
   // v4 §10.1 #7）：固件对舵机命令不做远程门/急停门控，许可与发送时机由本层负责——
   // 实现必须仅在 motion_enabled 下发送，事件驱动（有新目标才发），禁止周期重放旧目标。
-  // 默认空实现：备用传输可不支持（当前 SerialSession 走 v2 0x11 已覆盖，可覆盖）。
   virtual void set_arm_command(const std::array<double, 7> &command)
   {
     (void)command;
