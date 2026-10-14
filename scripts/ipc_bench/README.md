@@ -34,7 +34,7 @@ $BIN --mode both --intra 1 --topic /ipcbench/x --w 1280 --h 800 --bpp 2 --fps 30
 | `src/ipc_bench.cpp` | 基准程序（pub/sub/both + intra 开关） |
 | `run_matrix.sh` | 完整矩阵（A 61MB/s / B 92MB/s / 单进程 intra） |
 | `case_udp.sh` | 单用例 + 内核 UDP 计数器前后差（定位丢包层） |
-| `cx_t1.xml` | CycloneDDS 变体：`<Internal><MaxMessageSize>65500`（已实测：p50 −30%） |
+| `cx_t1.xml` | CycloneDDS 变体：`<Internal><MaxMessageSize>65500`（**已并入团队 cyclonedds.xml**；实测分片 −4×，延迟增益在噪声内） |
 | `cx_lo.xml` / `cx_lo_nomc.xml` | 对照变体（lo 绑定 / 关多播）——实测**无收益**，不建议采用 |
 
 > ⚠️ `SocketReceiveBufferSize` 在 CycloneDDS 0.10.5 的两种写法（扁平 / `<Internal><Socket>` 子结构）

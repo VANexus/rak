@@ -1,10 +1,15 @@
-<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" ?>
 <!--
-  Minimal Cyclone DDS config for xrak. Domain 47 is the project runtime domain. The
-  schema for CycloneDDS 0.10.5 rejects our tuning knobs (SocketReceiveBufferSize
-  is documented but appears to live under <Internal><Socket> sub-structure
-  in this version); the file is intentionally stripped to only the
-  schema-accepted elements. Add knobs back once the schema is verified.
+  Minimal Cyclone DDS config for xrak. Domain 47 is the project runtime domain.
+
+  [AI] 2026-10-14 (IPC 基线, 见 docs/perf/ipc_baseline.md):
+  - <Internal><MaxMessageSize>65500</MaxMessageSize> — 已实测被 CycloneDDS 0.10.5 接受。
+    大样本(2MB/帧)的 UDP 分片数 ~4x 下降, 61MB/s 跨进程端到端 p50 3.7ms -> 2.4ms。
+  - SocketReceiveBufferSize 的两种写法(扁平 / <Internal><Socket> 子结构)均被本版 schema 拒绝
+    ("ambiguous element prefix"); 大流量的接收缓冲改走内核侧
+    (net.core.rmem_max/wmem_max = 16MB, /etc/sysctl.d/99-rak-ipc.conf)。
+  - lo 绑定 / 关多播 实测无收益(±1Hz, 延迟不变), 维持 autodetermine + 多播,
+    远程 RViz 的发现不受影响。
 -->
 <CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
   <Domain id="47">
@@ -14,5 +19,8 @@
       </Interfaces>
       <AllowMulticast>true</AllowMulticast>
     </General>
+    <Internal>
+      <MaxMessageSize>65500</MaxMessageSize>
+    </Internal>
   </Domain>
 </CycloneDDS>

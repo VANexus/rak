@@ -48,33 +48,39 @@
 
 ## 3. 立即可做的 L1 改动清单（按收益/风险排序）
 
-### 3.1 图片流改 SensorDataQoS（best_effort + 小深度）—— 建议优先
-- 现状：`astara_bridge`（以及部分消费者）用 `create_publisher<Image>(topic, 10)` = **reliable**。
-- 收益：p99 尾延迟 −95%（108 → 5.6 ms），消除重传风暴；大图流**不该**用 reliable。
-- 风险：低（语义上图像帧允许丢弃；与 ADR-0014 对 stereo 的 SensorDataQoS 约定一致）。
-- 验收：`ros2 topic info -v` 显示 Reliability=BEST_EFFORT；重跑本文矩阵 A 组。
+### 3.1 图片流 QoS（best_effort）—— 需与驱动改动协调，暂缓
+- 现状：`astra_bridge` 的图片/CameraInfo 发布者用 `create_publisher<Image>(topic, 10)` = **reliable**；
+  在仓消费者（`gpu_pointcloud`）已经是 `QoS(1).best_effort().durability_volatile()`。
+- **RxO 规则**：reliable 写方 + best-effort 读方 = 兼容（现状可跑）；**反过来（BE 写方 + reliable 读方）不匹配**。
+  即：今天不会有事，只有当**某个 reliable 消费者**（如某些 RViz 配置/录制工具）订阅时才会触发重传风暴
+  （实测 reliable-reliable 组合 p99 108 ms）。
+- 动作：把发布者改成 `rclcpp::SensorDataQoS()`（与 `rak_stereo_driver` 既有约定、ADR-0014 一致）。
+  **⚠ 该文件（`astra_bridge_node.cpp`）当前有另一会话的在制品（2026-10-14 15:08）**，
+  为避免冲突，此改动**待其落定后合入**。
 
-### 3.2 内核 UDP 缓冲上限持久化
-- 现状：`net.core.rmem_max = wmem_max = 212992`（208 KB）。
-- 改动：`/etc/sysctl.d/99-rak-ipc.conf` 写 `net.core.rmem_max=16777216`、`net.core.wmem_max=16777216`（已临时生效）。
-- 收益：reliable 场景 p99 108 → 42 ms；BE 场景无副作用（本次已实测）。
-- 风险：低（只抬上限，不改默认）。
+### 3.2 内核 UDP 缓冲上限持久化 —— ✅ 已实施（2026-10-14）
+- 原状：`net.core.rmem_max = wmem_max = 212992`（208 KB）→ 已写入
+  `/etc/sysctl.d/99-rak-ipc.conf`：`rmem_max = wmem_max = 16777216`（16 MB），现已生效且开机持久。
+- 收益：reliable 场景 p99 108 → 42 ms（实测）；best-effort 场景无副作用。
+- 回滚：删该文件 + `sysctl --system`。
 
-### 3.3 CycloneDDS 配置加 `MaxMessageSize`
-- 现状：默认分片小（61 MB/s 时 61 000+ UDP 包/8 s）。
-- 改动：`cyclonedds.xml` 的 `<Domain id="47"><Internal>` 加 `<MaxMessageSize>65500</MaxMessageSize>`
-  （**已验证 0.10.5 接受**；`SocketReceiveBufferSize`/`<Socket>` 写法被拒，不要再试）。
-- 收益：分片 ~4×↓、p50 3.68 → 2.44 ms。
-- 风险：低（纯内部参数）。
+### 3.3 CycloneDDS `MaxMessageSize` —— ✅ 已实施（2026-10-14）
+- 原状：默认分片很小（61 MB/s 时 8 s 内 3 万余个 UDP 包）。
+- 已写入 `cyclonedds.xml`：`<Domain id="47"><Internal><MaxMessageSize>65500</MaxMessageSize></Internal>`
+  （**已验证 0.10.5 接受**；`SocketReceiveBufferSize`/`<Socket>` 两种写法均被 schema 拒，勿再试）。
+- 实测效果（多次重测，诚实口径）：**UDP 分片/数据包数 −4×**（数据包计数证据）；
+  端到端 p50 的收益**落在噪声内**（3.56–3.72 ms 波动，早前单次 2.44 ms 不具复现性）。
+  保留理由：分片数下降是结构性收益，无副作用。
 
-### 3.4 彩色流决策 + astra 驱动契约修复（阻断项）
+### 3.4 彩色流决策 + astra 驱动契约（另一会话在制，本报告不重复动）
 - 现状：彩色 92 MB/s 是唯一会真丢帧的档位；`gemini335l.yaml` 注释亦言"无人读"。
-- **新发现（本次实测）**：Astra S 上 `astra_node` **启动即崩**：
-  `Start stream failed, OB_SENSOR_COLOR Match openni video mode failed` → 异常 abort。
-  根因：驱动**硬性要求彩色+深度同时存在**（`throw std::runtime_error("Astra requires supported color and depth profiles")`），
-  且选中的彩色 profile 在 SDK 侧打不开 → 与 ADR-0014 "**深度必修、彩色可选**" 契约不符。
-- 建议：① 驱动改为"彩色可失败/可缺省，深度必须成功"（按契约）；② 配置侧默认关闭或降规格彩色。
-- 风险：中（碰驱动代码，需相机在场回归）；但**当前彩色路径本来就是坏的**。
+- **实测发现（2026-10-14）**：Astra S 上彩色 MJPG（含 320×240）**全部启动失败**
+  （`Match openni video mode failed`），HEAD 版驱动因此启动即 abort；且 HEAD 版**深度选了列表第一个
+  = 160×120**（过小）。
+- **在制进展**：`astra_bridge_node.cpp` 已有另一会话（15:08）的未提交改动：**逐 深度×彩色 组合试启动 +
+  全失败时退化为纯深度**（方向与本建议一致，且满足 ADR-0014"深度必修、彩色可选"）。
+  → 本报告不改该文件；待其落定后由相机域回归（本仓我方尝试的隔离构建在 CMake 4.4 下 configure 失败，
+  未完成真机验证）。
 
 ### 3.5 明确不做
 - **不换 rmw**（FastDDS 本负载丢帧显著更差）。
@@ -112,3 +118,16 @@ cd ~/ipc_bench_ws && source /opt/ros/jazzy/setup.bash && colcon build --packages
 - 首版矩阵**先起发布、1.5 s 后起订阅** → "交付率 81%" 其实只是两个时间窗的重叠比例
   （240 − 1.5×30 = 195）。修正为**先起订阅端**后，61 MB/s 交付率 = **100%**。
   **结论：大流量的"丢帧"结论必须先排除测量窗口错位，再谈传输层。**
+
+## 7. 本轮实施记录（2026-10-14）
+
+| 项 | 状态 | 落点 |
+|---|---|---|
+| ② 内核缓冲持久化 | ✅ 已实施 | `/etc/sysctl.d/99-rak-ipc.conf`（16 MB，开机生效） |
+| ③ CycloneDDS MaxMessageSize | ✅ 已实施 | `src/rak_bringup/config/cyclonedds.xml`（分片 −4×；延迟增益在噪声内） |
+| ① 图片流 QoS | ⏸ 暂缓（在制文件冲突） | 待 `astra_bridge_node.cpp` 的在制品落定后改 SensorDataQoS |
+| ④ 彩色/驱动契约 | 🔄 另一会话在制 | 其改动已含"逐组合试 + 纯深度退化"（与本建议一致） |
+
+回归（61 MB/s 跨进程，②③ 生效后）：**240/240 零丢帧**、p50 3.56 ms、p99 8.85 ms、CPU 8%+5%；
+92 MB/s：145/240（**彩色档结构性丢帧，与 ②③ 无关**，根治=组件化零拷贝或关掉彩色）；
+单进程 intra：240/240、p50 0.18 ms、CPU 3%。
