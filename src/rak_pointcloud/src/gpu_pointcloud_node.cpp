@@ -16,6 +16,7 @@
 #include <cuda_runtime.h>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_components/register_node_macro.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -30,7 +31,10 @@ namespace rak::pointcloud
 class GpuPointCloudNode : public rclcpp::Node
 {
 public:
-  GpuPointCloudNode() : rclcpp::Node("gpu_pointcloud")
+  // [AI] 组件化: 接受 NodeOptions(launch_ros 的 ComposableNode 用它传 use_intra_process_comms
+  // 等选项); 默认构造保持向后兼容, 单独可执行的行为不变。
+  explicit GpuPointCloudNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
+  : rclcpp::Node("gpu_pointcloud", options)
   {
     depth_topic_ = declare_parameter("depth_topic", std::string("/camera/depth/image_raw"));
     info_topic_ = declare_parameter("camera_info_topic", std::string("/camera/depth/camera_info"));
@@ -172,6 +176,10 @@ private:
 };
 
 }  // namespace rak::pointcloud
+
+// [AI] 组件注册: 供 component_container 以 "rak::pointcloud::GpuPointCloudNode" 加载。
+// 文件内的 main() 仍保留(见下), 由 CMake 生成的同名可执行使用组件路径, 行为等价。
+RCLCPP_COMPONENTS_REGISTER_NODE(rak::pointcloud::GpuPointCloudNode)
 
 int main(int argc, char ** argv)
 {

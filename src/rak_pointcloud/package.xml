@@ -7,6 +7,8 @@
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
+  <!-- [AI] L2 组件化: 组件库 + component_container(launch 引用) -->
+  <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
   <depend>rak_gpu</depend>
   <exec_depend>launch</exec_depend>

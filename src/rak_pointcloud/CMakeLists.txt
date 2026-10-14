@@ -10,6 +10,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(rak_gpu REQUIRED)
 find_package(CUDAToolkit REQUIRED)
@@ -27,14 +28,20 @@ target_include_directories(depth_to_xyz PUBLIC
 )
 target_link_libraries(depth_to_xyz PUBLIC CUDA::cudart)
 
-add_executable(gpu_pointcloud_node src/gpu_pointcloud_node.cpp)
+# [AI] 组件化: 同一份源码同时产出 (a) 可加载组件库 与 (b) 同名独立可执行
+# (rclcpp_components_register_node 生成, 现有 launch 里的 gpu_pointcloud_node 不变)。
+add_library(gpu_pointcloud_component SHARED src/gpu_pointcloud_node.cpp)
+rclcpp_components_register_node(gpu_pointcloud_component
+  PLUGIN "rak::pointcloud::GpuPointCloudNode"
+  EXECUTABLE gpu_pointcloud_node)
 
-ament_target_dependencies(gpu_pointcloud_node
+ament_target_dependencies(gpu_pointcloud_component
   rclcpp
+  rclcpp_components
   sensor_msgs
 )
 
-target_link_libraries(gpu_pointcloud_node
+target_link_libraries(gpu_pointcloud_component
   depth_to_xyz
   rak_gpu::gpu
   CUDA::cudart
@@ -44,6 +51,12 @@ target_link_libraries(gpu_pointcloud_node
 # Orin is sm_87. Building the default arch list would compile the kernel a dozen
 # times for hardware that is not on this board.
 set_target_properties(depth_to_xyz PROPERTIES CUDA_ARCHITECTURES 87)
+
+install(TARGETS gpu_pointcloud_component
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
 
 install(TARGETS gpu_pointcloud_node
   DESTINATION lib/${PROJECT_NAME}
@@ -59,5 +72,5 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-ament_export_dependencies(rclcpp sensor_msgs rak_gpu CUDAToolkit)
+ament_export_dependencies(rclcpp rclcpp_components sensor_msgs rak_gpu CUDAToolkit)
 ament_package()

@@ -86,21 +86,27 @@
 - **不换 rmw**（FastDDS 本负载丢帧显著更差）。
 - **不动团队 DDS 接口/多播配置**（lo/关多播均无收益）。
 
-## 4. L2 组件化（下一步，收益已量化）
+## 4. L2 组件化（进行中，2026-10-14）
 
-把本仓 C++ 节点（`astra_bridge`、`gpu_pointcloud`、`capture` 等）做成 rclcpp **composable
-components**，装进 1–2 个 `component_container`（感知容器 / 控制容器），容器内开
-`use_intra_process_comms(true)`：
+**已落地**：
+- `rak_pointcloud` 的 `gpu_pointcloud_node` 已转为 rclcpp **composable component**
+  （构造接受 `NodeOptions` + `RCLCPP_COMPONENTS_REGISTER_NODE`；CMake 同源产出组件库与
+  **同名独立可执行**，现有 launch 零改动——已实测独立可执行行为等价）；`package.xml` 补
+  `rclcpp_components`；门禁 `check_workspace.py` 通过。
+- 新容器入口 `rak_pointcloud/launch/perception_container.launch.py`：
+  `component_container_mt` + ComposableNode，`intra:=true|false` 可切（两种模式均实测可加载）。
+- **容器端到端实测**（容器内组件 + 外部合成深度流 61 MB/s）：`/camera/depth/points_gpu`
+  输出 **24–26 Hz**（1280×800 全分辨率 decimation=1，≈370 MB/s 输出——比输入流重 6 倍，
+  抽稀系数 `decimation` 是现成的减压阀）；容器进程 RSS ~372 MB（含 CUDA 上下文）。
 
-| 指标 | 跨进程（现状） | 进程内零拷贝（目标） |
-|---|---|---|
-| 交付 | 92 MB/s 丢 40% | **零丢帧（全规格）** |
-| p50 延迟 | 2.4–6.4 ms | **0.14 ms** |
-| CPU | ~15%（两进程合计）/流 | **1%（合计）** |
-| 内存 | 18+20 MB | **16 MB（合一）** |
+**待并入（步骤固定，见 launch 头注释）**：
+- `rak_astra_driver/astra_bridge_node.cpp` —— 当前有其他会话在制品，落定后按同一四步组件化。
+  **depth 图像→点云将成为第一条真正的容器内零拷贝链路**（届时 61 MB/s 输入 + 370 MB/s
+  输出都不再经过序列化/网络栈）；
+- `rak_stereo_driver/capture` —— 源已是注册组件，直接加 ComposableNode 即可。
 
-实施要点：vendor 节点（`orbbec_camera`/`lslidar_driver`）保持独立进程；容器内同进程才免拷贝；
-Python 节点（含 1 kHz `spi_imu`）不进容器，单独评估。
+**预期收益（bench 已量化，见 §2 表）**：容器内零拷贝 p50 **0.14–0.18 ms**、零丢帧、CPU 1–3%、
+RSS 减半（对照跨进程 p50 2.4–6.4 ms、92 MB/s 丢 40%）。
 
 ## 5. 复现
 
@@ -127,6 +133,8 @@ cd ~/ipc_bench_ws && source /opt/ros/jazzy/setup.bash && colcon build --packages
 | ③ CycloneDDS MaxMessageSize | ✅ 已实施 | `src/rak_bringup/config/cyclonedds.xml`（分片 −4×；延迟增益在噪声内） |
 | ① 图片流 QoS | ⏸ 暂缓（在制文件冲突） | 待 `astra_bridge_node.cpp` 的在制品落定后改 SensorDataQoS |
 | ④ 彩色/驱动契约 | 🔄 另一会话在制 | 其改动已含"逐组合试 + 纯深度退化"（与本建议一致） |
+| **L2 组件化（gpu_pointcloud）** | ✅ 已组件化 + 容器实测 | `rak_pointcloud`（组件库 + 同名可执行 + `perception_container.launch.py`） |
+| L2 并入 astra/stereo | ⏳ 待 astra 在制品落定 | 四步配方见容器 launch 头注释 |
 
 回归（61 MB/s 跨进程，②③ 生效后）：**240/240 零丢帧**、p50 3.56 ms、p99 8.85 ms、CPU 8%+5%；
 92 MB/s：145/240（**彩色档结构性丢帧，与 ②③ 无关**，根治=组件化零拷贝或关掉彩色）；
