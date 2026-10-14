@@ -209,3 +209,11 @@ cd ~/ipc_bench_ws && source /opt/ros/jazzy/setup.bash && colcon build --packages
 
 **门禁**：`check_workspace.py --installed` 结构全过（含新 launch 的 `--show-args` 与依赖引用）；
 仅余 `453be87` 提交信息已记载的既有红（TensorRT 引擎缺失 → `test_ros_smoke`），与本轮无关。
+
+**遗留发现（第 2 轮收尾时核出，未擅动）**：`CYCLONEDDS_URI` 的接线点是
+`rak_bringup/scripts/environment.sh:30`（`file://…/config/cyclonedds.xml`），但**当天重启前后的
+chassis launch 都没有 source 它**（两个实例的 environ 均无该变量，bashrc 也只设 RMW/域 47）——
+即 §3.3 的 `MaxMessageSize` 写进了配置、bench 里显式传 `TEAMCFG` 时生效，**机器人运行时跑的是
+CycloneDDS 默认配置**。收尾重启刻意保持了与原实例一致的环境（未引入运行时行为变化）。
+要兑现 §3.3，需在操作入口统一 source `environment.sh`（或把该 export 放进 bashrc/launch），
+属运行时 DDS 配置变更，留决策。
