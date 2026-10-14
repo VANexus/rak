@@ -188,7 +188,7 @@ src/rak_moveit_config/
 
 ## 8. 阶段 B（前置条件，不在本轮）
 
-1. `rak_hardware` SystemInterface 落地（ADR-0007），7 路位置命令（6 关节 + 1 夹爪）走 USB。
+1. `rak_hardware` SystemInterface 落地（ADR-0007），7 路位置命令（6 关节 + 1 夹爪）走 USB（传输目标已被 ADR-0016 取代：CAN v4 唯一链路，臂侧 CAN 7 轴接口待实现）。
 2. **零位标定完成**：每个关节的机械零位 ↔ 指令角度映射，回填 URDF origin 与 SRDF `group_state`。
 3. **J1/J4/J6 连续性实测**（D1 风险闭合）。
 4. 关节速度/加速度限位实测回填 `rak_arm_joint_limits.yaml`。

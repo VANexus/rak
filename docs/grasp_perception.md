@@ -157,7 +157,7 @@ export ROS_DOMAIN_ID=77
 ros2 launch rak_bringup grasp_camera.launch.py live_cloud:=false
 # 另一个终端，使用相同 DDS 环境：
 ros2 run rak_grasp_perception capture_snapshot \
-  --output /home/xrak/tools/graspnet/samples/bottle-01 --seconds 30
+  --output /home/xrak/rak/tools/graspnet/samples/bottle-01 --seconds 30
 ```
 
 抓取专用 YAML 启用 RGB，保持两路 1280×800 / 30 fps、未做深度注册；不更改日常导航相机默认配置。

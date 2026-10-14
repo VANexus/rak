@@ -40,7 +40,7 @@ ROS 消息的包名前缀是类型身份的一部分。即使字段相同，
 | 新包/接口 | 当前职责与边界 |
 |---|---|
 | `rak_task_executor` | `/task/execute` Action、`/task/control` Service、`/task/status`；唯一拥有导航任务与 Nav2 goal 生命周期 |
-| `rak_base_driver` | Jetson 到底盘 F407 的 UART v1 host codec/节点；节点默认无端口、禁用硬件、速度限值为零、DISARMED |
+| `rak_base_driver` | **已删除（ADR-0016，2026-10-14）**：曾是 Jetson 到底盘 F407 的串口 host codec/节点（默认无端口、禁用硬件、DISARMED）；删除前快照见 tag `pre-usb-removal-20261013` |
 | `rak_arm_simulation` | 六轴夹具使用的软件轨迹/夹爪 Action server；不含 physics 或 ros2_control 硬件接口 |
 | `rak_interfaces` 新类型 | `ExecuteTask`、`TaskControl`、`TaskStatus`、`BaseTelemetry`；是加法接口，不取代旧决策消息 |
 
@@ -49,11 +49,11 @@ ROS 消息的包名前缀是类型身份的一部分。即使字段相同，
 `task_simulation.launch.py` 使用 fake Nav2 与命令运动估算，不表示真实底盘反馈。
 
 Nav2 新链为 Omni MPPI → velocity smoother → collision monitor → 最终 `/cmd_vel`
-适配器。当前工作区的 `task_navigation.launch.py` 还增加了 `hardware` 末端选项，
-在顶层 bringup 连接 UART 主机节点；launch 默认仍为 `sim`，硬件开关默认关闭。
-该路径已通过安装态 launch 解析和模式映射检查，但没有真实设备运行验证。
-UART v1 的主机格式见 [协议文档](protocol/jetson_f407_uart_v1.md)；仓库没有匹配的
-F407 固件，因此规范、codec 与 PTY 验证不构成实机兼容声明。
+适配器。`task_navigation.launch.py` 的 `motion_backend` 只有 `sim`/`stub` 两个值，
+默认 `sim`；`hardware` 末端选项与顶层 bringup 的串口主机节点已随 USB v2 链路按
+ADR-0016（2026-10-14）删除。真底盘经 `chassis_bringup.launch.py` →
+`mecanum_drive_controller` → `rak_chassis` → CAN（`can_channel` 默认 `can0`，
+`allow_motion` 默认 false）。链路冒烟用 `scripts/can_link_smoke.py can0`。
 
 `rak_description` 中新增的六轴模型、MoveIt SRDF 和限位仅为测试 fixture，独立于
 原五轴 demo。不得将 fixture 尺寸、限位或动作服务器用于真实机械臂。
@@ -161,14 +161,14 @@ CTest 21 项、任务/机械臂 pytest 4 项、UART pytest 13 项以及两组 br
 | 旧 | 新 | 说明 |
 | --- | --- | --- |
 | `src/rak_hardware` | `src/rak_chassis` | 更名。C++ 命名空间 `rak_hardware`→`rak_chassis`；插件名 `rak_hardware_plugin`→`rak_chassis_plugin`；ros2_control 查找名 `rak_hardware/RakSystemHardware`→`rak_chassis/RakSystemHardware`（`rak_chassis.urdf.xacro` 同步） |
-| `src/rak_drive_tui` + `src/rak_arm_tui` + `src/rak_navigation/scripts/chassis_key_test` | `src/rak_commissioning` | 全部标定/示教/调试入口；chassis_key_test 由裸脚本转正为 entry point |
+| `src/rak_drive_tui` + `src/rak_arm_tui` + `src/rak_navigation/scripts/chassis_key_test` | `src/rak_commissioning` | 全部标定/示教/调试入口；chassis_key_test 由裸脚本转正为 entry point（两个直连 TUI 已按 ADR-0016 删除，现仅剩 `chassis_key_test`） |
 | `src/rak_sensor_bringup` | 并入 `src/rak_bringup` | launch/config/udev/test 全部迁移 |
 | `src/rak_navigation` | 并入 `src/rak_bringup` | slam/nav2 launch 与 nav2_params 等迁移；包撤销 |
 | `src/rak_chassis_bringup` | 并入 `src/rak_bringup` | `chassis_bringup.launch.py` + `chassis_controllers.yaml` 迁移 |
 | `brain/` | `src/rak_agent` | 模块 `rak_ai` → `rak_agent`；config.toml 随迁 |
 | `brain/rak_ai/task_intent.py` | `src/rak_intent/rak_intent/task_intent.py` | 抽出为共享领域库；executor/speech 改依赖 `rak_intent` |
 | `brain/tests/test_task_intent.py` | `src/rak_intent/test/` | 其余测试迁 `src/rak_agent/test/` |
-| `src/rak_can_driver`、`src/rak_serial_link` | `attic/` | CAN v3 栈退役（ADR-0012）；COLCON_IGNORE，不构建 |
+| `src/rak_can_driver`、`src/rak_serial_link` | **已删除**（2026-10-10，`attic/` 归档亦删，仅存 git 历史） | CAN v3 栈退役（ADR-0012/0013），不构建、不维护 |
 
 ### 命令与路径变更
 
@@ -182,8 +182,6 @@ CTest 21 项、任务/机械臂 pytest 4 项、UART pytest 13 项以及两组 br
 | `ros2 launch rak_sensor_bringup lidar|astra|stereo.launch.py` | `ros2 launch rak_bringup ...` |
 | `ros2 launch rak_chassis_bringup chassis_bringup.launch.py` | `ros2 launch rak_bringup chassis_bringup.launch.py` |
 | `ros2 launch rak_navigation chassis_test.launch.py` | `ros2 launch rak_commissioning chassis_test.launch.py` |
-| `ros2 run rak_drive_tui drive_tui` | `ros2 run rak_commissioning drive_tui` |
-| `ros2 run rak_arm_tui arm_servo_tui` | `ros2 run rak_commissioning arm_servo_tui` |
 | episode 语料 `brain/data/episodes/` | `data/episodes/`（仓库根） |
 | `brain/config.toml` | `src/rak_agent/config.toml` |
 

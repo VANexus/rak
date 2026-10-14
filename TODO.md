@@ -39,7 +39,7 @@
 | 门类 | 负责域 | 条目 | 门禁 |
 |---|---|---|---|
 | **A 下位机 / 固件**（下位仓协作） | F407 固件、协议 | P0-1③（下行改 4 轮速度+6 关节位置、移除 `app_car.c` 麦轮 IK）、P0-2（lease 200 ms 签字）、P0-4 前置（build_tag/协议/feature bits 确认） | 硬 |
-| **B 上位机运动 / 底盘链路** | `ros2_control`、传输、实车 | P0-1（`rak_chassis` 插件、URDF 标签、spawner、`enable_odom_tf:false`）、P0-4（UART 实车六步验收上位侧）、P1-5（WBC/HQP 上车） | 硬 |
+| **B 上位机运动 / 底盘链路** | `ros2_control`、传输、实车 | P0-1（`rak_chassis` 插件、URDF 标签、spawner、`enable_odom_tf:false`）、P0-4（CAN 实车六步验收上位侧）、P1-5（WBC/HQP 上车） | 硬 |
 | **C 传感器 / 内核集成** | 接线、overlay、驱动 | P0-5（IMU 接线/overlay/IIO→`sensor_msgs/Imu` 桥）、P3-5（末端相机选型+内参+手眼标定） | 硬（IMU 桥节点为软） |
 | **D 状态估计 / SLAM / 导航** | EKF、rf2o、Nav2、坐标系 | P1-1（四路融合 F1→F3）、P1-2（`odom_source:=ekf` 真实现）、P1-3（STVL 3D 避障）、P1-4（融合 SLAM）、P1-6（坐标系数值回填+REP-120 复测） | 混合（P1-2 为软） |
 | **E 感知栈 / 算力** | 点云、检测、算力裁定 | P2-1（算力分配裁定）、P2-2（DeepStream/Holoscan 结论+样例）、P2-3（深度点云管线）、P2-4（视觉+点云融合→`TrackedObjects`）、P2-5（超远物体建模） | 裁 + 硬 |
@@ -57,9 +57,9 @@
 ### P0-1 迁移到统一 `ros2_control` 架构（当前最大任务）
 
 - **目标**：全机改走 `ros2_control` —— 底盘 `mecanum_drive_controller`、
-  机械臂 `joint_trajectory_controller`、一个 `hardware_interface::SystemInterface` 插件走 USB。
-- **依据**：**ADR-0007（取代 ADR-0001）**。硬件前提已变：只剩一块 F407 同时管 4 轮 + 6 舵机，
-  CAN 失效，Jetson 只走 USB。
+  机械臂 `joint_trajectory_controller`、一个 `hardware_interface::SystemInterface` 插件走 CAN v4。
+- **依据**：**ADR-0007（取代 ADR-0001）**。硬件前提已变：只剩一块 F407 同时管 4 轮 + 6 舵机
+ （2026-10-14 起 Jetson↔F407 走 CAN v4 唯一链路，ADR-0016）。
 - **要做**：① 写 `rak_chassis` C++ 插件（4 轮 velocity + 6 关节 position）；
   ② URDF 加 `<ros2_control>` 标签；③ 固件协议改为"4 轮速度 + 6 关节位置"下行、
   "4 轮速度/位置 + 6 关节位置"上行（**移除 `app_car.c` 的麦轮 IK**）；
@@ -80,30 +80,33 @@
   （`vehical_rak_chassis/docs/UART-v1-ALIGN.md`：电机 PWM 运行时 USART ORE 丢字节，
   50 ms 必触发超时锁存；IRQ 优先级 7→4 后 ORE 降 84%）。
 - **前置**：团队批准 200 ms 作为台架/实车过渡值。
-- **验收**：`node.py` 发 200 ms lease，实车行驶 5 min 无 lease 超时锁存；拔线后 MCU 在
-  lease 内独立停止。
+- **验收**：上位机按协议发 200 ms lease，实车行驶 5 min 无 lease 超时锁存；断开链路后 MCU 在
+  lease 内独立停止。（原验收载体 `rak_base_driver/node.py` 已随 ADR-0016 删除，需以 CAN 侧
+  实现重做。）
 - **风险**：200 ms 意味着**断联后底盘最多再走 200 ms** —— 高速下的滑行距离必须核算。
 - **关联**：ADR-0003 §A1
 
 ### P0-3 ~~裁定"Jetson 是否在 CAN 总线上"~~ ✅ 已裁定
 
 - **结论（2026-10-05 用户确认）**：Jetson 只通过 USB 与下位机通信——**已被 ADR-0012
-  （2026-10-09）取代：CAN v4 恢复唯一主链路，USB v2 冻结备用**，`Session` 抽象切换。
+  （2026-10-09）取代：CAN v4 恢复主链路；再被 ADR-0016（2026-10-14）取代：USB v2
+  链路删除，CAN v4 是唯一传输**，`Session` 抽象切换。
 - **遗留动作 [2026-10-09 完成]**：`rak_can_driver` 与 `rak_serial_link`（CAN v3 host 栈）
   已删除（2026-10-10 用户裁定，原 `attic/` 本地归档不再保留；代码仅存 git 历史）；
   活 CAN 路径 = `src/rak_chassis` 的 `CanSession`。
 - **关联**：ADR-0003 §A3（已更新）、ADR-0007
 
-### P0-4 底盘 UART 实车验收
+### P0-4 底盘链路实车验收（CAN v4）
 
 - **目标**：从"launch 能解析"走到"真实 F407 上跑通"。
 - **前置**：下位机固件确认（build_tag / 协议版本 / feature bits）。
 - **验收**：严格按 [`hardware_acceptance.md`](hardware_acceptance.md) §Staged Base Test 六步：
-  PTY 回归 → 只读握手 → 拔线/超时/E-stop 撤销 → 轮子离地单轴低速 → 软件暂停与物理急停分开 →
+  链路冒烟（`python3 scripts/can_link_smoke.py can0`，10/10 通过）→ 只读遥测 →
+  拔链路/超时/E-stop 撤销 → 轮子离地单轴低速 → 软件暂停与物理急停分开 →
   围栏地面测试。
 - **风险**：上位机文档仍写"仓库没有匹配的 F407 固件"，**该声明已过期**（ADR-0003 §A5），
   会误导验收准备。先更正文档。
-- **关联**：ADR-0003 §A5、`docs/CONSTRUCTION.md` §6
+- **关联**：ADR-0003 §A5、ADR-0016、`docs/CONSTRUCTION.md` §6
 
 ### P0-5 IMU（LSM6DSRTR）接入
 
@@ -323,9 +326,10 @@
 - **前置**：拿到真实几何/限位/映射（`hardware_acceptance.md` §Arm Unlock Gates 七项）。
 - **形态**（ADR-0008）：**标准 6 轴** + **舵机夹爪**（第 7 个 PWM 舵机）+ 末端摄像头。
   现有五轴 URDF 与六轴夹具**都要重建**。
-- **进度 [2026-10-08]**：固件 R42 已打通 USB v2 `ARM_COMMAND`（7 轴 µrad）→ 舵机 PWM
-  落地（轴序/限位/零位见下位机 `app_car.h`）；Jetson 侧新增示教 TUI（50 Hz ARM_COMMAND + ARM_STATE 回显；2026-10-09 起为
-  `src/rak_commissioning` 的 `arm_servo_tui`）。**剩余**：`rak_chassis`
+- **进度 [2026-10-08]**：固件 R42 曾打通 USB v2 `ARM_COMMAND`（7 轴 µrad）→ 舵机 PWM
+  落地（轴序/限位/零位见下位机 `app_car.h`）。USB v2 链路与直连示教 TUI 已按 ADR-0016
+  （2026-10-14）删除；臂命令待改走 CAN（7 轴 `ARM_COMMAND` 接口未实现，ADR-0012/0016
+  待闭合项），示教工具按 ADR-0016 决策 2（只经 ROS 接口）重建。**剩余**：`rak_chassis`
   ros2_control SystemInterface 插件 + `joint_trajectory_controller` 接入。
 - **验收**：`ros2_control` 硬件接口 + `JointTrajectoryController`，插值/刷新率按固件定。
 - **风险**：**不要把 25 kHz 电机环搬到 ROS**（`docs/architecture.md` §4）。
@@ -394,5 +398,4 @@
 - zram（zstd 50%）+ 4 GB swapfile —— **改变了 `CLAUDE.md` 记录的内存前提**；
 - `nvpmodel -m 0` + `jetson-clocks` 开机自启；
 - 40-pin UART udev 别名 `/dev/robot_uart` → `ttyTHS1`
-  （⚠️ 与项目约定的 USB-UART / `/dev/wheel_motor` 不一致。按 ADR-0007，底盘走 **USB**，
-  这个 40-pin 别名与底盘链路无关，应清理或明确其归属）。
+  （⚠️ 与底盘链路无关——底盘走 CAN v4（ADR-0016），该 40-pin 别名应清理或明确其归属）。

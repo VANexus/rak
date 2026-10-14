@@ -1,9 +1,9 @@
 # 分层具身智能架构
 
 状态：统一包迁移与软件任务闭环已实现。文字任务、fake Nav2
-暂停/恢复/取消、UART v1 主机/固件以及隔离六轴动作夹具均有软件实现。
-目标 UART v2 的 Jetson 与 F407 独立 codec 已通过 golden vector，但尚未接入控制
-endpoint；真实 v2 互操作、传感器 Nav2 和整车安全验收仍未完成。README 是工程入口，当前进度汇总见
+暂停/恢复/取消以及隔离六轴动作夹具均有软件实现。CAN v4（SocketCAN）链路已通过
+冒烟验收（2026-10-13，`scripts/can_link_smoke.py can0` 10/10；USB v2 链路已按
+ADR-0016 删除），但传感器 Nav2 和整车安全验收仍未完成。README 是工程入口，当前进度汇总见
 [项目总体状态](project_status.md)。
 
 ## 1. 目标与硬件事实
@@ -71,18 +71,19 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_task_executor` | 单一任务状态机、Nav2 Action 生命周期；意图解析来自 `rak_intent` | 原始底盘/关节命令、感知算法 |
 | `rak_speech` | 离线 ASR（Vosk）：输入为 audio_common `/audio`（`audio_capture` 采阵列）或 arecord 直采 → 转写 + 意图发布；板端唤醒/方位桥（`vtn_node` → `/speech/wake`）；离线 TTS（`tts_node` → `/audio_out` → `audio_play`） | 下发目标、速度/关节命令 |
 | `rak_wbc`（ADR-0011） | 全身运动仲裁：100 Hz 速度级 HQP（Pinocchio + OSQP）、底盘与臂的单一常规写入者；数值层桌面可回归 | 安全裁决、任务生命周期、直接读感知/决策 |
-| `rak_base_driver` | USB v2 编解码（commissioning 共用）；UART v1 历史节点 | v2 硬件接口 endpoint、MCU 实时环、安全认证 |
-| `rak_chassis` | `ros2_control` SystemInterface + `Session` 传输抽象（CAN v4 主 / USB v2 备，ADR-0012；当前导出 4 轮接口；臂接口待加） | 运动学仲裁、轮/臂语义重定义、上层传输分支 |
-| `rak_commissioning` | `drive_tui` / `arm_servo_tui` / `chassis_key_test` + `chassis_test.launch.py` | 生产运动接口、安全认证 |
+| `rak_chassis` | `ros2_control` SystemInterface + `Session` 传输抽象（唯一实现 `CanSession`，CAN v4 唯一传输，ADR-0012/0016；当前导出 4 轮接口；臂接口待加） | 运动学仲裁、轮/臂语义重定义、上层传输分支 |
+| `rak_commissioning` | `chassis_key_test` + `chassis_test.launch.py` | 生产运动接口、安全认证 |
 | `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
 | `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |
 | `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
 | `rak_agent` | 当前 S1/S2 认知原型 | 电机驱动、同步等待云端后控制 |
 | `rak_harness`（**待创建**，ADR-0010） | Harness 慢路径：任务上下文、工具白名单、预算/超时/事件摘要/失败恢复；独立 `anthropic` 客户端 | 速度/关节命令、第二生命周期所有者、实时安全裁决 |
-| `rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent/base_uart）、参数、udev、Cyclone DDS（运行 domain 47）、操作入口（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） | 通用算法或传感器 SDK |
+| `rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent）、参数、udev、Cyclone DDS（运行 domain 47）、操作入口（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） | 通用算法或传感器 SDK |
 
 退役 CAN v3 host 栈（`rak_can_driver`、`rak_serial_link`，ADR-0012/0013）的本地 `attic/`
-归档已于 2026-10-10 删除，代码仅存 git 历史。
+归档已于 2026-10-10 删除，代码仅存 git 历史。USB v2 传输链路及其包、直连 TUI、
+串口脚本与 `docs/protocol/` 已按 **ADR-0016**（2026-10-14）删除，删除前状态在
+git tag `pre-usb-removal-20261013`。
 
 关键依赖方向（箭头表示“依赖”）：
 
@@ -91,12 +92,11 @@ rak_agent ------------> rak_interfaces ---> 标准 ROS 消息
 rak_stereo_driver ----> rak_gpu ----------> JetPack SDK
 rak_task_executor ----> rak_interfaces / rak_intent / Nav2 Action
 rak_speech -----------> rak_intent / rak_interfaces / audio_common_msgs（/audio、/audio_out）
-rak_base_driver -----> rak_interfaces / serial
-rak_commissioning ----> rak_base_driver（USB v2 编解码共用）
+rak_commissioning ----> 标准 ROS 消息（Twist；经驱动节点对话，不直连硬件）
 rak_arm_simulation --> standard trajectory/gripper actions
 rak_moveit_config ----> rak_description / rak_arm_simulation (simulation only)
 rak_wbc -------------> rak_description（臂 URDF 合并） / mecanum reference / 臂位置控制器（待建）
-rak_chassis ----------> CAN v4（SocketCAN 主）/ USB v2（备用） — Session 抽象之后上层无感
+rak_chassis ----------> CAN v4（SocketCAN，唯一传输） — Session 抽象之后上层无感
 rak_bringup ----------> 各能力的启动入口（含 rak_agent，唯一被允许的决策层依赖者）
 ```
 
@@ -200,20 +200,19 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 当前 `brain` 回调先推理再 resolve，不能作为实时防碰撞保证。
 安全许可应落实到命令出口，MCU 还要独立处理断联、使能和超时。
 
-`rak_base_driver` 的旧节点实现 UART v1 机体速度命令、状态发布和显式 ARM 服务，
-默认不打开串口且保持 DISARMED。F407 R16-R18 曾实现并台架运行 v1；v1 不提供轮编码器
-里程计或机械臂接口。ADR-0007 的目标是 UART v2 四轮速度 + 关节位置协议：
-host Python codec 与 F407 standalone codec 已通过软件 golden vector，但 v2 尚未接入
-串口、控制环或 ROS hardware plugin。只有完整 endpoint 与实机验收后才能声明互通。
-CAN 双板链路已失效并保留为历史资料。
-
-顶层 `rak_bringup` 的 launch 提供 `motion_backend:=hardware`，并在 bringup 层启动 UART
-节点；`rak_navigation` 不依赖上层 bringup。该路径已通过安装态解析和模式映射检查，
-但没有运行 Nav2 或连接设备。组合 launch 默认 `sim`；
-硬件路径的 `hardware_enable` 默认 false，节点不会打开已配置的串口。直接启动
-`BaseUartNode` 时默认无端口；bringup launch 则默认传入稳定别名
-`/dev/wheel_motor`，但在硬件开关关闭时不会访问设备。驱动的三个速度限值必须都是
-有限正数才允许 ARM；`0.0` 不是不限速或透传。
+底盘链路的唯一传输是 CAN v4（SocketCAN，ADR-0012/0016）：真底盘经
+`chassis_bringup.launch.py` 启动 `controller_manager` → `mecanum_drive_controller` →
+`rak_chassis`（`CanSession`）→ `can0` → F407；`rak_navigation` 不依赖上层 bringup。
+`task_navigation.launch.py` 的 `motion_backend` 只有 `sim`/`stub` 两个值，默认 `sim`，
+组合 launch 本身不连接任何设备。链路安全门是 `chassis_bringup.launch.py` 的
+`allow_motion`（默认 false，硬件只握手+遥测、零目标），`can_channel` 默认 `can0`。
+另有 `wheel_sign`（默认 `-1 1 -1 1`，顺序 FL FR RL RR）承载**实测的每轮极性装配事实**：
+2026-10-14 标定出左侧 FL/RL 电机装向与右侧相反，`rak_system.cpp` 对该轮的命令与反馈
+成对取反，使 ROS 的"正速度 = 向前滚"成立。代码层兜底保持中性 `1 1 1 1`，不写死某台车的
+接线；换轮或重接线后要重新标定。
+工具与上层只准经 topic/action/service 与驱动节点对话，不得直连硬件（ADR-0016）；
+链路冒烟用 `scripts/can_link_smoke.py can0`，限速、断联/E-stop 与人工监督低速测试
+仍按 `hardware_acceptance.md` 执行，launch 可解析不构成安全证明。
 
 机械臂推荐对接 `ros2_control` 的硬件接口与轨迹控制器，
 但插值位置、刷新率和反馈协议必须按实际固件确定，不能把 25 kHz 电机环搬到 ROS。
@@ -257,8 +256,8 @@ CAN 双板链路已失效并保留为历史资料。
 |---|---|---|
 | A：包迁移 | 已完成，详见 `docs/migration.md` | 全工作区构建、安装检查、旧 AI 回归 |
 | B：任务内核 | 软件实现；fake Nav2 覆盖成功、重复请求、暂停/确认/恢复、服务取消和 Action 取消 | 到达/暂停竞态、各种超时、慢规划迟到、重启等剩余竞态仍需扩测 |
-| C：Nav2 接入 | Action、waypoint 和全向参数已接入；hardware 末端 launch 静态检查通过 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链；确认每种 backend 单写者 |
-| D：硬件闭环 | UART v1 host/firmware 曾台架运行；v2 host/MCU standalone codec 有软件向量 | v2 endpoint、里程计/IMU、断联/E-stop、限速与人工监督低速测试 |
+| C：Nav2 接入 | Action、waypoint 和全向参数已接入 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链；确认每种 backend 单写者 |
+| D：硬件闭环 | CAN v4 链路冒烟通过（2026-10-13：`can_link_smoke.py can0` 10/10，BAT≈12500 mV、FAULT=0、BUSOFF=0）；`rak_chassis` 四轮接口过底盘冒烟（固件 R37）；7 轴位置接口 + `arm_controller`/`gripper_controller` 已在实机带起，j1 点动 + Home 往返实动验收通过（2026-10-14：`allow_motion:=true` 下 ARM_CMD 帧级验证，0.1° 量化爬升/回落，回读跟随，无故障） | 里程计/IMU、断联/E-stop、限速与人工监督低速测试；**J2–J6 实动、运动中限位与失联停机、夹爪**（无硬件通道） |
 | E：语音与智能体 | 文字 CLI 已有；ASR 已接阵列硬件（2026-10-10：阵列 → `/audio` → Vosk，实测解码 0.84–1.01× 实时，超预算淘汰最旧音频），TTS 未接入；task 与 S1/Harness 仲裁**已定义（ADR-0010）但未实现** | 阵列声学段真人说话验收、无网络本地打断、旧提案拒绝、误识别处理、harness 路径端到端延迟与表达 stub 落地 |
 | F：机械臂 | 六轴隔离夹具和软件动作服务器已实现 | 真实几何/限位/映射/失联策略确认后再做实机适配 |
 
@@ -274,8 +273,9 @@ CAN 双板链路已失效并保留为历史资料。
 - `rak_task_executor` 的慢规划目前只是可选 RAI 地点选择。**ADR-0010 已定义** Jev/Harness
   的统一仲裁缝与契约，但 `src/rak_harness` 与 `harness_node` 尚未实现，
   所以这条现在仍是缺口，只是从"没有设计"变成了"有设计、待实现"。
-- `scripts/serial_link_test.py` 是拒绝执行旧 CRC-8 实体串口协议的兼容入口；
-  UART v1 PTY-only 测试入口是 `scripts/serial_100hz.py`。
+- `scripts/serial_link_test.py` 与 `scripts/serial_100hz.py` 已随 USB v2 链路删除
+  （ADR-0016）；链路排障改用 `scripts/can_link_smoke.py`、
+  `ip -details -statistics link show can0` 与 `dmesg | grep -i can`。
 
 这些缺口必须在对应阶段关闭；不能以构建、launch 可解析或仿真测试通过作为实车安全证明。
 具体门槛见 [硬件验收清单](hardware_acceptance.md)。

@@ -7,7 +7,7 @@
 - **前置文档：**
   - `docs/adr/0011-wbc-hqp-motion-arbitration.md`（决策与写权纪律）
   - `docs/adr/0007-unified-ros2-control.md`（执行层目标架构）
-  - `docs/protocol/usb_serial_v2.md`（100 Hz 命令、lease、臂超时保持）
+  - `docs/protocol/usb_serial_v2.md`（100 Hz 命令、lease、臂超时保持；**已按 ADR-0016 删除**，快照 tag `pre-usb-removal-20261013`）
   - `src/rak_description/urdf/properties_arm.xacro`（臂实测标定，单点定义）
   - `docs/superpowers/specs/2026-10-07-rak-arm-moveit2-design.md`（臂规划链，不重叠）
 
@@ -41,7 +41,7 @@ pytest 可直接回归；后者只做 I/O 与状态机。
 | 底盘速度盒 `[0.25, 0.15, 0.5]` | 占位 | ADR-0006 记录的 Nav2 占位口径 |
 | 支撑域半长/半宽 `0.15 m` | 占位 | 由 `K` 反推的保守值，TODO(measured) |
 | 麦轮 `wheel_matrix` 符号 | 见 §6.3 | **TODO(verify)**：与 ros2_controllers 源码核对 |
-| USB 100 Hz / lease 100 ms / 臂超时主动保持 | 协议规范 | `docs/protocol/usb_serial_v2.md` |
+| USB 100 Hz / lease 100 ms / 臂超时主动保持 | 协议规范（文档已按 ADR-0016 删除） | `docs/protocol/usb_serial_v2.md`（快照 tag `pre-usb-removal-20261013`） |
 | 舵机 PWM 50 Hz | 固件/装配事实 | `app_servo.c` 口径 |
 | Pinocchio 4.1.0 + OSQP 1.1.3 | 桌面 x86 实测可跑 | PyPI `pin` / `osqp` |
 

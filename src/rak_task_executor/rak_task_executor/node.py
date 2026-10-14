@@ -63,7 +63,7 @@ class TaskExecutor(Node):
         self.declare_parameter("cancel_timeout_sec", 5.0)
         self.declare_parameter("task_timeout_sec", 1800.0)
         self.declare_parameter("slow_planner_timeout_sec", 35.0)
-        self.declare_parameter("base_disarm_service", "/base_uart_driver/arm")
+        self.declare_parameter("base_disarm_service", "/base/arm")
         self.declare_parameter("base_telemetry_topic", "/base/telemetry")
         self.declare_parameter("stop_feedback_samples", 3)
         self.declare_parameter("stop_vxy_threshold_m_s", 0.02)

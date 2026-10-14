@@ -3,10 +3,11 @@ enumerate_net_device: false
 device_num: 1
 device_preset: Default
 
-# Color is off: nothing in the stack subscribes to /camera/color/image_raw (navigation
-# runs on /scan, and enable_colored_point_cloud is false), and 1280x800 RGB at 30 fps is
-# ~92 MB/s of copy the CPU pays for and nobody reads. Re-enable when a consumer exists.
-enable_color: false
+# Color is on for the RViz sensor view (sensors.launch.py -> sensors_rviz.rviz shows
+# /camera/color/image_raw); the 2026-10 note below recorded why it was off back when
+# nothing subscribed. Re-disable once the display is retired:
+# 1280x800 RGB at 30 fps is ~92 MB/s of copy the CPU pays for and nobody read it.
+enable_color: true
 color_width: 1280
 color_height: 800
 color_fps: 30

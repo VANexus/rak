@@ -31,7 +31,7 @@
 | NVIDIA 基础镜像 | 24.05-py3 的固定 manifest 和 amd64 分层已全部下载并通过 SHA-256 校验；OCI 归档位于 E 盘，Docker 导入后的 RepoDigest 与固定 digest 相同；重复 blob 缓存已清理 |
 | CUDA 开发镜像 | PointNet2、KNN、GraspNet API 编译及实际 CUDA 扩展导入通过；PyTorch `2.4.0a0+07cecf4168.nv24.05` / CUDA 12.4；镜像 ID `sha256:54529afd84f033bcd148492fb5e28a98abbc6254d353c7fa9b2e3df9a321e43a` |
 
-Orin 证据：`/home/xrak/tools/graspnet/samples/live-20261008`、`sim-smoke-05/results.json`、
+Orin 证据：`/home/xrak/rak/tools/graspnet/samples/live-20261008`、`sim-smoke-05/results.json`、
 `sim-smoke-05/launch.log`、`rviz-real-cloud.png`。Windows 真实快照与截图在 `D:\car\tools\graspnet`。
 合成轨迹截图：`D:\car\tools\graspnet\rviz-synthetic-trajectory.png`；明确不是 GraspNet 实际推理结果。
 真实 RGB 图目前是会议桌和墙面，未放置瓶子或纸盒，不算物体抓取样例。
@@ -109,7 +109,7 @@ MoveIt 上游进程在部分测试关闭时出现过退出信号/析构报错；
 source /opt/ros/jazzy/setup.bash
 source install/grasp/local_setup.bash
 ROS_DOMAIN_ID=77 python3 scripts/graspnet/smoke_sim.py \
-  --output /home/xrak/tools/graspnet/sim-smoke-new
+  --output /home/xrak/rak/tools/graspnet/sim-smoke-new
 ```
 
 脚本生成明确标注的合成样本、启动软件夹具、验证五段轨迹/不可达/碰撞并清理进程，输出目录必须不存在。

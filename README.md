@@ -5,8 +5,7 @@
 通过 Nav2、MoveIt2 和 F407 控制底盘与机械臂，而不是让模型直接控制电机。
 
 设计入口：[项目总体状态](docs/project_status.md) · [整体架构](docs/architecture.md) ·
-[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md) ·
-[USB/UART v2 规范](docs/protocol/usb_serial_v2.md)。
+[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md)。
 包重命名不代表硬件已工程化；下面明确区分现有功能和后续规划。
 
 点云抓取开发入口：[离线 GraspNet、RViz 与隔离仿真](docs/grasp_perception.md) ·
@@ -29,18 +28,46 @@
 | `src/rak_intent` | 共享的版本化文本→意图契约；task executor 与 speech 共同使用 |
 | `src/rak_speech` | 离线语音识别（Vosk）→ 转写 + 意图发布；板端唤醒/方位桥（`vtn_node`）与离线 TTS 播报（`tts_node`）；不自行下发目标 |
 | `src/rak_wbc` | 全身运动仲裁层（ADR-0011，骨架 + 桌面数值测试，硬件门未开） |
-| `src/rak_base_driver` | USB v2 编解码（示教/驾驶 TUI 共用）+ UART v1 历史主机节点；默认不打开硬件 |
-| `src/rak_chassis` | F407 传输 + `ros2_control` 插件：`Session` 抽象（CAN v4 主 / USB v2 备，`transport:=usb\|can`）；当前导出 4 轮接口 |
-| `src/rak_commissioning` | 标定/示教/调试入口：`drive_tui`、`arm_servo_tui`、`chassis_key_test` + `chassis_test.launch.py`；不是生产运动接口 |
+| `src/rak_chassis` | F407 传输 + `ros2_control` 插件：`Session` 抽象，唯一实现 `CanSession`（SocketCAN CAN v4 唯一传输，ADR-0016）；当前导出 4 轮接口 |
+| `src/rak_commissioning` | 标定/调试入口：`chassis_key_test` + `chassis_test.launch.py`；不是生产运动接口 |
 | `src/rak_arm_simulation` | 软件轨迹/夹爪 Action server；无物理仿真、无硬件接口 |
 | `src/rak_moveit_config` | 旧演示配置与隔离的六轴仿真配置；没有实机轨迹执行链 |
 | `src/rak_motion_stub` | 测试转发与速度估算；不是 CAN 驱动或安全控制器 |
-| `src/rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent/base_uart）、参数、udev、DDS 配置和操作脚本（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） |
+| `src/rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent）、参数、udev、DDS 配置和操作脚本（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） |
 | `src/rak_agent` | （原 `brain/`）Jev / LLM 决策节点；ROS 系统 Python 内运行，模块名 `rak_agent`；语料在仓库根 `data/episodes/` |
 | `src/vendor` | 第三方雷达和 rf2o；只读，不随自有包重命名 |
 
 2026-10-09 起所有可构建包统一在 `src/` 下（ADR-0013）；完整的新旧映射见
 `docs/migration.md`。
+
+### 机器目录布局（`~` 下该有什么）
+
+`~` 不是工作区，只有三样东西有资格在那儿（其余是系统模板目录和各类 agent/IDE 缓存）：
+
+| 路径 | 是什么 | 版本管理 |
+|---|---|---|
+| `~/rak` | **唯一 ROS 2 工作区**（本仓库）。所有 `colcon build`、所有 `source` 都只认它 | 本仓库 |
+| `~/ws_thirdparty` | 第三方驱动 overlay 壳：`src/OrbbecSDK_ROS2`（上游 `v2.10.6`，**从未编译**）。相机实际走 apt 的 `ros-jazzy-orbbec-camera` 2.9.3，**不要 source 这个 ws**；真要换源码版时才在它里面 `colcon build`，靠 source 顺序覆盖 apt 同名包 | 上游 clone |
+| `~/vehical_rak_chassis` | STM32 F407 固件工程，**不是 ROS ws**。CAN v4 协议真源，被 `scripts/can_link_smoke.py`、`docs/adr/0016` 引用，不能挪 | 另一仓库 |
+
+仓库内部另有两个**不入库**的本地目录（2026-10-14 从 `~` 归位，`.gitignore` 的 `/tools/`、`/debug/`）：
+
+| 路径 | 是什么 |
+|---|---|
+| `~/rak/tools` | 本地工具与第三方 SDK 副本：`camera/`（OrbbecSDK 1.10.18）、`graspnet/`（抓取验证产物）、`remote_check.sh`、`iwlwifi-patches/` |
+| `~/rak/debug` | 硬件调试小件（`spi_loopback.c`、`i2c_meter.sh`、`spi_meter.sh`） |
+
+两条容易踩的坑：
+
+1. **`colcon build` 只能在 `~/rak` 根目录跑**（`--base-paths src`）。在 `~` 下跑会在家目录
+   砸出 `~/build` `~/install` `~/log` 三个孤儿产物，还会把 `~/ws_thirdparty`、
+   `~/vehical_rak_chassis` 里的包一起卷进 discovery —— 2026-10-10 就这么发生过一次，
+   那三个目录已删除。家目录永远不该出现 colcon 产物。
+2. **`~/rak/tools/camera` 不是可清理的垃圾**：`rak_astra_driver` 的 CMake 缓存和
+   `astra_node` 的 `RUNPATH` 烧的是 `/home/xrak/rak/tools/camera/.../SDK`（`ldd` 可验证），
+   删掉或再移动会让深度相机直接编译失败、运行时找不到 `libOrbbecSDK.so`。不传
+   `-DOrbbecSDK_DIR` 时 CMake 的默认回退值是 `/opt/OrbbecSDK_v1.10.18/SDK`，两份 SDK 并存，
+   改路径必须重编 `rak_astra_driver`（`build/` 与 `build/camera-debug/` 两棵树）。
 
 ## 当前闭环
 
@@ -48,9 +75,8 @@
 文字 CLI -> rak_task_executor -> NavigateToPose Action -> Nav2
                            ├-> 暂停：取消确认 + 新鲜静止遥测
                            └-> 恢复：重发 map 目标并重新规划
-Nav2 -> MPPI Omni -> smoother -> collision monitor -> /cmd_vel -> sim/stub/hardware adapter
-UART v1 -> F407 底盘（旧体速度链；下位机 R18 曾台架运行）
-UART v2 -> 四轮/关节位置（主机与MCU独立 codec 已实现；端点尚未互通）
+Nav2 -> MPPI Omni -> smoother -> collision monitor -> /cmd_vel -> sim/stub adapter
+CAN v4 -> F407 底盘（SocketCAN：chassis_bringup -> mecanum_drive_controller -> rak_chassis -> can0）
 六轴 MoveIt fixture -> 软件轨迹/夹爪 Action server（仅仿真测试）
 ```
 
@@ -58,10 +84,10 @@ UART v2 -> 四轮/关节位置（主机与MCU独立 codec 已实现；端点尚�
 waypoint 白名单中选别名，不能输出坐标或运动命令。当前 `rak_agent` 的 Laya/Jev
 System 1 并未被改造成任务规划器，Harness 也不直接控制执行器。仿真任务入口用
 fake Nav2 和“运动估算”遥测，不代表真实里程计或底盘反馈。
-组合入口 `task_navigation.launch.py` 提供 `motion_backend:=hardware` 选项，并通过安装态
-launch 解析与模式映射检查；默认仍为 `sim`。即使选择 `hardware`，`hardware_enable`
-默认 false，UART 节点不会打开设备；默认零速度限值也不允许 ARM。不要把 launch 选项
-当作固件兼容或安全验收。
+组合入口 `task_navigation.launch.py` 的 `motion_backend` 只有 `sim`/`stub` 两个值，
+默认 `sim`；真底盘经 `chassis_bringup.launch.py` → `mecanum_drive_controller` →
+CAN（ADR-0016，`can_channel` 默认 `can0`，`allow_motion` 默认 false）。不要把
+launch 可解析当作固件兼容或安全验收。
 
 机械臂目标仍是六个定位关节加独立夹爪。六轴 URDF/MoveIt 配置是明确隔离的测试夹具，
 旧五轴模型仍是历史 demo；真实 CAD、标定、固件映射与反馈未提供。
@@ -84,14 +110,12 @@ colcon test --build-base build/architecture --install-base install/architecture 
 colcon test-result --test-result-base build/architecture --verbose
 ROS_DOMAIN_ID=77 python3 -m pytest \
   src/rak_task_executor/test src/rak_arm_simulation/test
-ROS_DOMAIN_ID=77 PYTHONPATH=src/rak_base_driver \
-  python3 -m pytest src/rak_base_driver/test
 PYTHONPATH=brain python3 brain/tests/test_ai.py
 PYTHONPATH=brain python3 brain/tests/test_task_intent.py
 ```
 
 ROS 集成测试需先 source `install/architecture/local_setup.bash`，并使用独立的
-`ROS_DOMAIN_ID`；测试仅连接 fake action server，不访问真实 UART/CAN。
+`ROS_DOMAIN_ID`；测试仅连接 fake action server，不访问真实 CAN 链路。
 机器人运行统一使用 Cyclone DDS 和 domain 47（`~/.bashrc`、`rak_bringup` 操作脚本
 及 Cyclone 配置保持一致）；ROS 集成测试仍隔离在 domain 77/187，避免加入机器人运行图。
 完整构建需要本机 JetPack SDK。只开发决策层可用
@@ -117,8 +141,7 @@ ros2 launch rak_navigation nav2.launch.py
 ros2 launch rak_task_executor task_simulation.launch.py
 ros2 run rak_task_executor task_cli
 ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim
-ros2 launch rak_bringup base_uart.launch.py  # hardware_enable=false；默认端口不会被打开
-ros2 run rak_base_driver base_uart_node
+ros2 launch rak_bringup chassis_bringup.launch.py  # 真底盘：ros2_control -> CAN（allow_motion 默认 false）
 ros2 launch rak_moveit_config demo.launch.py
 ros2 launch rak_moveit_config six_axis_sim.launch.py
 ros2 launch rak_description view_urdf.launch.py
@@ -145,54 +168,15 @@ QoS、解码/合成速度实测与验收命令见
 
 `task_simulation.launch.py` 是无传感器的任务状态机 fixture；`task_navigation.launch.py`
 组合真实 SLAM/Nav2 软件栈，默认底盘后端为仿真估算，且仍需要有效雷达/定位输入。
-硬件后端 wiring 已通过静态 launch 检查，但尚未在真实传感器或 F407 上运行验收；
-只有经过硬件负责人确认端口、固件协议和测得的限速后，才可显式打开。
 `task_cli` 支持“go to <已配置别名>”及“暂停/继续/取消”。配置 `slow_planner:=rai`
 时还需明确传入 LLM 配置；默认 `local` 不依赖云服务。六轴启动项没有物理仿真器，
 只提供 MoveIt 与动作接口测试。不要同时运行多个 Nav2 或多个 `/cmd_vel` 末端适配器。
-硬件验收前先阅读[硬件接入门槛](docs/hardware_acceptance.md)。组合 launch 的硬件
-UART adapter 已通过静态解析，但没有设备运行验证；默认仍使用 sim，硬件开关默认关闭。
+硬件验收前先阅读[硬件接入门槛](docs/hardware_acceptance.md)。真底盘由
+`chassis_bringup.launch.py`（CAN）单独启动，`allow_motion` 默认 false，须由硬件
+负责人确认链路、固件协议和测得的限速后再显式打开。
 操作脚本见 [rak_bringup/scripts](src/rak_bringup/scripts/README.md)。
 
-## 示教 / 驾驶 TUI 小工具
-
-两个直接对接 F407 USB v2 链路的终端小工具（curses 面板），用于标定、排查和
-人工驾驶。都是**调试工具，不是生产运动接口**；生产路径是 `ros2_control`
-（`rak_hardware`）+ Nav2/MoveIt。
-
-> 串口：板子 USB 枚举为 `/dev/ttyACM0`（WCH），装了 udev 别名的机器用
-> `/dev/wheel_motor`。参数语法必须 `--ros-args -p port:=...`（裸 `-p` 会被
-> 当 remap 规则吞掉）。两工具默认 **DISARMED**，按 `a` 才 ARM；退出自动撤防；
-> 固件侧安全门（lease 看门狗 / 外部故障 / 急停）始终兜底。急停 = 板上按钮长按。
-
-### 舵机示教 `rak_arm_tui`
-
-```bash
-ros2 run rak_arm_tui arm_servo_tui --ros-args -p port:=/dev/ttyACM0
-```
-
-USB v2 `ARM_COMMAND` 6 轴 µrad 位置，50 Hz lease 保活。键位：↑↓选轴、
-←→ ±2°、PgUp/PgDn ±10°、Home 回零位、`a` ARM、`m` 打标、`w` 落盘、
-`q` 退出。机械臂标定口径（限位/零位/Home）见
-[MoveIt 设计 spec](docs/superpowers/specs/2026-10-07-rak-arm-moveit2-design.md)
-与 `rak_description/urdf/properties_arm.xacro`（单点定义）。
-
-### 底盘驾驶 `rak_drive_tui`
-
-```bash
-ros2 run rak_drive_tui drive_tui --ros-args -p port:=/dev/ttyACM0
-```
-
-主机侧麦轮 IK（ADR-0007）→ `DRIVE_COMMAND` 4 轮 urad/s，20 Hz lease 保活。
-键位：↑↓←→ 平移、`q`/`e` 自转、空格全零、PgUp/PgDn 步长、`a` ARM、
-`r` 里程清零、`x` 退出。几何与固件 R30 标定表同源
-（轮半径 32.5 mm，杠杆 150 mm——**杠杆未实测签核**，放大速度前先签核）。
-面板含四轮实测速度/位置与轮式里程航位推算（纯轮式，麦轮 y 向漂移是固有
-代价，仅驾驶参考，正式里程源见 P1-1 四路融合）。
-
-键盘版轮级直通脚本 `scripts/mecanum_tui_v2.py` 保留作参考（其几何为占位值）。
-
-### 上报与 IMU 的分工（易混淆）
+## 上报与 IMU 的分工（易混淆）
 
 - 固件 `DRIVE_STATE`（100 Hz）：4 轮累计位置/速度——**纯编码器**，不含 IMU。
 - 固件**轮级稳定器**（`wheel_stabilize_targets`）：用**下位机 IMU** 的 yaw 角速度
@@ -212,11 +196,11 @@ ros2 run rak_drive_tui drive_tui --ros-args -p port:=/dev/ttyACM0
 - `guard()` 保留最终否决权；Jev 进程内直接调用；S2 不得扩大安全许可。
 - `brain/rak_ai/types.py` 和 episode 的 `state_text` 不变；新任务协议另行版本化。
 - CAN 为 classic CAN 2.0A 1 Mbps，禁止 `fd on`。协议以叶节点仓库为准，不能猜测六轴固件映射。
-- UART v1 是已台架运行的旧机体速度接口；目标协议是
-  [UART v2](docs/protocol/usb_serial_v2.md)，目前 host 与 MCU 仅独立 codec 通过向量，
-  尚无 v2 endpoint 互通。`serial_100hz.py` 是 v1 PTY-only 测试。
-- `scripts/serial_link_test.py` 是 refusal-only 兼容入口，拒绝运行旧 CRC-8 实体串口
-  协议；不要恢复为可发送版本。`scripts/serial_100hz.py` 才是 UART v1 的 PTY-only 测试。
+- 底盘链路唯一传输是 CAN v4（SocketCAN `can0`，ADR-0016）；链路冒烟用
+  `python3 scripts/can_link_smoke.py can0`（10/10 通过为合格：BAT≈12500 mV、FAULT=0、
+  BUSOFF=0），物理层查 `ip -details -statistics link show can0` 与 `dmesg | grep -i can`。
+  USB v2 链路、串口协议文档（`docs/protocol/`）与直连串口工具已按 ADR-0016 删除
+  （删除前快照：tag `pre-usb-removal-20261013`）。
 - collision monitor/Nav2 配置与软件测试不等于安全认证或物理急停。
 - 桌面与相机竞争 CMA；不要为跑可视化而默认开启桌面。下面保留本机已有运维记录。
 

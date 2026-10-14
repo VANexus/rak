@@ -26,6 +26,8 @@ setup(
             "asr_node = rak_speech.asr_node:main",
             "vtn_node = rak_speech.vtn_node:main",
             "tts_node = rak_speech.tts_node:main",
+            # [AI] wake event DOA -> RViz arrow (sensors.launch.py single view)
+            "wake_doa_viz = rak_speech.wake_doa_viz:main",
         ]
     },
 )

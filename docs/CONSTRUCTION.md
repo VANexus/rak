@@ -19,7 +19,7 @@
         │  ROS 2 Jazzy · JetPack 7.2 (CUDA 13.2 / TRT 10.16 / VPI 4.1.4)  │
         │  ros2_control · Nav2 · SLAM · MoveIt2 · DeepStream · rak_agent  │
         └───┬──────────────┬──────────────┬──────────────┬───────┘
-     USB  │          USB   │        USB   │        40-pin │ SPI
+     CAN  │          USB   │        USB   │        40-pin │ SPI
    ┌──────▼──────────────┐ ┌──────▼───────┐ ┌─────▼──────┐ ┌────▼──────────┐
    │  F407（唯一 MCU）    │ │ LSLIDAR N10P │ │ Astra 深度 │ │ LSM6DSRTR IMU │
    │  4×25 kHz 轮 PID     │ │ 2D 雷达      │ │ / 双目     │ │ → EKF 融合    │
@@ -30,7 +30,8 @@
 
 **关键约束**：
 
-- **臂板已烧毁** → 只剩**一块** F407，同时管 4 轮 + 6 舵机。**CAN 链路失效**，Jetson 只走 USB。
+- **臂板已烧毁** → 只剩**一块** F407，同时管 4 轮 + 6 舵机。Jetson↔F407 走
+  **CAN v4（SocketCAN `can0`）唯一链路**（ADR-0012/0016；USB v2 链路已删除）。
 - **麦轮 IK 在上位机**（`mecanum_drive_controller`），F407 只做每轮 PID + 舵机 PWM（ADR-0007）。
 - **机体航向权威 = Jetson 的 LSM6DSRTR**；F407 板载 IMU 只做**轮级**自稳定，不参与 EKF。
 
@@ -41,7 +42,7 @@
 | 部件 | 型号 / 规格 | 接口 | 状态 |
 |---|---|---|---|
 | 上位机 | Jetson Orin Nano **4GB**（p3767-0004） | — | [已实现] |
-| **下位机 MCU** | STM32F407VET6 · M4F（C30D 板） | **USB-UART 921600, 100 Hz** | 固件在 `vehical_rak_chassis`（**开发中**） |
+| **下位机 MCU** | STM32F407VET6 · M4F（C30D 板） | **CAN v4（SocketCAN `can0`, 1 Mbps）** | 固件在 `vehical_rak_chassis`（**开发中**） |
 | 机械臂 | **标准 6 轴** + **舵机夹爪**（第 7 个 PWM 舵机）+ 末端摄像头 | 经下位机（7 路舵机 PWM） | **[未成形]** 见 ADR-0008 |
 | 雷达 | WHEELTEC LSLIDAR **N10P**（Leishen，2D） | USB 串口 460800 | [已实现] |
 | 深度相机 | Orbbec **Gemini 335L**（当前优先）+ Astra（可替换后端） | USB | [实机 RGB-D/IMU 已验收；`base_link` 外参待标定] |
@@ -75,7 +76,7 @@
 | 移除 snap | snapd + firefox/thunderbird + 44 个无关包移除 | 释放 ~4 GB；**无浏览器** |
 | 内存 | zram（zstd, 50% ≈1.7 G, prio 100）+ 4 G swapfile | **改变了 CLAUDE.md 记录的内存前提**：现在有 5.7 G swap |
 | 电源 | `nvpmodel -m 0`（10 W）+ `jetson-clocks` 开机自启 | 锁频会改变热包线，基准不可跨模式比较 |
-| UART | udev `/dev/robot_uart` → `ttyTHS1`（40-pin） | ⚠️ **与底盘链路无关**（底盘走 USB）。按 ADR-0007 应清理或明确其归属 |
+| UART | udev `/dev/robot_uart` → `ttyTHS1`（40-pin） | ⚠️ **与底盘链路无关**（底盘走 CAN）。按 ADR-0007 应清理或明确其归属 |
 
 > ⚠️ 移除 snap 后 `CLAUDE.md` 的 "3.4 GB 可用内存、不能常驻所有模型" 结论仍然成立，
 > 但"内存不足就 OOM"的紧迫性下降（有 swap 兜底）。**swap 不是实时性保证**，只是防 OOM。
@@ -136,7 +137,7 @@ ros2 launch rak_bringup stereo.launch.py device:=/dev/video0
 
 雷达的 `lidar_name` 必须是 **`N10_P`**（108 B @ 460800）。写成 `N10` 会导致 CRC 不匹配 ——
 这是实测结论，见 `config/lslidar_n10.yaml` 的注释。串口用 udev 别名 `/dev/wheeltec_lidar`，
-**不要**用 `/dev/ttyUSB0`（雷达适配器和底盘都可能占 ttyUSB）。
+**不要**用 `/dev/ttyUSB0`（雷达适配器等串口设备可能占用）。
 
 ---
 
@@ -169,7 +170,7 @@ sudo bash scripts/lsm6dsr-overlay/revert.sh && sudo reboot
 ## 6. 底盘与机械臂链路（ros2_control）
 
 **目标架构**（ADR-0007）：一个 `hardware_interface::SystemInterface` 插件同时暴露
-4 轮（velocity 命令）+ 6 舵机（position 命令），走 USB。
+4 轮（velocity 命令）+ 6 舵机（position 命令），走 CAN v4（SocketCAN `can0`）。
 
 ```bash
 ros2 launch rak_bringup system.launch.py     # controller_manager + 各 spawner
@@ -179,35 +180,15 @@ ros2 control list_controllers                # joint_state_broadcaster / mecanum
 
 **默认是锁死的**（沿用现有安全设计）：
 
-- 硬件接口默认**不打开串口**，且 DISARMED；需显式参数才连设备。
-- 三个方向的速度限值**必须都是有限正数**才允许 ARM。`0.0` **不是**"不限速/透传"。
+- `chassis_bringup.launch.py` 的 `allow_motion` 默认 **false**：硬件只握手+遥测、
+  只发零目标（DISARMED），`allow_motion:=true` 是显式运动许可。
 - ⚠️ **轮级等比饱和由 MCU 负责**（已核实 `mecanum_drive_controller` 只做机体轴级限幅，不做轮级）。
   MCU 收到 4 个轮速目标后，若任一超限则**四个同乘一个系数**，不得逐轴截断 —— 否则斜走变直走。
   控制器上的 `linear.x/y`、`angular.z` 限幅只作第一道防线，**不保证方向**。
 
-### 6.1 物理层两个反直觉事实（2026-10-05 研究结论）
-
-1. **USB CDC 的波特率是无意义的。** CDC-ACM 走 USB 批量端点，实际速率由 USB 决定
-   （Full Speed 12 Mbps / High Speed 480 Mbps）；`SET_LINE_CODING` 里的 `dwDTERate`
-   被典型 STM32 CDC 固件**忽略**。所以"921600"在 USB 链路上只是个约定值，
-   固件里仍按它配置是为了**万一链路被桥接成真 UART**。设计时按**包传输**思考，不按波特率。
-2. **⚠️ 必须关掉 USB 串口的 `latency_timer`。** 主机侧 FTDI/USB-serial 的
-   `latency_timer` **默认 16 ms**，会把每一帧都攒 16 ms 再交付 —— 对 100 Hz 控制环
-   是直接的抖动源。用 udev 规则设成 1 ms：
-
-   ```bash
-   # /etc/udev/rules.d/99-wheel-motor.rules
-   ACTION=="add", SUBSYSTEM=="usb-serial", DRIVER=="ftdi_sio", ATTR{latency_timer}="1"
-   # 稳定别名（不要用 /dev/ttyUSB0，雷达适配器也可能占）
-   SUBSYSTEM=="tty", ATTRS{serial}=="<F407 的 USB 序列号>", SYMLINK+="wheel_motor", MODE="0660", GROUP="dialout"
-   ```
-   用 `lsusb -v` 或 `udevadm info -a -n /dev/ttyACM0` 取 F407 的真实序列号填进去。
-
-> 注：下位机实测"200 ms lease 才稳"与本条相关 —— 16 ms 的 `latency_timer` 会放大
-> 端到端抖动。**先修 latency_timer，再复测 50 ms lease 是否可行**，不要急着签字放宽到 200 ms。
-
-上车顺序**严格按** [`hardware_acceptance.md`](hardware_acceptance.md)：PTY 回归 → 只读握手 →
-拔线/超时/E-stop 撤销 → 轮子离地单轴低速 → 软件暂停与物理急停分开测 → 最后围栏地面测试。
+上车顺序**严格按** [`hardware_acceptance.md`](hardware_acceptance.md)：链路冒烟
+（`python3 scripts/can_link_smoke.py can0`）→ 只读遥测握手 →
+拔链路/超时/E-stop 撤销 → 轮子离地单轴低速 → 软件暂停与物理急停分开测 → 最后围栏地面测试。
 
 **臂与轮现在在同一块板上**，但仍应**分开验收**：先只验轮（`joint_state_broadcaster` +
 `mecanum_drive_controller`），确认 4 轮方向/符号/里程计正确；**再单独验舵机**
@@ -242,8 +223,8 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 - [ ] 传感器单独跑通：`/scan` 有数据且 frame 是 `laser_link`
 - [ ] `rak-mode.sh headless` 后双目不再 `VIDIOC_REQBUFS` 失败
 - [ ] IMU：`spi0.0 -> st_lsm6dsx_spi`，`/proc/interrupts` 有中断计数
-- [ ] 底盘：PTY 回归通过；真实串口**只读**握手能读到板 ID / 固件版本 / boot ID
-- [ ] 三个速度限值已实测填入（非 0），ARM 前确认轮子离地
+- [ ] 底盘：链路冒烟通过（`python3 scripts/can_link_smoke.py can0`，10/10，BAT≈12500 mV / FAULT=0 / BUSOFF=0）；DISARMED 下只读遥测正常、零故障
+- [ ] 限速与轮几何占位值已实测替换（`chassis_controllers.yaml`），`allow_motion:=true` 前确认轮子离地
 - [ ] 物理急停独立于 Jetson/ROS/网络验证过
 - [ ] `docs/hardware_acceptance.md` 的 §Before Connecting a Physical Base 逐条签核
 
@@ -255,6 +236,6 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 |---|---|
 | "Jetson 跑 RT 内核才能控制电机" | 闭环在 MCU，Jetson 不需要 RT；装了通用 RT 内核反而起不来 |
 | "麦轮 IK 应该在 MCU 上" | **已反转**（ADR-0007）：IK 在上位机 `mecanum_drive_controller`，MCU 只做每轮 PID + 舵机 PWM |
-| "launch 能解析就等于硬件能跑" | 只证明静态 wiring；`hardware_enable` 默认 false |
+| "launch 能解析就等于硬件能跑" | 只证明静态 wiring；`allow_motion` 默认 false |
 | "有 swap 了就能随便开模型" | swap 防 OOM，不提供实时性；S1 的 158 ms / S2 的 12–30 s 不受影响 |
 | "collision monitor 能代替急停" | 不能。物理急停与 MCU 看门狗必须独立验证 |

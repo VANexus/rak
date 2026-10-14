@@ -39,6 +39,10 @@ data/
 frames_*.gv
 frames_*.pdf
 
+# 本地工具与硬件调试资产（2026-10-14 从 ~ 归位，非交付物）
+/tools/
+/debug/
+
 # TRAE AI IDE workspace state (IDE cache, not project source)
 .trae/
 

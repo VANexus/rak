@@ -26,10 +26,23 @@ archive deleted 2026-10-10 — the code lives only in git history).
   gated "呼吸感" expression interface — is **accepted but design-only**: there is no
   `src/rak_harness`, and the expression layer is a no-op stub behind closed hardware gates.
 - ADR-0007's target — whole robot on `ros2_control`, host-side mecanum IK — is **partially
-  implemented as of 2026-10-08**: `src/rak_chassis` (ex `rak_hardware`, renamed by ADR-0013)
-  exists but exports **four wheel interfaces only** and has passed an F407 chassis smoke test
-  (firmware R37); arm position interfaces, the arm controller and the gripper axis do not
-  exist yet. `src/rak_moveit_config/test/validate_six_axis_sim.py:36` still asserts the
+  implemented as of 2026-10-14**: `src/rak_chassis` (ex `rak_hardware`, renamed by ADR-0013)
+  exports 4 wheel velocity interfaces (F407 chassis smoke test, firmware R37) **plus 7 arm
+  position command interfaces** (6 joints + gripper, command domain = servo command angle,
+  contract `docs/arm_moveit_contract.md` §1), with `arm_controller`
+  (JointTrajectoryController) and `gripper_controller` spawned by
+  `chassis_bringup.launch.py`. Verified 2026-10-14 on the live F407: first with
+  `allow_motion:=false` (arm feedback syncs from the firmware echo, all 4 controllers
+  activate, `/joint_states` carries the 6 arm joints, action path + `arm_tui` end-to-end,
+  suppressed goals abort with a legible hint), then **with `allow_motion:=true` for a real
+  jog**: j1 +5° and Home both SUCCEEDED, the wire carried 35 `ARM_CMD_A` frames ramping
+  0.1°→5.0°→0.0° at 0.1° quantization (event-driven, no periodic replay), readback followed,
+  no faults. Still unverified: J2–J6 physical motion, limit/estop behavior under motion,
+  and the gripper (no hardware channel — readback is always 0). The 7 arm joints are backed
+  by a documented zero-length control stub chain in `rak_chassis.urdf.xacro` (Jazzy requires
+  every `<ros2_control>` joint to exist in the kinematic tree); real geometry stays in
+  `rak_arm.urdf.xacro`.
+  `src/rak_moveit_config/test/validate_six_axis_sim.py:36` still asserts the
   six-axis **sim fixture** URDF contains no `<ros2_control>` tag — that fixture is not the
   real arm.
 - The **CAN v3 host stack** (`rak_can_driver`, `rak_serial_link`) is retired (ADR-0012/0013);
@@ -58,13 +71,16 @@ package boundaries. 18 buildable packages, every one with a real responsibility:
 - `src/rak_moveit_config`: SRDF, IK and planning configuration; six-axis fixture is simulation-only.
 - `src/rak_chassis`: (ex `rak_hardware`) F407 transport + ros2_control plugin — `Session`
   abstraction with `SerialSession` (USB v2, frozen backup) and `CanSession` (SocketCAN CAN v4,
-  primary), `transport:=usb|can` factory (ADR-0012); four wheel interfaces only today.
+  primary), `transport:=usb|can` factory (ADR-0012); 4 wheel velocity + 7 arm position
+  interfaces (arm since 2026-10-14).
 - `src/rak_base_driver`: USB v2 protocol codec + UART v1 host driver node; the codec is
   shared by commissioning tools. Node hardware disabled by default; its node fate stays
   open per ADR-0007 待闭合项 #7.
 - `src/rak_commissioning`: (ex `rak_drive_tui` + `rak_arm_tui` + `chassis_key_test`)
-  commissioning/teach entries: `drive_tui`, `arm_servo_tui`, `chassis_key_test`,
-  `launch/chassis_test.launch.py`. Not production motion interfaces.
+  commissioning entries: `chassis_tui`, `arm_tui`, `chassis_key_test`,
+  `launch/chassis_test.launch.py`. Both TUIs are pure ROS 2 tools (actions/topics only, never
+  touch CAN directly — `check_workspace.py` forbids this package depending on `rak_chassis`).
+  Not production motion interfaces.
 - `src/rak_arm_simulation`: software-only six-axis trajectory/gripper action fixture.
 - `src/rak_task_executor`: sole owner of text-navigation task and Nav2 goal lifecycle;
   depends on `rak_intent`, never on `rak_agent`.
@@ -100,6 +116,31 @@ limits, axes and zero mapping were **measured on 2026-10-08**
 placeholders). Never invent the missing axis or calibration from the legacy URDF, and do not
 confuse the six-axis **sim fixture** with the real arm. Models, topics and episode schemas
 were not redesigned during the package migration.
+
+### Outside the repo: what `~` must contain
+
+`~` is not a workspace. Only three entries have a reason to be there (everything else is
+system templates plus agent/IDE caches):
+
+- `~/rak` — **the only ROS 2 workspace** (this repo). Every `colcon build` and every
+  `source` targets it.
+- `~/ws_thirdparty` — third-party driver overlay shell holding `src/OrbbecSDK_ROS2`
+  (upstream `v2.10.6`, **never compiled**, working tree clean). The camera actually runs on
+  the apt package `ros-jazzy-orbbec-camera` 2.9.3, so **do not source this ws**: building
+  inside it is only for deliberately shadowing the apt package of the same name via source
+  order. Renamed from `~/orbbec_ros2_ws` on 2026-10-14.
+- `~/vehical_rak_chassis` — STM32 F407 firmware project, **not a ROS ws**. Frozen source of
+  truth for the CAN v4 protocol (referenced by `scripts/can_link_smoke.py` and
+  `docs/adr/0016`); do not move or absorb it.
+
+Two gitignored local directories live *inside* the repo (moved out of `~` on 2026-10-14;
+`.gitignore` carries `/tools/` and `/debug/`, root-anchored so they cannot swallow a nested
+`tools/` in `src/`):
+
+- `tools/` — local tooling and third-party copies: `tools/camera/` (OrbbecSDK 1.10.18),
+  `tools/graspnet/` (capture/verification artifacts), `tools/remote_check.sh`,
+  `tools/iwlwifi-patches/`.
+- `debug/` — hardware debug scraps (`spi_loopback.c`, `i2c_meter.sh`, `spi_meter.sh`).
 
 ## Commands
 
@@ -249,6 +290,20 @@ caveats above.
   prototype is not an independent real-time safety path. See architecture.md.
 - `data/`, `build/`, `install/`, `log/` are gitignored. Stray
   `frames_*.gv` / `frames_*.pdf` at the root are debugging artifacts, not deliverables.
+- **`colcon build` only ever runs from the repo root** (`--base-paths src`). Run it from `~`
+  and it drops orphan `~/build` / `~/install` / `~/log` in the home directory *and* drags
+  `~/ws_thirdparty` and `~/vehical_rak_chassis` into package discovery — that is exactly how
+  the 2026-10-10 stray artifacts happened (they were deleted; `events.log` there named
+  `OrbbecSDK-Samples` and `lslidar_driver` from foreign trees). Home must never hold colcon
+  output; if `~` grows a `build/`, it is a mistake, not a workspace.
+- **`tools/camera` is a load-bearing path, not junk.** `rak_astra_driver`'s CMake cache and
+  `astra_node`'s `RUNPATH` are baked to `/home/xrak/rak/tools/camera/.../SDK` — `ldd
+  install/rak_astra_driver/lib/rak_astra_driver/astra_node` shows it resolving there — so
+  deleting or re-moving `tools/` breaks configure *and* runtime (`libOrbbecSDK.so.1.10.18`
+  not found). Without `-DOrbbecSDK_DIR` CMake falls back to its default
+  `/opt/OrbbecSDK_v1.10.18/SDK`; both copies coexist, and changing the path requires
+  rebuilding `rak_astra_driver` in **both** `build/` and `build/camera-debug/` (the RUNPATH
+  lives in the ELF, so text-editing the cache is not enough).
 - `rak_agent` installs `agent_node` as a standard `console_scripts` entry point and runs
   with ROS system Python. Keep Python runtime dependencies in `package.xml`/rosdep rather
   than reintroducing an interpreter bootstrap or project venv.
@@ -299,3 +354,37 @@ caveats above.
 - The legacy PyTorch/Laya fp16 parity run compared executed actions and safety tiers over
   90 states. Do not use it to qualify TensorRT: a new engine requires separate output
   parity and `resolve()` behavior tests before it can be enabled.
+- **The left wheels (FL/RL) are wired inverted — measured 2026-10-14.** `DRIVE_CMD`
+  `[++++]` (all four commanded identical, i.e. what a straight line looks like on the
+  wire) makes the left pair roll backward and the right pair forward, so the base spins in
+  place. Signature: `W`/`S` become rotation, `Q`/`E` become forward/backward, and `A`/`D`
+  cancel all three DOF at once (wheels spin, body does not move). It is **not** an ABCD
+  port permutation — `[++++]` maps to itself under any permutation, so only a sign flip
+  can explain it; do not go hunting in the firmware port table. The correction is the
+  `wheel_sign` hardware parameter in `src/rak_description/urdf/rak_chassis.urdf.xacro`
+  (default `-1 1 -1 1`), applied by `rak_system.cpp`, which negates that wheel's command
+  **and** feedback together so the closed loop stays self-consistent and ROS's
+  "positive = rolling forward" becomes true. Override it on
+  `chassis_bringup.launch.py wheel_sign:="..."` to A/B without rebuilding; the pass logs
+  `wheel_sign = [1 -1 1 -1] (FL FR RL RR)` at startup. The code default stays `+1 1 1 1`
+  (neutral) on purpose — the layer must not hardcode one robot's wiring. Re-calibrate
+  after any wheel, motor or encoder change.
+- **A `read() lost feedback` line is usually a downstream symptom, and `cmd_stale` is not
+  a fault.** `kStateFaultMask = 0x003D` in `can_session.cpp` includes `STATE.bit3
+  cmd_stale`, which the F407 sets whenever `DRIVE_CMD` stops for 100 ms (PROTOCOL v4
+  §6.2) — that is, exactly when no controller is active. So the chain is: controllers
+  fail to load → nobody sends `DRIVE_CMD` → deadman trips → `fault_bitmap=0x0008` →
+  `read()` errors → controller_manager deactivates the hardware → the controllers can
+  never load. **Only a full relaunch escapes it.** The healthy case prints
+  `connected=1 handshaken=1 feedback_valid=1 faulted=0 feedback_age=2ms` with `0x0008` the
+  only nonzero field; do not read that as a hardware fault. `faulted` itself correctly
+  excludes bit3 (it tests `state & 0x0005` plus MODE) — it is the extra
+  `fault_bitmap != 0` check inside `read()` that pulls it in, which is a self-latching
+  design flaw to be settled with ADR-0017, not by editing the mask ad hoc.
+- **Never run two `chassis_bringup` instances.** Both put a node named
+  `/controller_manager` on the domain, so the second launch's `spawner`s reach the first
+  one's manager and die with `Failed to configure controller` / `Failed loading
+  controller` (its YAML was parsed long ago and has no `arm_controller` or
+  `gripper_controller`). Check with
+  `ps -eo pid,etime,cmd | grep chassis_bringup` — it must print exactly one line — before
+  launching.

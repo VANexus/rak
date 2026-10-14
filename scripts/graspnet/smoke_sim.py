@@ -1,7 +1,7 @@
 """Synthetic ROS/MoveIt integration test. No camera, model output or hardware motion.
 
 Run on Jazzy with ROS_DOMAIN_ID=77 and a sourced grasp overlay. --output must be a
-new directory outside the repository, e.g. /home/xrak/tools/graspnet/sim-smoke.
+new directory outside the repository, e.g. /home/xrak/rak/tools/graspnet/sim-smoke.
 """
 import argparse
 import json

@@ -29,7 +29,7 @@ class FakeNavigation(Node):
         self._timer = self.create_timer(0.02, self._publish_telemetry)
         self._group = ReentrantCallbackGroup()
         self._arm_service = self.create_service(
-            SetBool, "/base_uart_driver/arm", self._set_armed,
+            SetBool, "/base/arm", self._set_armed,
             callback_group=self._group,
         )
         self._action = ActionServer(

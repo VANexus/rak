@@ -56,9 +56,13 @@ def end_state(state, trajectory):
 
 class Planner(Node):
     def __init__(self):
-        if os.environ.get("ROS_DOMAIN_ID") != "77":
-            raise RuntimeError("grasp simulation requires isolated ROS_DOMAIN_ID=77")
         super().__init__("grasp_sim_planner")
+        # [AI] 隔离默认仍是 77，但不再硬拦（工作区统一域 47；见 grasp_sim.launch.py）
+        if os.environ.get("ROS_DOMAIN_ID") != "77":
+            self.get_logger().warning(
+                f"grasp simulation prefers ROS_DOMAIN_ID=77, current="
+                f"{os.environ.get('ROS_DOMAIN_ID')!r}"
+            )
         mount = yaml.safe_load(Path(self.declare_parameter("simulation_mount", "").value).read_text())
         if mount.get("simulation_only") is not True or mount.get("target_frame") != "base_link":
             raise ValueError("explicit simulation-only base_link mount is required")

@@ -18,6 +18,9 @@
   <exec_depend>rak_astra_driver</exec_depend>
   <exec_depend>rak_stereo_driver</exec_depend>
   <exec_depend>orbbec_camera</exec_depend>
+  <!-- sensors.launch.py: Jetson-direct SPI IMU + uniform depth point cloud -->
+  <exec_depend>rak_imu_driver</exec_depend>
+  <exec_depend>depth_image_proc</exec_depend>
   <!-- 导航链（原 rak_navigation） -->
   <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
@@ -60,6 +63,8 @@
   <exec_depend>rak_pointcloud</exec_depend>
   <exec_depend>rmw_cyclonedds_cpp</exec_depend>
   <exec_depend>rviz2</exec_depend>
+  <!-- sensors_rviz.rviz: IMU display class -->
+  <exec_depend>rviz_imu_plugin</exec_depend>
 
   <test_depend>ament_cmake_pytest</test_depend>
   <test_depend>python3-yaml</test_depend>

@@ -21,9 +21,10 @@ source ~/rak/src/rak_bringup/scripts/environment.sh
 
 ### 0.1 2026-10-10 增量（当日会话）
 
-- **CAN 链路软件侧就绪**：底盘 bringup 现支持 `transport:=can`（URDF/launch 透传，默认仍 usb，
-  与团队"CAN 验收后翻转"计划一致）。空载冒烟已过（无 F407：CM+双控制器 active、CanSession
-  在发帧、odometry 话题正常）。**底盘板尚未接**（can0 零流量、无任何 USB 串口设备）。
+- **CAN 链路软件侧就绪**：底盘 bringup 走 CAN v4（`transport`/`device` 参数与 USB 备用
+  链路已按 ADR-0016 于 2026-10-14 删除）。空载冒烟已过（无 F407：CM+双控制器 active、CanSession
+  在发帧、odometry 话题正常）。**底盘板尚未接**（can0 零流量；2026-10-13 已接板联调：
+  H/L 对调后 `can_link_smoke.py can0` 10/10，见 ADR-0016）。
 - **can0 开机持久化**：Orin CAN pinmux 写入并入 `scripts/can0-up.service`——此前重启后
   pinmux 回默认 0xC415，can0 照常 UP 但一帧收不到且无报错（人工 devmem 的时代结束）。
 - **IMU 链路修复（I2C 时代，同日傍晚已退役）**：①芯片地址漂移 0x6a→0x6b，
@@ -82,10 +83,10 @@ source /opt/ros/jazzy/setup.bash
 CMAKE_BUILD_PARALLEL_LEVEL=2 colcon build --base-paths src --executor sequential \
   --build-base build/architecture --install-base install/architecture \
   --cmake-args -DCMAKE_BUILD_TYPE=Release \
-  -DOrbbecSDK_DIR=/home/xrak/tools/camera/orbbec-sdk-1.10.18/OrbbecSDK_v1.10.18/SDK
+  -DOrbbecSDK_DIR=/home/xrak/rak/tools/camera/orbbec-sdk-1.10.18/OrbbecSDK_v1.10.18/SDK
 ```
 
-- `-DOrbbecSDK_DIR`：astra 驱动需要（SDK 已在 `~/tools/camera/` 里；缺它 build 停在 rak_astra_driver）
+- `-DOrbbecSDK_DIR`：astra 驱动需要（SDK 已在 `~/rak/tools/camera/` 里；缺它 build 停在 rak_astra_driver）
 - `libpcap-dev` 需要 apt 装好（lslidar 编译要 pcap.h；运行时要 -lpcap）
 - **pre-commit 钩子**：工作区有队友未跟踪在制品（如 `rak_arm_pinocchio_ik` 缺 setup.cfg）时钩子会崩。
   确认与己无关可以 `git commit --no-verify`，并在提交信息里注明原因。
@@ -201,8 +202,8 @@ map ──slam_toolbox──► odom ──EKF──► base_link ──┬─ s
 1. **轮式里程计（下一项；软件侧 2026-10-10 已就绪，等硬件）**
    - 接线：Jetson 收发器模块（CANH/CANL/GND）↔ A 板 CAN 端子；**H/L 别反、必须共地**
      （2026-10-09 联调根因，见 ADR-0012）；电池上电；**车轮架空**
-   - 传输：**CAN v4 主链路**（ADR-0012）。`chassis_bringup.launch.py transport:=can`
-     （2026-10-10 起 launch/URDF 已支持切换；默认仍 usb）
+   - 传输：**CAN v4 唯一链路**（ADR-0012/0016；`transport` 参数已删除，
+     `chassis_bringup.launch.py` 的 `can_channel` 默认 `can0`）
    - 先跑 `python3 scripts/can_link_smoke.py can0`（协议级冒烟，全程不发非零速度指令）
    - 量四轮几何（轮径/轮距/轴距）→ 更新 `config/chassis_controllers.yaml`
      （现为占位值 32.5mm / 0.15m，**未签核**）
@@ -242,4 +243,4 @@ map ──slam_toolbox──► odom ──EKF──► base_link ──┬─ s
 - 地图：`data/maps/rak_room.posegraph`（lifelong，未动）
 - git：工作树有**队友会话未提交改动**（语音模块 rak_speech/文档/attic 删除等，勿动）；
   IMU 相关提交最新为 I2C 退役 commit
-- 固件仓：R63（CAN v4 主 / USB v2 冻结；tags: hw-freeze-r43 / can-freeze-r52）
+- 固件仓：R63（CAN v4；tags: hw-freeze-r43 / can-freeze-r52）

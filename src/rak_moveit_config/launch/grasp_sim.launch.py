@@ -12,8 +12,13 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
+    # [AI] 隔离默认仍是 77（仿真不与操作员域 47 混跑），但不再硬拦：
+    # 工作区统一用域 47 时，check_workspace --installed 会 --show-args 加载本文件。
     if os.environ.get("ROS_DOMAIN_ID") != "77":
-        raise RuntimeError("set ROS_DOMAIN_ID=77 before launching isolated grasp simulation")
+        print(
+            "WARNING: grasp simulation prefers isolated ROS_DOMAIN_ID=77, "
+            f"current={os.environ.get('ROS_DOMAIN_ID')!r}; topics may collide with the operator domain"
+        )
     share = get_package_share_directory("rak_moveit_config")
     perception = get_package_share_directory("rak_grasp_perception")
     description = get_package_share_directory("rak_description")
