@@ -6,15 +6,16 @@
   在运行时合并为单一 URDF（model_builder），只服务 Pinocchio 求解与桌面数值测试；
   不是 RViz/Gazebo 的可视化模型，也不复制臂几何。
 
-  质量/安装位姿为占位值（ADR-0011 待闭合 #2/#3），实测后在此单点更新。
+  安装位姿 2026-10-14 实测镜像自 rak_chassis.urdf.xacro 的 arm_mount_joint
+  （ADR-0015 待闭合 #5）；质量仍为占位值（ADR-0011 待闭合 #2/#3）。
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rak_wbc">
 
   <xacro:arg name="base_mass" default="1.2"/>
   <xacro:arg name="base_com_z" default="0.05"/>
-  <xacro:arg name="mount_x" default="0.0"/>
+  <xacro:arg name="mount_x" default="-0.15"/>
   <xacro:arg name="mount_y" default="0.0"/>
-  <xacro:arg name="mount_z" default="0.12"/>
+  <xacro:arg name="mount_z" default="0.0725"/>
 
   <!-- 世界系锚点：平面虚拟关节链 x → y → yaw，速度语义见 spec §3.2 -->
   <link name="wbc_world"/>

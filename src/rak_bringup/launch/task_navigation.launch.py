@@ -11,6 +11,7 @@ chain. motion_backend picks the final /cmd_vel adapter:
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -26,11 +27,16 @@ def generate_launch_description():
             description="Final /cmd_vel adapter; the real chassis is reached via "
                         "chassis_bringup.launch.py (CAN), not this argument.",
         ),
-        DeclareLaunchArgument("slow_planner", default_value="local", choices=["local", "rai"]),
+        DeclareLaunchArgument("slow_planner", default_value="local",
+                              choices=["local", "rai", "harness"]),
         DeclareLaunchArgument("llm_config_path", default_value=""),
         DeclareLaunchArgument("llm_vendor", default_value=""),
+        DeclareLaunchArgument("harness", default_value="true",
+                              choices=["true", "false"],
+                              description="Start harness_node next to the executor "
+                                          "(ADR-0010 arbitration seam)."),
         DeclareLaunchArgument("waypoints_file", default_value=""),
-        DeclareLaunchArgument("lidar_z", default_value="0.10"),
+        DeclareLaunchArgument("lidar_z", default_value="0.1525"),  # 2026-10-14 实测
         DeclareLaunchArgument("odom_source", default_value="rf2o", choices=["rf2o", "ekf", "none"]),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -54,5 +60,12 @@ def generate_launch_description():
                 "llm_vendor": LaunchConfiguration("llm_vendor"),
                 "waypoints_file": LaunchConfiguration("waypoints_file"),
             }],
+        ),
+        Node(
+            package="rak_harness",
+            executable="harness_node",
+            name="harness",
+            output="screen",
+            condition=IfCondition(LaunchConfiguration("harness")),
         ),
     ])

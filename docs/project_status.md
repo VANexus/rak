@@ -61,7 +61,7 @@
 | 硬件启动路径 | 真底盘经 `chassis_bringup.launch.py` → `mecanum_drive_controller` → `rak_chassis` → CAN；`task_navigation.launch.py` 的 `motion_backend` 只有 `sim\|stub` | 尚未在真实传感器或 F407 上完成整车运行验收；`allow_motion` 默认 false 拒绝运动 |
 | 机械臂 | 六关节加独立夹爪的软件动作夹具和 MoveIt 配置已实现 | 模型、限位是测试占位；F407 仅有六路 PWM、无关节反馈，夹爪通道和硬件控制器未完成 |
 | 感知与语音 | 雷达/深度相机已有驱动或测试基础；语音链已通（2026-10-10：XFM-DP → `audio_capture` → `/audio` → Vosk 转写/意图；2026-10-11：板端唤醒/方位 `vtn_node` → `/speech/wake`、离线 TTS `tts_node` → `/audio_out` → `audio_play` → USB 喇叭，电气链路与真人唤醒均已实测）；当前仍以文字入口验证任务 | 传感器融合和完整导航输入链未验收；阵列声学段需真人说话验收；识别解码 0.84–1.01× 实时，余量不足；TTS 合成约 0.75× 实时（kokoro 24 kHz），播报音色/音量待真人验收；`/speech/say` 尚无决策层消费者 |
-| Jev / Harness | `rak_agent` 保留现有 S1/S2 原型与冻结的数据契约；TensorRT decider 已接入；ADR-0010 定义了 Harness 包、仲裁缝与云端客户端 | `src/rak_harness` / `harness_node` 未创建；S2 回复目前不会驱动执行器；表达层是门控 no-op stub |
+| Jev / Harness | `rak_agent` 保留现有 S1/S2 原型与冻结的数据契约；TensorRT decider 已接入；`src/rak_harness` + `harness_node` 已实现（2026-10-15 软件闭环）：`/harness/request|proposal|event` 契约、`slow_planner:=harness`、唤醒门控语音对话环（提交任务/pause-resume-cancel/播报结果）、人格卡+车况快照、云端 client stub（无 key 时本地保底），fake-Nav2 隔离域验证通过 | 云端通路未实测（无 `ANTHROPIC_API_KEY`）；S2 回复仍不驱动执行器；持续方位流、打断、流式 TTS 未做；表达层仍是门控 no-op stub |
 
 ## 已有验证证据
 

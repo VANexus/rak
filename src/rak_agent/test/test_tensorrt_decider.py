@@ -1,7 +1,8 @@
 """The TensorRT decider: token layout, decode, and (when the engine is built) end to end.
 
-The engine and tokenizer live under the gitignored `brain/data/`, so every test that
-needs them skips rather than fails on a checkout that has not run the export runbook.
+The engine and tokenizer live under the gitignored repo-root `data/` (ADR-0013), so
+every test that needs them skips rather than fails on a checkout that has not run the
+export runbook.
 The token-layout test is the one that matters most: it pins the `[MASK]` marker
 positions to the numbers `docs/laya_tensorrt.md` records, because a sequence that is
 subtly wrong still produces logits and still looks like a working model.

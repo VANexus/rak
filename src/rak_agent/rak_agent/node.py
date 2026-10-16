@@ -34,7 +34,7 @@ from rak_interfaces.msg import TrackedObjects
 
 from .body import MockBody
 from .loop import Logger, _drain  # noqa: PLC2701 -- same package, one tick pipeline
-from .system1 import Decider, StubDecider, guard, resolve
+from .system1 import Decider, StubDecider, guard, make_decider, resolve
 from .system2 import Consultant, StubConsultant
 from .types import Action, Decision, Entity, SceneState, Tier
 
@@ -105,19 +105,8 @@ def _state_to_msg(state: SceneState, clock, frame_id: str) -> TrackedObjects:
 
 
 def _make_decider(name: str, model_dir: str = "") -> Decider:
-    if name == "stub":
-        return StubDecider()
-    if name == "tensorrt":
-        # Imported here so the stub path never loads the TensorRT binding.
-        from .tensorrt_decider import TensorRtDecider
-
-        return TensorRtDecider(model_dir=model_dir or None)
-    if name == "laya":
-        raise RuntimeError(
-            "The legacy PyTorch Laya backend is disabled in the ROS node; "
-            "use decider:=tensorrt (the built engine) instead"
-        )
-    raise ValueError(f"unknown decider {name!r}; expected stub or tensorrt")
+    """Backwards-compatible alias; the factory itself lives in `system1`."""
+    return make_decider(name, model_dir)
 
 
 class BrainNode(Node):

@@ -28,7 +28,12 @@ from rak_intent.task_intent import (
     validate_pose_proposal,
 )
 from rak_interfaces.action import ExecuteTask
-from rak_interfaces.msg import BaseTelemetry, TaskStatus
+from rak_interfaces.msg import (
+    BaseTelemetry,
+    HarnessProposal,
+    HarnessRequest,
+    TaskStatus,
+)
 from rak_interfaces.srv import TaskControl
 from std_srvs.srv import SetBool
 
@@ -79,6 +84,8 @@ class TaskExecutor(Node):
         self._waypoints = self._load_waypoints()
         planner_name = str(self.get_parameter("slow_planner").value)
         self._slow_planner = None
+        self._harness_request_pub = None
+        self._harness_proposal = None
         if planner_name == "rai":
             config_path = str(self.get_parameter("llm_config_path").value)
             if not config_path:
@@ -87,8 +94,17 @@ class TaskExecutor(Node):
                 config_path=config_path,
                 vendor=str(self.get_parameter("llm_vendor").value) or None,
             )
+        elif planner_name == "harness":
+            # ADR-0010 D2: proposals arrive on a topic; validation here mirrors
+            # rak_harness.contract without importing the seam package.
+            self._harness_request_pub = self.create_publisher(
+                HarnessRequest, "/harness/request", 10
+            )
+            self._harness_proposal_sub = self.create_subscription(
+                HarnessProposal, "/harness/proposal", self._on_harness_proposal, 10
+            )
         elif planner_name != "local":
-            raise RuntimeError("slow_planner must be 'local' or 'rai'")
+            raise RuntimeError("slow_planner must be 'local', 'rai' or 'harness'")
         self._stop_samples = 0
         self._last_telemetry_time = 0.0
         self._telemetry_event = threading.Event()
@@ -174,8 +190,11 @@ class TaskExecutor(Node):
             if parse_control_command(request.text) is not None:
                 return GoalResponse.REJECT
             intent = parse_navigation_intent(request.text)
+            has_planner = (
+                self._slow_planner is not None or self._harness_request_pub is not None
+            )
             if intent is None or (
-                intent.destination not in self._waypoints and self._slow_planner is None
+                intent.destination not in self._waypoints and not has_planner
             ):
                 return GoalResponse.REJECT
         else:
@@ -547,50 +566,120 @@ class TaskExecutor(Node):
         result.pose = pose
         return result
 
+    def _on_harness_proposal(self, msg):
+        """Keep-last matching proposal; acceptance is decided in _waypoint_from_text."""
+        with self._lock:
+            task = self._active
+            if task is None or msg.task_id != task.task_id:
+                return
+            self._harness_proposal = msg
+
+    def _waypoint_via_slow_planner(self, text, task):
+        completed = threading.Event()
+        selection = {}
+
+        def call_planner():
+            try:
+                selection["result"] = self._slow_planner.propose(
+                    text,
+                    task_id=task.task_id,
+                    revision=task.revision,
+                    allowed_waypoints=tuple(self._waypoints),
+                )
+            except Exception as exc:
+                selection["error"] = exc
+            finally:
+                completed.set()
+
+        threading.Thread(target=call_planner, daemon=True).start()
+        planner_deadline = (
+            time.monotonic()
+            + float(self.get_parameter("slow_planner_timeout_sec").value)
+        )
+        while not completed.is_set():
+            if task.command == "cancel":
+                return None
+            remaining = planner_deadline - time.monotonic()
+            if remaining <= 0.0:
+                raise TimeoutError("slow task planner exceeded its configured timeout")
+            completed.wait(min(0.1, remaining))
+        with self._lock:
+            if self._active is not task or task.command == "cancel":
+                return None
+            if task.revision != 1:
+                raise RuntimeError("task revision changed while proposal was pending")
+        if "error" in selection:
+            raise ValueError(f"slow task planner failed: {selection['error']}")
+        return selection["result"].waypoint
+
+    def _waypoint_via_harness(self, text, task):
+        """ADR-0010 D2: request on /harness/request, accept only a matching,
+        unexpired, whitelisted proposal inside the planning state."""
+        budget = float(self.get_parameter("slow_planner_timeout_sec").value)
+        deadline = time.monotonic() + budget
+        revision = task.revision
+        with self._lock:
+            self._harness_proposal = None
+        request = HarnessRequest()
+        request.header.stamp = self.get_clock().now().to_msg()
+        request.task_id = task.task_id
+        request.revision = revision
+        request.request_id = task.request_id
+        request.text = text
+        request.allowed_waypoints = sorted(self._waypoints)
+        request.deadline_epoch_sec = time.time() + budget
+        self._harness_request_pub.publish(request)
+        while True:
+            if task.command == "cancel":
+                return None
+            with self._lock:
+                if self._active is not task:
+                    return None
+                proposal = self._harness_proposal
+                self._harness_proposal = None
+            if proposal is not None:
+                verdict = self._check_harness_proposal(proposal, task, revision)
+                if verdict[0] == "accept":
+                    return verdict[1]
+                if verdict[0] == "decline":
+                    raise ValueError(f"harness declined: {verdict[1]}")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                raise TimeoutError("harness proposal exceeded its configured timeout")
+            time.sleep(min(0.1, remaining))
+
+    def _check_harness_proposal(self, proposal, task, revision):
+        """Returns (verdict, payload): accept/waypoint, decline/reason, ignore/''."""
+        if proposal.task_id != task.task_id or proposal.request_id != task.request_id:
+            return ("ignore", "")
+        if proposal.revision != revision or task.revision != revision:
+            return ("ignore", "")
+        if time.time() > proposal.expires_epoch_sec:
+            return ("ignore", "")
+        if proposal.kind == HarnessProposal.KIND_SELECT_WAYPOINT:
+            if bool(proposal.waypoint) and proposal.waypoint in self._waypoints:
+                return ("accept", proposal.waypoint)
+            return ("ignore", "")
+        if proposal.kind == HarnessProposal.KIND_REQUEST_CLARIFICATION:
+            return ("decline", f"harness asks for clarification: {proposal.rationale}")
+        if proposal.kind == HarnessProposal.KIND_NO_OP:
+            # One request earns one answer: a well-formed NO_OP is terminal,
+            # not worth waiting out the planning budget.
+            return ("decline", proposal.rationale or "harness returned NO_OP")
+        return ("ignore", "")
+
     def _waypoint_from_text(self, text, task):
         intent = parse_navigation_intent(text)
         if intent is None:
             raise ValueError("text is not a supported navigation request")
         name = intent.destination
         if name not in self._waypoints:
-            if self._slow_planner is None:
+            if self._harness_request_pub is not None:
+                name = self._waypoint_via_harness(text, task)
+            elif self._slow_planner is None:
                 raise ValueError(f"unknown waypoint {name!r}; configure it before use")
-            completed = threading.Event()
-            selection = {}
-
-            def call_planner():
-                try:
-                    selection["result"] = self._slow_planner.propose(
-                        text,
-                        task_id=task.task_id,
-                        revision=task.revision,
-                        allowed_waypoints=tuple(self._waypoints),
-                    )
-                except Exception as exc:
-                    selection["error"] = exc
-                finally:
-                    completed.set()
-
-            threading.Thread(target=call_planner, daemon=True).start()
-            planner_deadline = (
-                time.monotonic()
-                + float(self.get_parameter("slow_planner_timeout_sec").value)
-            )
-            while not completed.is_set():
-                if task.command == "cancel":
-                    return None
-                remaining = planner_deadline - time.monotonic()
-                if remaining <= 0.0:
-                    raise TimeoutError("slow task planner exceeded its configured timeout")
-                completed.wait(min(0.1, remaining))
-            with self._lock:
-                if self._active is not task or task.command == "cancel":
-                    return None
-                if task.revision != 1:
-                    raise RuntimeError("task revision changed while proposal was pending")
-            if "error" in selection:
-                raise ValueError(f"slow task planner failed: {selection['error']}")
-            name = selection["result"].waypoint
+            else:
+                name = self._waypoint_via_slow_planner(text, task)
         proposal = resolve_waypoint(name, self._waypoints)
         result = PoseStamped()
         result.header.frame_id = "map"

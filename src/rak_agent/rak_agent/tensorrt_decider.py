@@ -45,7 +45,9 @@ QTYPE_NAMES = {v: k for k, v in QTYPES.items()}
 #: The deployment asset. It is gitignored and lives outside any install tree, so it is
 #: found by search rather than by `__file__` -- an installed copy of this module sits
 #: under `install/.../site-packages/` and would otherwise resolve to nothing.
-_MODEL_SUBPATH = Path("brain") / "data" / "models" / "laya-typed-decisions"
+#: The repo-root `data/` is the one gitignored asset tree since ADR-0013 (the episode
+#: corpus lives beside it at `data/episodes/`).
+_MODEL_SUBPATH = Path("data") / "models" / "laya-typed-decisions"
 MODEL_DIR_ENV = "RAK_LAYA_MODEL_DIR"
 
 

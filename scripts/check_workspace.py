@@ -27,10 +27,11 @@ EXPECTED = {
     "rak_bringup", "rak_can_driver", "rak_chassis",
     "rak_commissioning", "rak_description", "rak_gpu", "rak_grasp_perception",
     "rak_imu_driver",
+    "rak_harness",
     "rak_intent",
     "rak_interfaces", "rak_motion_stub", "rak_moveit_config",
     "rak_pointcloud", "rak_speech", "rak_stereo_driver",
-    "rak_task_executor", "rak_wbc",
+    "rak_task_executor", "rak_tool_executor", "rak_wbc",
 }
 OLD_NAMES = {"core", "eye", "boot", "brain", "motor_stub", "astra_bridge"}
 
@@ -96,6 +97,13 @@ def check_boundaries(found) -> None:
     assert "rak_description" in found["rak_moveit_config"][1]
     assert "rak_gpu" in found["rak_stereo_driver"][1]
     assert "rak_interfaces" not in found["rak_stereo_driver"][1]
+    # Harness seam (ADR-0010): advisory proposals only, never motion commands.
+    assert "rak_interfaces" in found["rak_harness"][1]
+    assert "rak_intent" in found["rak_harness"][1]
+    assert "rak_agent" not in found["rak_harness"][1]
+    assert "rak_task_executor" not in found["rak_harness"][1]
+    assert "rak_harness" not in found["rak_task_executor"][1]
+    assert "rak_harness" in found["rak_bringup"][1]
     # Commissioning tools speak standard ROS interfaces only (no transport deps).
     assert "rak_chassis" not in found["rak_commissioning"][1]
     # Bringup composes the chassis control chain.
@@ -154,6 +162,9 @@ def check_installed(found) -> None:
         msgs.TaskStatus,
         msgs.TrackedObject,
         msgs.TrackedObjects,
+        msgs.HarnessRequest,
+        msgs.HarnessProposal,
+        msgs.HarnessEvent,
     ):
         message = message_type()
         assert deserialize_message(serialize_message(message), message_type) == message
@@ -167,6 +178,8 @@ def check_installed(found) -> None:
     modules = (
         ("rak_intent.task_intent", "rak_intent"),
         ("rak_agent.node", "rak_agent"),
+        ("rak_harness.contract", "rak_harness"),
+        ("rak_harness.dialogue", "rak_harness"),
         ("rak_arm_simulation.controllers", "rak_arm_simulation"),
         ("rak_task_executor.node", "rak_task_executor"),
     )

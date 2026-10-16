@@ -34,10 +34,10 @@ wbc:
     arm_qd_max: [1.57, 0.5, 0.5, 1.57, 0.5, 1.57]
 
     base_vmax: [0.25, 0.15, 0.5]
-    wheel_radius: 0.0325
-    wheel_k: 0.15
+    wheel_radius: 0.0275   # 2026-10-14 实测 Ø5.5 cm
+    wheel_k: 0.26          # hw 0.1225 + ht 0.1375（2026-10-14 实测轴距 24.5/轮距 27.5）
     wheel_wmax: 10.0
-    support_half: [0.15, 0.15]
+    support_half: [0.1225, 0.1375]  # 半轴距/半轮距（2026-10-14 实测）
     support_margin: 0.02
 
     w_ee_pos: 100.0

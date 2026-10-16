@@ -68,10 +68,10 @@ PARAM_DEFAULTS = {
     "arm_qd_max": [1.57, 0.5, 0.5, 1.57, 0.5, 1.57],
     # 底盘速度盒：ADR-0006 记录的占位口径（第一道线在 mecanum 控制器参数）
     "base_vmax": [0.25, 0.15, 0.5],
-    "wheel_radius": 0.0325,  # 占位（chassis_controllers.yaml 自注）
-    "wheel_k": 0.15,  # 占位
+    "wheel_radius": 0.0275,  # 2026-10-14 实测 Ø5.5（与 chassis_controllers.yaml 同步）
+    "wheel_k": 0.26,  # hw+ht = 0.1225+0.1375（2026-10-14 实测）
     "wheel_wmax": 10.0,  # URDF command clamp 口径
-    "support_half": [0.15, 0.15],  # 占位，TODO(measured)
+    "support_half": [0.1225, 0.1375],  # 半轴距/半轮距（2026-10-14 实测）
     "support_margin": 0.02,
     # 权重档位（spec §5；P1:P2:P3 ≈ 100:10:0.2）
     "w_ee_pos": 100.0,
@@ -274,8 +274,12 @@ class WbcNode(Node):
             return
         self._q_arm = np.array([mapping[name] for name in self._arm_joint_names], dtype=float)
 
-    def _on_enable(self, request: SetBool.Request):
-        response = SetBool.Response()
+    def _on_enable(
+        self, request: SetBool.Request, response: SetBool.Response
+    ) -> SetBool.Response:
+        # [AI] 2026-10-15 车载首跑抓到: rclpy 7.1.12 (Jazzy) 的 service 分发无条件以
+        # (request, response) 两参调用回调 (executors.py _take_service), 旧式单参签名
+        # 直接 TypeError 打死节点——仓库其余服务回调均为两参风格, 此处对齐。
         if request.data and not self._enabled:
             self._enabled = True
             self._degraded = False

@@ -194,7 +194,14 @@
 
 - **已完成**：全机静态骨架入 `rak_chassis.urdf.xacro`（REP-120 `base_footprint`/`base_link` + 四轮实测轮距 27/轴距 25 + 传感器与臂安装帧）；`slam.launch.py` 改由 `robot_state_publisher` 发布、新增 `world→map` 锚点；EKF/恒等里程改发 `odom→base_footprint`。
 - **待办**：
-  ① **装车标定回填** `TODO(measured)`：`base_height`、`lidar_z`、`mic_z`、`cam_x/z`、`imu_x/z`、`arm_x/z`（改 `rak_chassis.urdf.xacro` 的 xacro arg / property；同步 `wbc_base.urdf.xacro` 的 `arm_mount_joint`）。
+  ① **装车标定回填** `TODO(measured)`：**2026-10-14 已回填** `base_height`(0.0275＝轮半径Ø5.5)、
+   `lidar_z`(0.1525＝扫描平面离地0.18−base_height)、`mic_z`(0.1325)、`cam_x/z`(0.15/0.0725)、
+   `imu_x/z`(0.08/0.0425)＋安装姿态 pitch−90°(芯片顶面朝车后)、`arm_x/z`(−0.15/0.0725)，
+   并同步 `wbc_base.urdf.xacro` 镜像；轴距改 0.245、轮距改 0.275（外廓量法：30−轮径5.5 /
+   30−轮宽2.5）、nav2 `robot_radius` 按外廓30×30改 0.22、`wheel_radius`×2 改 0.0275、
+   `sum_of_robot_...` 改 0.26、WBC `wheel_k`=0.26 / `support_half`=[0.1225,0.1375] 同步
+   （wbc_params / node.py / conftest 三处）。**剩余**：外壳尺寸（visual 盒仍占位）。
+   ⚠️ 同日实测 IMU 无应答：四路 spidev `WHO_AM_I=0x7f`（非 0x6b），查接线/pinmux。
   ② **REP-120 迁移上车复测**：`odom→base_footprint` 后 EKF 收敛、rf2o 里程、Nav2 跟踪与 `collision_monitor` 需实机验证；`ros2 run tf2_tools view_frames` 确认每帧唯一发布者。
   ③ **`world→map` 全局锚点**：现为静态恒等占位，待全局定位/多地图注册模块（无限开放世界）。
   ④ **相机外参** `base_link→camera_link` 按 ADR-0014 实测（不得臆造）。

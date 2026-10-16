@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rak_harness</name>
+  <version>0.1.0</version>
+  <description>Jev/task-executor arbitration seam and voice dialogue loop (ADR-0010). Advisory proposals only, never velocity or joint commands.</description>
+  <maintainer email="xrak@todo.todo">xrak</maintainer>
+  <license>Apache-2.0</license>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>rak_interfaces</exec_depend>
+  <!-- dialogue consumes the shared text-intent contract, same parser as ASR/executor -->
+  <exec_depend>rak_intent</exec_depend>
+  <!-- P1: the agent loop imports the single-source tool registry -->
+  <exec_depend>rak_tool_executor</exec_depend>
+  <!-- anthropic SDK is optional: lazy import + stub fallback, no rosdep key -->
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
