@@ -24,7 +24,7 @@
       <mass value="0.2"/><inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
     </inertial>
   </link>
-  <joint name="base_yaw_joint" type="revolute">
+  <joint name="j1_base" type="revolute">
     <parent link="base_link"/><child link="shoulder_link"/>
     <origin xyz="0 0 0.08"/><axis xyz="0 0 1"/>
     <limit lower="-3.14159" upper="3.14159" effort="5" velocity="1.0"/>
@@ -38,7 +38,7 @@
       <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
     </inertial>
   </link>
-  <joint name="shoulder_pitch_joint" type="revolute">
+  <joint name="j2_shoulder" type="revolute">
     <parent link="shoulder_link"/><child link="upper_arm_link"/>
     <origin xyz="0 0 0.06"/><axis xyz="0 1 0"/>
     <limit lower="-1.57" upper="1.57" effort="5" velocity="1.0"/>
@@ -52,7 +52,7 @@
       <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
     </inertial>
   </link>
-  <joint name="elbow_pitch_joint" type="revolute">
+  <joint name="j3_elbow" type="revolute">
     <parent link="upper_arm_link"/><child link="forearm_link"/>
     <origin xyz="0.18 0 0"/><axis xyz="0 1 0"/>
     <limit lower="-2.2" upper="2.2" effort="4" velocity="1.2"/>
@@ -65,7 +65,7 @@
       <mass value="0.12"/><inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0002"/>
     </inertial>
   </link>
-  <joint name="wrist_yaw_joint" type="revolute">
+  <joint name="j4_forearm" type="revolute">
     <parent link="forearm_link"/><child link="wrist_yaw_link"/>
     <origin xyz="0.16 0 0"/><axis xyz="0 0 1"/>
     <limit lower="-3.14159" upper="3.14159" effort="2" velocity="1.5"/>
@@ -78,7 +78,7 @@
       <mass value="0.1"/><inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
     </inertial>
   </link>
-  <joint name="wrist_pitch_joint" type="revolute">
+  <joint name="j5_wrist_pitch" type="revolute">
     <parent link="wrist_yaw_link"/><child link="wrist_pitch_link"/>
     <origin xyz="0.04 0 0"/><axis xyz="0 1 0"/>
     <limit lower="-1.57" upper="1.57" effort="2" velocity="1.5"/>
@@ -91,7 +91,7 @@
       <mass value="0.08"/><inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
     </inertial>
   </link>
-  <joint name="wrist_roll_joint" type="revolute">
+  <joint name="j6_wrist_roll" type="revolute">
     <parent link="wrist_pitch_link"/><child link="tool0"/>
     <origin xyz="0.04 0 0"/><axis xyz="1 0 0"/>
     <limit lower="-3.14159" upper="3.14159" effort="1" velocity="2.0"/>

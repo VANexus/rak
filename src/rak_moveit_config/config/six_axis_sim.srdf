@@ -13,12 +13,12 @@
   <end_effector name="gripper_eef" parent_link="tool0" group="gripper"/>
 
   <group_state name="home" group="arm">
-    <joint name="base_yaw_joint" value="0"/>
-    <joint name="shoulder_pitch_joint" value="0"/>
-    <joint name="elbow_pitch_joint" value="0"/>
-    <joint name="wrist_yaw_joint" value="0"/>
-    <joint name="wrist_pitch_joint" value="0"/>
-    <joint name="wrist_roll_joint" value="0"/>
+    <joint name="j1_base" value="0"/>
+    <joint name="j2_shoulder" value="0"/>
+    <joint name="j3_elbow" value="0"/>
+    <joint name="j4_forearm" value="0"/>
+    <joint name="j5_wrist_pitch" value="0"/>
+    <joint name="j6_wrist_roll" value="0"/>
   </group_state>
   <group_state name="open" group="gripper">
     <joint name="gripper_joint" value="0.05"/>

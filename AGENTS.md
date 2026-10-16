@@ -46,10 +46,13 @@ archive deleted 2026-10-10 — the code lives only in git history).
   jog**: j1 +5° and Home both SUCCEEDED, the wire carried 35 `ARM_CMD_A` frames ramping
   0.1°→5.0°→0.0° at 0.1° quantization (event-driven, no periodic replay), readback followed,
   no faults. Still unverified: J2–J6 physical motion, limit/estop behavior under motion,
-  and the gripper (no hardware channel — readback is always 0). The 7 arm joints are backed
-  by a documented zero-length control stub chain in `rak_chassis.urdf.xacro` (Jazzy requires
-  every `<ros2_control>` joint to exist in the kinematic tree); real geometry stays in
-  `rak_arm.urdf.xacro`.
+  and the gripper (no hardware channel — readback is always 0). The 7 arm joints' real
+  geometry is defined **once** in `src/rak_description/urdf/macros/arm_chain.xacro`
+  (`<xacro:rak_arm_chain/>`, 2026-10-16) and shared by `rak_arm.urdf.xacro` and
+  `rak_chassis.urdf.xacro`; the former zero-length control stub chain is gone. The gripper
+  has no geometry — a bare `gripper_link` frame after `tool0` only keeps Jazzy's
+  "every `<ros2_control>` joint must exist in the kinematic tree" satisfied.
+  `src/rak_chassis/test/validate_chassis_urdf.py` pins that contract under `colcon test`.
   `src/rak_moveit_config/test/validate_six_axis_sim.py:36` still asserts the
   six-axis **sim fixture** URDF contains no `<ros2_control>` tag — that fixture is not the
   real arm.

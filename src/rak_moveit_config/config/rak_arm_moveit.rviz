@@ -5,88 +5,167 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-      Splitter Ratio: 0.5
-    Tree Height: 600
-  - Class: rviz_common/Selection
-    Name: Selection
-  - Class: rviz_common/Tool Properties
-    Name: Tool Properties
-    Splitter Ratio: 0.5
+        - /MotionPlanning1
+      Splitter Ratio: 0.4
+    Tree Height: 640
   - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
     Name: Views
     Splitter Ratio: 0.5
 Visualization Manager:
   Class: ""
   Displays:
     - Alpha: 0.5
-      Cell Size: 1
+      Cell Size: 0.1
       Class: rviz_default_plugins/Grid
       Color: 160; 160; 164
       Enabled: true
+      Line Style:
+        Line Width: 0.01
+        Value: Lines
       Name: Grid
-      Plane Cell Count: 10
+      Plane: XY
+      Plane Cell Count: 16
       Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: moveit_rviz_plugin/MotionPlanning
+      Enabled: true
+      Move Group Namespace: ""
+      MoveIt_Allow_Approximate_IK: true
+      MoveIt_Allow_External_Program: false
+      MoveIt_Allow_Replanning: false
+      MoveIt_Allow_Sensor_Positioning: false
+      MoveIt_Warehouse_Host: 127.0.0.1
+      MoveIt_Warehouse_Port: 33829
+      Name: MotionPlanning
+      Planned Path:
+        # [AI] 关掉：开着时只要有轨迹就**永远在重画**，软件渲染下纯属白烧 CPU。
+        Loop Animation: false
+        Show Robot Collision: false
+        Show Robot Visual: true
+        Show Trail: false
+        State Display Time: 0.05 s
+        Trail Step Size: 1
+        Trajectory Topic: /display_planned_path
+      Planning Metrics:
+        Payload: 1
+        Show Joint Torques: false
+        Show Manipulability: false
+        Show Manipulability Index: false
+        Show Weight Limit: false
+        TextHeight: 0.08
+      Planning Request:
+        Colliding Link Color: 255; 0; 0
+        # [AI] 这具半透明幽灵臂 = **拖动时的实时预览**：拖手柄时 MoveIt 实时算 IK，
+        # 虚影立刻摆出"末端在该位姿时臂会是什么样"，松手前就能看出目标合不合适。
+        # 曾为修颜色把它关成 0（目标=当前位时它与实体重合、橙色会糊住连杆色）——
+        # 那是把好功能一起关掉了。现在折中到 0.5：拖动中（两者不同位）看得很清楚，
+        # 静置重合时也只是微微泛橙，不再盖掉每节的颜色。
+        Goal State Alpha: 0.5
+        Goal State Color: 250; 128; 0
+        # [AI] 0 = 自动，会按"典型工业臂"给一个近 1 米的手柄；本臂才 43 cm，
+        # 手柄比臂还大 → 屏幕上轻轻一拖目标就飞出可达范围（实测 Plan 报
+        # "Insufficient states in sampleable goal region"）。固定成 0.15 m。
+        Interactive Marker Size: 0.15
+        Joint Violation Color: 255; 0; 255
+        Planning Group: arm
+        Query Goal State: true
+        # [AI] 关掉起点手柄：两个手柄同时在屏幕上，很容易拖错那个（表现为
+        # "拖了半天没反应/目标不对"）。起点固定取当前状态即可。
+        Query Start State: false
+        Show Workspace: false
+        Workspace Color: 0; 255; 0
+      Planning Scene Topic: /monitored_planning_scene
+      Robot Description: robot_description
+      Scene Geometry:
+        Scene Alpha: 0.9
+        Scene Color: 50; 230; 50
+        Scene Display Time: 0.2
+        Show Scene Geometry: true
+        Voxel Coloring: Z-Axis
+        Voxel Rendering: Occupied Voxels
+      Scene Robot:
+        # [AI] 关掉"规划场景机器人"：它画的也是**当前**臂，跟 RobotModel 图层重复，
+        # 而且用统一色。现在 /joint_states 有了，RobotModel 能正常画出彩色的臂。
+        Robot Alpha: 1
+        Show Robot Collision: false
+        Show Robot Visual: false
+      Value: true
     - Class: rviz_default_plugins/RobotModel
+      # [AI] 1.0：0.6 的半透明会把各节的颜色冲淡，看着像"一个颜色"
+      Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
       Description Source: Topic
       Description Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
+        Durability Policy: Transient Local
         Value: /robot_description
+      # [AI] 必须开！RobotModel 是**唯一**按 URDF 材质画的图层（每节连杆不同颜色
+      # + 自旋指针都靠它）。MotionPlanning 图层画的是"规划场景机器人"，用的是
+      # 统一色，看不出是哪一节。曾为省 CPU 把它关掉 → 颜色全部消失，已回退。
       Enabled: true
       Name: RobotModel
-      Visual Enabled: true
-    - Class: rviz_default_plugins/TF
-      Enabled: true
-      Marker Scale: 0.3
-      Name: TF
-      Show Arrows: true
-      Show Axes: true
-      Show Names: false
-      Tree:
-        {}
+      TF Prefix: ""
       Update Interval: 0
       Value: true
-    - Class: rviz_default_plugins/InteractiveMarkers
-      Enabled: true
-      Feedback Topic: /ik_marker_topic/feedback
-      Name: InteractiveMarkers
-      Show Axes: false
-      Show Descriptions: true
-      Show Visual Aids: true
-      Namespace: ik_marker_topic
-      Update Topic: /ik_marker_topic/update
-      Visual Aids:
-        - Cartesian Axes
-      Enabled Visual Aids:
-        - Cartesian Axes
+      Visual Enabled: true
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Marker Scale: 0.1
+      Name: TF
+      Show Arrows: false
+      Show Axes: true
+      Show Names: false
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Default Light: true
-    Fixed Frame: base_link
-    Frame Rate: 30
+    Fixed Frame: arm_base_link
+    # [AI] 本机 WSLg 只能软件渲染（llvmpipe），帧率压到 10 才不至于把 8 核吃满。
+    Frame Rate: 10
   Name: root
   Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
     - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/TopDownOrtho
-      Enable Stereo Rendering:
-        Stereo Eye Separation: 0.06
-        Stereo Focal Distance: 1
-        Swap Stereo Eyes: false
-        Value: false
-      Invert Z Axis: false
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.4
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.22
       Name: Current View
       Near Clip Distance: 0.01
-      Scale: 0.4
+      Pitch: 0.2
       Target Frame: <Fixed Frame>
-      X: 0
-      Y: 0.3
-      Value: TopDownOrtho (rviz_default_plugins)
+      Value: Orbit (rviz)
+      Yaw: 2.4
+    Saved: ~
 Window Geometry:
-  Height: 600
-  Width: 1024
+  Displays:
+    collapsed: false
+  # [AI] 尺寸写在这里由 RViz 启动时自取。**不要**再从 X 侧用 Xlib configure 强改 ——
+  # 那样 Weston 的窗口与 Windows 侧 RDP 窗口会失去同步，表现为"进程在、画面在、
+  # 但窗口点不动"（本机 WSLg 上实测踩到过）。
+  # 1600x1000 是折中：够看清，又不至于让 llvmpipe 软件渲染过载。
+  Height: 1000
+  Hide Left Dock: false
+  Hide Right Dock: false
+  MotionPlanning:
+    collapsed: false
+  QMainWindow State: ""
+  Views:
+    collapsed: true
+  Width: 1600
+  X: 30
+  Y: 30

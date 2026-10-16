@@ -59,10 +59,15 @@ spawns `arm_controller` (JointTrajectoryController) + `gripper_controller` from
 (feedback sync, controllers active, action path + `arm_tui` end-to-end) and then with
 `allow_motion:=true` for a real j1 jog + Home round-trip (frame-level verified on can0:
 event-driven `ARM_CMD` ramps at 0.1° quantization, no faults); J2–J6 motion, limits and
-estop-under-motion remain unverified. The 7 arm joints ride on a zero-length control stub chain inside
-`rak_chassis.urdf.xacro` (Jazzy requires every `<ros2_control>` joint in the kinematic tree);
-real geometry stays in `rak_arm.urdf.xacro`, and the gripper has no physical feedback
-channel. Its transport seam is the `Session` abstraction:
+estop-under-motion remain unverified. The 7 arm joints' **real geometry** is defined **once** in
+`src/rak_description/urdf/macros/arm_chain.xacro` (a single `<xacro:rak_arm_chain/>` macro,
+2026-10-16) and shared by **both** `rak_arm.urdf.xacro` (MoveIt side) and
+`rak_chassis.urdf.xacro` (the real robot's `robot_state_publisher` — this is what makes
+`shoulder_link…tool0` TF exist at all; the former "zero-length control stub chain" is gone).
+The gripper has no geometry and no physical feedback channel; a bare `gripper_link` frame
+after `tool0` exists only because Jazzy requires every `<ros2_control>` joint to be in the
+kinematic tree. `src/rak_chassis/test/validate_chassis_urdf.py` pins that 11-joint contract
+under `colcon test`. Its transport seam is the `Session` abstraction:
 `CanSession` (SocketCAN CAN v4) is the **only** implementation — ADR-0016 (2026-10-14)
 deleted the USB v2 link, its `SerialSession`, `rak_base_driver` and `rak_serial_link`, the
 direct-connect commissioning TUIs, the serial scripts and `docs/protocol/` (snapshot: git

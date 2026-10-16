@@ -17,20 +17,20 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 
 
 ARM_JOINTS = (
-    "base_yaw_joint",
-    "shoulder_pitch_joint",
-    "elbow_pitch_joint",
-    "wrist_yaw_joint",
-    "wrist_pitch_joint",
-    "wrist_roll_joint",
+    "j1_base",
+    "j2_shoulder",
+    "j3_elbow",
+    "j4_forearm",
+    "j5_wrist_pitch",
+    "j6_wrist_roll",
 )
 JOINT_BOUNDS = {
-    "base_yaw_joint": (-3.14159, 3.14159),
-    "shoulder_pitch_joint": (-1.57, 1.57),
-    "elbow_pitch_joint": (-2.2, 2.2),
-    "wrist_yaw_joint": (-3.14159, 3.14159),
-    "wrist_pitch_joint": (-1.57, 1.57),
-    "wrist_roll_joint": (-3.14159, 3.14159),
+    "j1_base": (-3.14159, 3.14159),
+    "j2_shoulder": (-1.57, 1.57),
+    "j3_elbow": (-2.2, 2.2),
+    "j4_forearm": (-3.14159, 3.14159),
+    "j5_wrist_pitch": (-1.57, 1.57),
+    "j6_wrist_roll": (-3.14159, 3.14159),
     "gripper_joint": (0.0, 0.05),
 }
 ALL_JOINTS = (*ARM_JOINTS, "gripper_joint")

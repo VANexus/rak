@@ -1,0 +1,54 @@
+# 真实六轴臂的 ros2_control 仿真链路（纯软件层，不接任何硬件）。
+#
+# 硬件插件是 mock_components/GenericSystem（写在 rak_arm.urdf.xacro 的
+# <ros2_control> 段里）—— 命令写进去、状态跟着回来，在内存里模拟运动。
+#
+# 控制器分工：
+#   joint_state_broadcaster —— 把 6 轴状态发到 /joint_states
+#                              （MoveIt 的"当前状态"和 RViz 的 TF 都靠它）
+#   arm_controller          —— JointTrajectoryController，接 MoveIt 发来的轨迹
+#
+# 关节名 = docs/arm_moveit_contract.md §1（FROZEN）的 j1_base 系，
+# 与真机 rak_chassis.urdf.xacro / chassis_controllers.yaml **同名同域**（指令角）
+# —— 2026-10-15 统一后，本文件规划的轨迹可直接发真机。
+# （本条链路仍是仿真：硬件插件是 mock_components，不发 CAN。）
+#
+# 与仓库里 chassis_bringup 那套的关系：那套是**真机**（can0 → F407），
+# 这套是**仿真**（mock_components）。两套的 controller_manager 配置格式一致。
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz，与 JTC 插值节拍一致
+    use_sim_time: false
+    enforce_command_limits: true   # 靠 URDF command_interface 的 min/max 限幅
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+joint_state_broadcaster:
+  ros__parameters:
+    use_sim_time: false
+
+arm_controller:
+  ros__parameters:
+    use_sim_time: false
+    joints:
+      - j1_base
+      - j2_shoulder
+      - j3_elbow
+      - j4_forearm
+      - j5_wrist_pitch
+      - j6_wrist_roll
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+    state_publish_rate: 50.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+    constraints:
+      # 纯软件仿真、状态=命令，容差给紧一点也能收敛
+      stopped_velocity_tolerance: 0.05
+      goal_time: 1.0
