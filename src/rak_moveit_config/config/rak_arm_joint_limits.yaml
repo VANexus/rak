@@ -1,0 +1,45 @@
+# 真实六轴臂（rak_arm.urdf.xacro）的速度/加速度上限 —— MoveIt 的 TOTG 时间化必需。
+#
+# ⚠️ 为什么必须单独有这个文件（否则 Plan 一定失败）：
+#   URDF 的 <limit> 只能给 effort/velocity，**给不了加速度**。MoveIt 的
+#   AddTimeOptimalParameterization 拿不到 max_acceleration 会直接报
+#   "No acceleration limit was defined for joint ..." 然后整个规划 FAILURE。
+#
+# 数值来源：
+#   velocity —— 同 URDF 的 <limit velocity>，而 URDF 又取自
+#               properties_arm.xacro（J2/J3/J5=vel_slow 0.5，其余=vel_fast 1.57）。
+#   acceleration —— **无实测数据**，按 2×velocity 保守起步。
+#               TODO(measured)：带载实测后回填（与 properties_arm.xacro 的 TODO 同源）。
+#
+# 关节名与 rak_arm.srdf / rak_arm.urdf.xacro 一致。
+joint_limits:
+  j1_base:
+    has_velocity_limits: true
+    max_velocity: 1.57
+    has_acceleration_limits: true
+    max_acceleration: 3.14
+  j2_shoulder:
+    has_velocity_limits: true
+    max_velocity: 0.5
+    has_acceleration_limits: true
+    max_acceleration: 1.0
+  j3_elbow:
+    has_velocity_limits: true
+    max_velocity: 0.5
+    has_acceleration_limits: true
+    max_acceleration: 1.0
+  j4_forearm:
+    has_velocity_limits: true
+    max_velocity: 1.57
+    has_acceleration_limits: true
+    max_acceleration: 3.14
+  j5_wrist_pitch:
+    has_velocity_limits: true
+    max_velocity: 0.5
+    has_acceleration_limits: true
+    max_acceleration: 1.0
+  j6_wrist_roll:
+    has_velocity_limits: true
+    max_velocity: 1.57
+    has_acceleration_limits: true
+    max_acceleration: 3.14

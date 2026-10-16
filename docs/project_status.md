@@ -1,6 +1,32 @@
 # 项目总体状态
 
-更新日期：2026-10-14
+更新日期：2026-10-15
+
+## 2026-10-15 增量：机械臂几何并入整车 URDF + MoveIt 真机档
+
+- **几何单点化**：臂的运动链（7 link + 6 joint）抽到
+  `src/rak_description/urdf/macros/arm_chain.xacro` 的 `<xacro:rak_arm_chain/>` 宏，
+  由 `rak_arm.urdf.xacro`（MoveIt 用）与 `rak_chassis.urdf.xacro`（真机 CM 用）
+  **共用**。此前两边各写一份：整车那份是零长度控制桩，没有几何。
+- **RSP 现在会发臂的 TF**：ADR-0015 待闭合项 #4 随之闭合。本机实测
+  `tf2` 查 `arm_base_link→tool0` = (0.10, 0, 0.33)（Home 位）。
+  → RViz / 任何外部消费者这才**看得到**机械臂（rviz 的 RobotModel 是逐 link 查 TF 的）。
+- **契约不变**：`<ros2_control>` 仍是 11 关节（4 轮 + j1..j6 + gripper）、顺序与接口
+  种类不变；臂的 `<limit>` 与 command min/max 改为引用 `properties_arm.xacro`
+  的 `${jN_lower/upper}`（消掉 12 个魔法数字），有效限幅恒等于契约值。
+  新增 `src/rak_chassis/test/validate_chassis_urdf.py` 把整套契约钉进 `colcon test`。
+- **夹爪**：`tool0` 之后补了一个**无几何**的 `gripper_link` 帧（`gripper_joint`，
+  revolute，限位与旧桩同值）——只为满足 component_parser 的"joint 必须在树里"，
+  **不编造未实测的几何**（夹爪支架没量过）。
+- **MoveIt 真机档**：`rak_moveit_config/launch/rak_arm.launch.py` 新增
+  `use_hardware`（默认 **false**）。`true` 时**不再起**本地
+  `controller_manager` / spawner / `robot_state_publisher`，只起 `move_group`(+RViz)，
+  对接真机 `chassis_bringup` 起的同名 `arm_controller`。
+  本机用 mock 替身验证：规划 69 点、Execute `error_code=0`、零
+  "action client not connected"。仿真档（默认）行为不变。
+- **仍未做**：真机的 J2–J6 运动/限位/急停验证（Arm Unlock Gates，未解除）；
+  臂末端**没有急停**（契约 §2.5：急停只作用于轮驱动）；舵机无编码器，
+  反馈是指令回声，MoveIt 无法知道真机是否真的到位。
 
 ## 2026-10-14 增量：删除 USB v2 链路（ADR-0016）
 

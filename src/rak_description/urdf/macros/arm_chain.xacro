@@ -1,0 +1,274 @@
+<?xml version="1.0"?>
+<!--
+  arm_chain.xacro — 真实六轴机械臂的运动链（7 link + 6 joint），**单点定义**。
+
+  [AI] 2026-10-15 从 rak_arm.urdf.xacro 逐字抽出，目的是让**两棵树共用同一份几何**：
+    * rak_arm.urdf.xacro     —— 独立臂模型（MoveIt 用；root = arm_base_link）
+    * rak_chassis.urdf.xacro —— 整车模型（真机 controller_manager 用；
+                                 arm_base_link 由 arm_mount_joint 接到 base_link）
+  抽出前这两棵树里的臂是**两份互不相干的东西**：一份真实几何、一份零长度控制桩
+  （桩只为满足 Jazzy "`<ros2_control>` 的 joint 必须在运动学树里"而存在，
+   本身没有几何，导致真机的 robot_state_publisher 发不出 shoulder_link…tool0 的 TF）。
+
+  ⚠️ 调用方**必须先 include**这三份（本文件刻意不 include，理由见下）：
+    urdf/properties_arm.xacro          — 长度/限位/零位/effort/velocity/link_radius
+    urdf/macros/inertial_macros.xacro  — cylinder_inertial / box_inertial
+    urdf/macros/materials.xacro        — arm_* 颜色
+  为什么本文件不 include：xacro 的 include 路径按**发起 include 的那个文件**解析，
+  放进来就得写 `../properties_arm.xacro` 这种别扭路径；更要紧的是 `<material>` 是
+  **原样透传的普通元素**，同一棵树里 include 两次会产生重复的 `<material name=...>`，
+  urdfdom 会报 not unique。所以每棵树每个 fragment 只 include 一次，由顶层文件控制。
+
+  夹爪**不在此宏内**：真实臂链止于 tool0，夹爪硬件不在模型里（ADR-0008）。
+  需要 `gripper_joint` 的树（chassis，因为 `<ros2_control>` 要它）在调用本宏之后
+  自行追加一个**无几何**的帧 —— 别在这里编造夹爪几何。
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="rak_arm_chain">
+
+    <!-- ============ 底座：车顶安装面 + J1 腰旋转 ============ -->
+    <!-- [AI] ⚠️ 本 link 的**碰撞几何是编的，不是量出来的**：
+         radius=0.05（直径 10cm）和高度系数 0.5 都没有实物依据 —— 它代表安装面到
+         J2 之间那坨结构（J1 舵机 + 舵盘 + 支架），从未实测。同处的 link_radius
+         （连杆半径 0.02）同样是编的。
+         **所以"Home 位会不会撞"目前无数据可判，别拿这个模型当依据。**
+         系数是 2026-10-15 从 0.75 改到 0.5 的，理由只是让仿真能跑：
+         8cm 底座下 0.75 恰好与臂底面**相切**（间隙 0.00cm）—— 是 knife-edge，
+         任何一侧动 1mm 就互相穿透、MoveIt 的 CheckStartStateCollision 拒绝规划。
+         0.5 留 2cm 余量。
+         真机前必须量：① 底座结构件高度 ② 最粗处直径 ③ 连杆直径。 -->
+    <link name="arm_base_link">
+      <!-- [AI] 2026-10-16 重画：原来是"4cm 扁柱"（d_base_to_j2 * 0.5），和 shoulder_link 的
+           4cm 方块拼成 8cm，看着像"扁饼叠方墩"。现把 J1→J2 那 8cm 拆成
+           **薄安装板（本 link，不转）+ 腰柱（shoulder_link，跟 J1 转）**——
+           更贴实物：J1 舵机 + 舵盘 + 支架本来就是一整根转的东西。
+           本 link = 贴车顶的一块圆板，高 = d_base_to_j2 * 0.15 ≈ 1.2cm。
+           ⚠️ 直径仍是**编的**（Ø10cm）；真值待量"底座最粗处"。 -->
+      <visual>
+        <geometry><cylinder radius="0.05" length="${d_base_to_j2 * 0.15}"/></geometry>
+        <origin xyz="0 0 ${d_base_to_j2 * 0.075}"/>
+        <material name="base_link_color"/>
+      </visual>
+      <collision>
+        <geometry><cylinder radius="0.05" length="${d_base_to_j2 * 0.15}"/></geometry>
+        <origin xyz="0 0 ${d_base_to_j2 * 0.075}"/>
+      </collision>
+      <!-- TODO(measured): 底座结构件估重 -->
+      <xacro:cylinder_inertial mass="0.05" r="0.05" L="${d_base_to_j2 * 0.15}"
+                               xyz="0 0 ${d_base_to_j2 * 0.075}"/>
+    </link>
+
+    <joint name="j1_base" type="revolute">
+      <parent link="arm_base_link"/><child link="shoulder_link"/>
+      <origin xyz="0 0 0"/>            <!-- J1 轴即安装面中心，安装面高度计在整车 URDF -->
+      <!-- zero_j1 = 0 → 零位无需偏移 -->
+      <axis xyz="0 0 1"/>
+      <limit lower="${j1_lower}" upper="${j1_upper}"
+             effort="${effort_995}" velocity="${vel_fast}"/>
+    </joint>
+
+    <link name="shoulder_link">
+      <!-- [AI] 2026-10-16 重画：由 4cm 方块 → **腰柱**，从安装板顶(1.2cm)一直顶到 J2 轴(8cm)。
+           本 link 跟着 J1 转，所以这根柱子就是"腰"——物理上 J1 舵机+舵盘+支架
+           整根都随 J1 转，故画成一根而不是"饼+墩"。
+           安全性：SRDF 里 shoulder_link↔arm_base_link 与 ↔upper_arm_link 都是
+           Adjacent（碰撞已禁用），故改本 link 几何**不引入任何新碰撞对**；
+           而 arm_base_link 由 4cm 缩到 1.2cm 后，离 upper_arm_link(8cm)
+           更远，"底座柱 vs 大臂"那条 knife-edge 只剩更不可能触发。
+           ⚠️ 直径仍是**编的**（Ø10cm），真值待量。 -->
+      <visual>
+        <geometry><cylinder radius="0.05" length="${d_base_to_j2 * 0.85}"/></geometry>
+        <origin xyz="0 0 ${d_base_to_j2 * 0.575}"/>
+        <material name="arm_shoulder"/>
+      </visual>
+      <visual>
+        <!-- J1 自旋指针（贴在腰柱上端侧面） -->
+        <geometry><box size="0.030 0.006 0.006"/></geometry>
+        <origin xyz="0.052 0 ${d_base_to_j2 * 0.90}"/>
+        <material name="arm_tab"/>
+      </visual>
+      <collision>
+        <geometry><cylinder radius="0.05" length="${d_base_to_j2 * 0.85}"/></geometry>
+        <origin xyz="0 0 ${d_base_to_j2 * 0.575}"/>
+      </collision>
+      <!-- TODO(measured): 腰部舵机+舵盘估重（原 0.15+0.10=0.25 → 拆成 0.05+0.20，总量不变） -->
+      <xacro:cylinder_inertial mass="0.20" r="0.05" L="${d_base_to_j2 * 0.85}"
+                               xyz="0 0 ${d_base_to_j2 * 0.575}"/>
+    </link>
+
+    <!-- ============ J2 大臂俯仰（+Y；全直时臂沿 +Z） ============ -->
+    <joint name="j2_shoulder" type="revolute">
+      <parent link="shoulder_link"/><child link="upper_arm_link"/>
+      <!-- [AI] 关节值是**指令角**（零位=135°），故 origin 补 Rot(+Y, −135°)：
+           T_origin·Rot(+Y,q) = Rot(+Y, q−135°) → 关节值 135° 时仍是原来的直臂姿态。 -->
+      <origin xyz="0 0 ${d_base_to_j2}" rpy="0 ${-zero_j2} 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="${j2_lower}" upper="${j2_upper}"
+             effort="${effort_995}" velocity="${vel_slow}"/>
+    </joint>
+
+    <link name="upper_arm_link">
+      <visual>
+        <geometry><cylinder radius="${link_radius}" length="${d_upper_arm}"/></geometry>
+        <origin xyz="0 0 ${d_upper_arm / 2}"/>
+        <material name="arm_upper"/>
+      </visual>
+      <visual>
+        <geometry><box size="0.030 0.007 0.008"/></geometry>
+        <origin xyz="${link_radius + 0.015} 0 ${d_upper_arm}"/>
+        <material name="arm_tab"/>
+      </visual>
+      <visual>
+        <!-- 对比色环带：圆柱看起来有"纹路"；位置刻意偏心，也能辅助判断朝向 -->
+        <geometry><cylinder radius="${link_radius + 0.0015}" length="0.007"/></geometry>
+        <origin xyz="0 0 ${d_upper_arm * 0.42}"/>
+        <material name="arm_band"/>
+      </visual>
+      <collision>
+        <geometry><cylinder radius="${link_radius}" length="${d_upper_arm}"/></geometry>
+        <origin xyz="0 0 ${d_upper_arm / 2}"/>
+      </collision>
+      <!-- TODO(measured): 质量/惯量待实测（尺寸=大臂 10cm，2026-10-15 卡尺复核；
+           旧注释写 11cm 系笔误） -->
+      <xacro:cylinder_inertial mass="0.12" r="${link_radius}" L="${d_upper_arm}"
+                               xyz="0 0 ${d_upper_arm / 2}"/>
+    </link>
+
+    <!-- ============ J3 肘俯仰（−Y：与 J2/J5 反向，实测确认） ============ -->
+    <joint name="j3_elbow" type="revolute">
+      <parent link="upper_arm_link"/><child link="forearm_link"/>
+      <!-- [AI] 关节值是指令角（零位=180°），轴是 −Y，故 origin 补
+           Rot(−Y, −180°) = Rot(+Y, +180°) → rpy 的 pitch = +zero_j3。 -->
+      <origin xyz="0 0 ${d_upper_arm}" rpy="0 ${zero_j3} 0"/>
+      <axis xyz="0 -1 0"/>
+      <limit lower="${j3_lower}" upper="${j3_upper}"
+             effort="${effort_995}" velocity="${vel_slow}"/>
+    </joint>
+
+    <link name="forearm_link">
+      <visual>
+        <geometry><cylinder radius="${link_radius}" length="${d_elbow_offset}"/></geometry>
+        <origin xyz="0 0 ${d_elbow_offset / 2}"/>
+        <material name="arm_forearm"/>
+      </visual>
+      <visual>
+        <geometry><box size="0.030 0.007 0.008"/></geometry>
+        <origin xyz="${link_radius + 0.015} 0 ${d_elbow_offset}"/>
+        <material name="arm_tab"/>
+      </visual>
+      <visual>
+        <geometry><cylinder radius="${link_radius + 0.0015}" length="0.007"/></geometry>
+        <origin xyz="0 0 ${d_elbow_offset * 0.42}"/>
+        <material name="arm_band"/>
+      </visual>
+      <collision>
+        <geometry><cylinder radius="${link_radius}" length="${d_elbow_offset}"/></geometry>
+        <origin xyz="0 0 ${d_elbow_offset / 2}"/>
+      </collision>
+      <!-- TODO(measured): 质量待实测（尺寸=肘段 11cm，2026-10-15 卡尺复核） -->
+      <xacro:cylinder_inertial mass="0.08" r="${link_radius}" L="${d_elbow_offset}"
+                               xyz="0 0 ${d_elbow_offset / 2}"/>
+    </link>
+
+    <!-- ============ J4 小臂自旋（沿臂轴 Z） ============ -->
+    <joint name="j4_forearm" type="revolute">
+      <parent link="forearm_link"/><child link="forearm_roll_link"/>
+      <origin xyz="0 0 ${d_elbow_offset}"/>        <!-- zero_j4 = 0 → 无需偏移 -->
+      <axis xyz="0 0 1"/>
+      <limit lower="${j4_lower}" upper="${j4_upper}"
+             effort="${effort_996r}" velocity="${vel_fast}"/>
+    </joint>
+
+    <link name="forearm_roll_link">
+      <visual>
+        <geometry><cylinder radius="${link_radius}" length="${d_forearm}"/></geometry>
+        <origin xyz="0 0 ${d_forearm / 2}"/>
+        <material name="arm_forearm_roll"/>
+      </visual>
+      <visual>
+        <!-- J4 自旋指针（这条轴绕自身 Z 转，圆柱本体看不出来） -->
+        <geometry><box size="0.030 0.007 0.008"/></geometry>
+        <origin xyz="${link_radius + 0.015} 0 ${d_forearm}"/>
+        <material name="arm_tab"/>
+      </visual>
+      <visual>
+        <geometry><cylinder radius="${link_radius + 0.0015}" length="0.007"/></geometry>
+        <origin xyz="0 0 ${d_forearm * 0.42}"/>
+        <material name="arm_band"/>
+      </visual>
+      <collision>
+        <geometry><cylinder radius="${link_radius}" length="${d_forearm}"/></geometry>
+        <origin xyz="0 0 ${d_forearm / 2}"/>
+      </collision>
+      <!-- TODO(measured): 质量/惯量待实测（尺寸=小臂 5cm，2026-10-15 卡尺复核；
+           旧注释写 11cm 系笔误） -->
+      <xacro:cylinder_inertial mass="0.12" r="${link_radius}" L="${d_forearm}"
+                               xyz="0 0 ${d_forearm / 2}"/>
+    </link>
+
+    <!-- ============ J5 腕俯仰（+Y，与 J2 同向） ============ -->
+    <joint name="j5_wrist_pitch" type="revolute">
+      <parent link="forearm_roll_link"/><child link="wrist_pitch_link"/>
+      <origin xyz="0 0 ${d_forearm}"/>             <!-- zero_j5 = 0 → 无需偏移 -->
+      <axis xyz="0 1 0"/>
+      <limit lower="${j5_lower}" upper="${j5_upper}"
+             effort="${effort_996r}" velocity="${vel_slow}"/>
+    </joint>
+
+    <link name="wrist_pitch_link">
+      <visual>
+        <geometry><cylinder radius="${link_radius}" length="${d_wrist}"/></geometry>
+        <origin xyz="0 0 ${d_wrist / 2}"/>
+        <material name="arm_wrist_pitch"/>
+      </visual>
+      <visual>
+        <geometry><box size="0.030 0.007 0.008"/></geometry>
+        <origin xyz="${link_radius + 0.015} 0 ${d_wrist}"/>
+        <material name="arm_tab"/>
+      </visual>
+      <visual>
+        <geometry><cylinder radius="${link_radius + 0.0015}" length="0.007"/></geometry>
+        <origin xyz="0 0 ${d_wrist * 0.42}"/>
+        <material name="arm_band"/>
+      </visual>
+      <collision>
+        <geometry><cylinder radius="${link_radius}" length="${d_wrist}"/></geometry>
+        <origin xyz="0 0 ${d_wrist / 2}"/>
+      </collision>
+      <!-- TODO(measured): 质量/惯量待实测（尺寸=腕段 9cm，2026-10-15 卡尺复核；
+           旧注释写 7cm 系笔误） -->
+      <xacro:cylinder_inertial mass="0.10" r="${link_radius}" L="${d_wrist}"
+                               xyz="0 0 ${d_wrist / 2}"/>
+    </link>
+
+    <!-- ============ J6 腕旋转（沿腕轴 Z），子链即工具法兰 ============ -->
+    <joint name="j6_wrist_roll" type="revolute">
+      <parent link="wrist_pitch_link"/><child link="tool0"/>
+      <origin xyz="0 0 ${d_wrist}"/>               <!-- zero_j6 = 0 → 无需偏移 -->
+      <axis xyz="0 0 1"/>
+      <limit lower="${j6_lower}" upper="${j6_upper}"
+             effort="${effort_996r}" velocity="${vel_fast}"/>
+    </joint>
+
+    <!-- tool0 = 腕旋转输出法兰（约定 tip）。夹爪（第 7 路 PWM 舵机）不在本模型内，
+         见 ADR-0008；夹爪几何待其支架确定后挂在 tool0 下。
+         需要 gripper_joint 的树在**调用本宏之后**自行追加，不要改这里。 -->
+    <link name="tool0">
+      <!-- [AI] J6 自旋作用在 tool0 上，而这里原本**没有任何几何** →
+           J6 转了屏幕上完全没反应。补一个小法兰盘 + 自旋指针。 -->
+      <visual>
+        <geometry><cylinder radius="0.014" length="0.012"/></geometry>
+        <origin xyz="0 0 0.006"/>
+        <material name="arm_wrist_roll"/>
+      </visual>
+      <visual>
+        <geometry><box size="0.026 0.006 0.006"/></geometry>
+        <origin xyz="0.020 0 0.011"/>
+        <material name="arm_tab"/>
+      </visual>
+    </link>
+
+  </xacro:macro>
+
+</robot>

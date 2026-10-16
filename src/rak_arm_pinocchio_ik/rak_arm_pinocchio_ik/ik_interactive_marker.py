@@ -90,12 +90,12 @@ class IkMarkerNode(Node):
     GROUP = "arm"
     TIP = "tool0"
     JOINT_NAMES = (
-        "base_yaw_joint",
-        "shoulder_pitch_joint",
-        "elbow_pitch_joint",
-        "wrist_yaw_joint",
-        "wrist_pitch_joint",
-        "wrist_roll_joint",
+        "j1_base",
+        "j2_shoulder",
+        "j3_elbow",
+        "j4_forearm",
+        "j5_wrist_pitch",
+        "j6_wrist_roll",
     )
 
     def __init__(self) -> None:

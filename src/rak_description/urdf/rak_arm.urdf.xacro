@@ -18,149 +18,84 @@
   <xacro:include filename="properties_arm.xacro"/>
   <xacro:include filename="macros/inertial_macros.xacro"/>
   <xacro:include filename="macros/materials.xacro"/>
+  <xacro:include filename="macros/arm_chain.xacro"/>
 
-  <!-- ============ 底座：车顶安装面 + J1 腰旋转 ============ -->
-  <link name="arm_base_link">
-    <visual>
-      <geometry><cylinder radius="0.05" length="${d_base_to_j2 * 0.75}"/></geometry>
-      <origin xyz="0 0 ${d_base_to_j2 * 0.375}"/>
-      <material name="base_link_color"/>
-    </visual>
-    <collision>
-      <geometry><cylinder radius="0.05" length="${d_base_to_j2 * 0.75}"/></geometry>
-      <origin xyz="0 0 ${d_base_to_j2 * 0.375}"/>
-    </collision>
-    <!-- TODO(measured): 底座结构件估重 -->
-    <xacro:cylinder_inertial mass="0.15" r="0.05" L="${d_base_to_j2 * 0.75}"
-                             xyz="0 0 ${d_base_to_j2 * 0.375}"/>
-  </link>
+  <!-- [AI] 2026-10-15：臂的几何（7 link + 6 joint）已抽到
+       macros/arm_chain.xacro —— 与 rak_chassis.urdf.xacro **共用同一份**，
+       免得两棵树各写一份、改了一边忘了另一边。
+       颜色也一并搬到 macros/materials.xacro。
+       本文件的 name="rak" 与下面的 <ros2_control> 段**一个字都没动**。 -->
+  <xacro:rak_arm_chain/>
 
-  <joint name="base_yaw_joint" type="revolute">
-    <parent link="arm_base_link"/><child link="shoulder_link"/>
-    <origin xyz="0 0 0"/>              <!-- J1 轴即安装面中心，安装面高度计在整车 URDF -->
-    <axis xyz="0 0 1"/>
-    <limit lower="${j1_lower}" upper="${j1_upper}"
-           effort="${effort_995}" velocity="${vel_fast}"/>
-  </joint>
-
-  <link name="shoulder_link">
-    <visual>
-      <geometry><box size="0.05 0.05 0.04"/></geometry>
-      <material name="base_link_color"/>
-    </visual>
-    <collision>
-      <geometry><box size="0.05 0.05 0.04"/></geometry>
-    </collision>
-    <!-- TODO(measured): 腰部舵机+舵盘估重 -->
-    <xacro:box_inertial mass="0.10" Lx="0.05" Ly="0.05" Lz="0.04"/>
-  </link>
-
-  <!-- ============ J2 大臂俯仰（+Y；全直时臂沿 +Z） ============ -->
-  <joint name="shoulder_pitch_joint" type="revolute">
-    <parent link="shoulder_link"/><child link="upper_arm_link"/>
-    <origin xyz="0 0 ${d_base_to_j2}"/>
-    <axis xyz="0 1 0"/>
-    <limit lower="${j2_lower}" upper="${j2_upper}"
-           effort="${effort_995}" velocity="${vel_slow}"/>
-  </joint>
-
-  <link name="upper_arm_link">
-    <visual>
-      <geometry><cylinder radius="${link_radius}" length="${d_upper_arm}"/></geometry>
-      <origin xyz="0 0 ${d_upper_arm / 2}"/>
-      <material name="arm_aluminum"/>
-    </visual>
-    <collision>
-      <geometry><cylinder radius="${link_radius}" length="${d_upper_arm}"/></geometry>
-      <origin xyz="0 0 ${d_upper_arm / 2}"/>
-    </collision>
-    <!-- TODO(measured): 大臂(11cm)+舵机估重 -->
-    <xacro:cylinder_inertial mass="0.12" r="${link_radius}" L="${d_upper_arm}"
-                             xyz="0 0 ${d_upper_arm / 2}"/>
-  </link>
-
-  <!-- ============ J3 肘俯仰（−Y：与 J2/J5 反向，实测确认） ============ -->
-  <joint name="elbow_pitch_joint" type="revolute">
-    <parent link="upper_arm_link"/><child link="forearm_link"/>
-    <origin xyz="0 0 ${d_upper_arm}"/>
-    <axis xyz="0 -1 0"/>
-    <limit lower="${j3_lower}" upper="${j3_upper}"
-           effort="${effort_995}" velocity="${vel_slow}"/>
-  </joint>
-
-  <link name="forearm_link">
-    <visual>
-      <geometry><cylinder radius="${link_radius}" length="${d_elbow_offset}"/></geometry>
-      <origin xyz="0 0 ${d_elbow_offset / 2}"/>
-      <material name="arm_aluminum"/>
-    </visual>
-    <collision>
-      <geometry><cylinder radius="${link_radius}" length="${d_elbow_offset}"/></geometry>
-      <origin xyz="0 0 ${d_elbow_offset / 2}"/>
-    </collision>
-    <!-- TODO(measured): 肘部支架估重 -->
-    <xacro:cylinder_inertial mass="0.08" r="${link_radius}" L="${d_elbow_offset}"
-                             xyz="0 0 ${d_elbow_offset / 2}"/>
-  </link>
-
-  <!-- ============ J4 小臂自旋（沿臂轴 Z） ============ -->
-  <joint name="forearm_roll_joint" type="revolute">
-    <parent link="forearm_link"/><child link="forearm_roll_link"/>
-    <origin xyz="0 0 ${d_elbow_offset}"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="${j4_lower}" upper="${j4_upper}"
-           effort="${effort_996r}" velocity="${vel_fast}"/>
-  </joint>
-
-  <link name="forearm_roll_link">
-    <visual>
-      <geometry><cylinder radius="${link_radius}" length="${d_forearm}"/></geometry>
-      <origin xyz="0 0 ${d_forearm / 2}"/>
-      <material name="arm_aluminum"/>
-    </visual>
-    <collision>
-      <geometry><cylinder radius="${link_radius}" length="${d_forearm}"/></geometry>
-      <origin xyz="0 0 ${d_forearm / 2}"/>
-    </collision>
-    <!-- TODO(measured): 小臂(11cm)+舵机估重 -->
-    <xacro:cylinder_inertial mass="0.12" r="${link_radius}" L="${d_forearm}"
-                             xyz="0 0 ${d_forearm / 2}"/>
-  </link>
-
-  <!-- ============ J5 腕俯仰（+Y，与 J2 同向） ============ -->
-  <joint name="wrist_pitch_joint" type="revolute">
-    <parent link="forearm_roll_link"/><child link="wrist_pitch_link"/>
-    <origin xyz="0 0 ${d_forearm}"/>
-    <axis xyz="0 1 0"/>
-    <limit lower="${j5_lower}" upper="${j5_upper}"
-           effort="${effort_996r}" velocity="${vel_slow}"/>
-  </joint>
-
-  <link name="wrist_pitch_link">
-    <visual>
-      <geometry><cylinder radius="${link_radius}" length="${d_wrist}"/></geometry>
-      <origin xyz="0 0 ${d_wrist / 2}"/>
-      <material name="arm_aluminum"/>
-    </visual>
-    <collision>
-      <geometry><cylinder radius="${link_radius}" length="${d_wrist}"/></geometry>
-      <origin xyz="0 0 ${d_wrist / 2}"/>
-    </collision>
-    <!-- TODO(measured): 腕段(7cm)+舵机估重 -->
-    <xacro:cylinder_inertial mass="0.10" r="${link_radius}" L="${d_wrist}"
-                             xyz="0 0 ${d_wrist / 2}"/>
-  </link>
-
-  <!-- ============ J6 腕旋转（沿腕轴 Z），子链即工具法兰 ============ -->
-  <joint name="wrist_roll_joint" type="revolute">
-    <parent link="wrist_pitch_link"/><child link="tool0"/>
-    <origin xyz="0 0 ${d_wrist}"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="${j6_lower}" upper="${j6_upper}"
-           effort="${effort_996r}" velocity="${vel_fast}"/>
-  </joint>
-
-  <!-- tool0 = 腕旋转输出法兰（约定 tip）。夹爪（第 7 路 PWM 舵机）不在本模型内，
-       见 ADR-0008；夹爪几何待其支架确定后挂在 tool0 下。 -->
-  <link name="tool0"/>
+  <!-- ============ 仿真用 ros2_control 硬件（纯软件层） ============
+       [AI] 用 ros2_control 自带的 mock_components/GenericSystem：它是官方给
+       "没有真实硬件、但要跑通 control 链路"用的组件 —— 命令写进去，状态跟着回来
+       （默认状态=命令，JTC 在中间做时间插值，所以动作是平滑的）。
+       关节名用 j1_base 系（= docs/arm_moveit_contract.md §1 FROZEN，与真机同名同域）。
+       本段仍然只服务仿真（硬件插件是 mock_components），永远不接 F407。
+       加这一段不影响 MoveIt/规划：<ros2_control> 没有 axis/limit，
+       validate_rak_arm.py 会跳过它。 -->
+  <ros2_control name="rak_arm_sim" type="system">
+    <hardware>
+      <plugin>mock_components/GenericSystem</plugin>
+    </hardware>
+    <joint name="j1_base">
+      <command_interface name="position">
+        <param name="min">${j1_lower}</param>
+        <param name="max">${j1_upper}</param>
+      </command_interface>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+    <joint name="j2_shoulder">
+      <command_interface name="position">
+        <param name="min">${j2_lower}</param>
+        <param name="max">${j2_upper}</param>
+      </command_interface>
+      <state_interface name="position">
+        <param name="initial_value">3.9269908</param>
+      </state_interface>
+    </joint>
+    <joint name="j3_elbow">
+      <command_interface name="position">
+        <param name="min">${j3_lower}</param>
+        <param name="max">${j3_upper}</param>
+      </command_interface>
+      <state_interface name="position">
+        <!-- [AI] Home 位 J3 = 270° 正好压在**上限**上。270° = 4.71238898038…，
+             原先写 4.7123890 比上限大 2e-8，被 controller_manager 判为
+             "Command of at least one joint is out of limits (j3_elbow)"，
+             **每秒刷一条 ERROR**。这里取上限的截断值（向下），别用四舍五入。 -->
+        <param name="initial_value">4.7123889</param>
+      </state_interface>
+    </joint>
+    <joint name="j4_forearm">
+      <command_interface name="position">
+        <param name="min">${j4_lower}</param>
+        <param name="max">${j4_upper}</param>
+      </command_interface>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+    <joint name="j5_wrist_pitch">
+      <command_interface name="position">
+        <param name="min">${j5_lower}</param>
+        <param name="max">${j5_upper}</param>
+      </command_interface>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+    <joint name="j6_wrist_roll">
+      <command_interface name="position">
+        <param name="min">${j6_lower}</param>
+        <param name="max">${j6_upper}</param>
+      </command_interface>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+  </ros2_control>
 </robot>

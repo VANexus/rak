@@ -2,7 +2,8 @@
 <!--
   properties_arm.xacro — 真实六轴机械臂的全部标定常数（单点定义）。
   [AI] 数值来源分级（2026-10-08 第二轮标定，用户实测更新）：
-  - 连杆长度：用户提供（1-2:8cm 2-3:10cm 3-4:11cm 4-5:6cm 5-6:9cm），实测口径
+  - 连杆长度：2026-10-15 用户卡尺复核（1-2:8cm 2-3:10cm 3-4:11cm 4-5:5cm 5-6:9cm），
+    实测口径。相对 2026-10-08 的估值 8/10/11/6/9 **只动了 4-5（6→5）一段**
   - 关节限位：TUI 实测（2026-10-08）：J1/J3/J4/J5/J6 0~270°，J2 0~255°（硬件约束）
   - 零位（q_urdf=0，用户 2026-10-08 指定）：自旋轴(J1/J4/J6)指令 0°；
     俯仰轴 J2 指令 135°、J3 指令 180°、J5 指令 0°。q_urdf = 指令角 − 零位指令角。
@@ -11,32 +12,50 @@
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <!-- === 连杆长度（m），沿零位姿态的排列方向 === -->
+  <!-- === 连杆长度（m），沿零位姿态的排列方向 ===
+       [AI] 2026-10-15 用户卡尺复核，覆盖 2026-10-08 的估值（总长 44→43cm）：
+         4-5 小臂 6→5cm 是**唯一**改动；1-2 底座 8cm、2-3 大臂 10cm、3-4 肘段 11cm、
+         5-6 腕段 9cm 全部维持原值。
+       ⚠️ rak_arm.urdf.xacro 里那三条带长度的注释（大臂 11cm、小臂 11cm、腕段 7cm）
+       与这里的值冲突了整整一周。卡尺定案：**三条注释全是笔误**，值是对的。
+       订正为 10 / 5 / 9 cm。（曾有推断说"注释才对"，那是错的 —— 见 spec 第三轮注） -->
   <xacro:property name="d_base_to_j2"   value="0.08"/>  <!-- 1-2: 底座安装面到大臂转轴 -->
   <xacro:property name="d_upper_arm"    value="0.10"/>  <!-- 2-3: 大臂 -->
   <xacro:property name="d_elbow_offset" value="0.11"/>  <!-- 3-4: 肘段 -->
-  <xacro:property name="d_forearm"      value="0.06"/>  <!-- 4-5: 小臂 -->
+  <xacro:property name="d_forearm"      value="0.05"/>  <!-- 4-5: 小臂 -->
   <xacro:property name="d_wrist"        value="0.09"/>  <!-- 5-6: 腕段 -->
 
-  <!-- === 关节限位（rad，q_urdf = 指令角 − 零位指令角） === -->
-  <!-- J1 base_yaw:  指令 0~270°，零位 0° -->
-  <xacro:property name="j1_lower" value="${0.0 * pi / 180.0}"/>
+  <!-- === 关节限位（rad）—— **指令角域**（绝对角，非 q_urdf） ===
+       [AI] 2026-10-15 统一：本文件的关节值 = 舵机**指令角**（0..270°，J2 实测硬件限
+       0..255°），与 docs/arm_moveit_contract.md §1（FROZEN）和真机
+       rak_chassis.urdf.xacro / chassis_controllers.yaml 完全同域。
+       原先是 q_urdf 域（相对零位），会把 MoveIt 规划出的角度发到真机时整体错位
+       （J2 差 135°、J3 差 180°）—— 名字对上但值错位，真机会照单全收地执行错角度，
+       比"拒收"更危险。故废弃 q_urdf 域。 -->
+  <xacro:property name="j1_lower" value="${0.0   * pi / 180.0}"/>
   <xacro:property name="j1_upper" value="${270.0 * pi / 180.0}"/>
-  <!-- J2 shoulder_pitch: 指令 0~255°，零位 135° -->
-  <xacro:property name="j2_lower" value="${-135.0 * pi / 180.0}"/>
-  <xacro:property name="j2_upper" value="${120.0 * pi / 180.0}"/>
-  <!-- J3 elbow_pitch: 指令 0~270°，零位 180° -->
-  <xacro:property name="j3_lower" value="${-180.0 * pi / 180.0}"/>
-  <xacro:property name="j3_upper" value="${90.0 * pi / 180.0}"/>
-  <!-- J4 forearm_roll: 指令 0~270°，零位 0° -->
-  <xacro:property name="j4_lower" value="${0.0 * pi / 180.0}"/>
+  <xacro:property name="j2_lower" value="${0.0   * pi / 180.0}"/>
+  <xacro:property name="j2_upper" value="${255.0 * pi / 180.0}"/>  <!-- 实测硬件限，非 270 -->
+  <xacro:property name="j3_lower" value="${0.0   * pi / 180.0}"/>
+  <xacro:property name="j3_upper" value="${270.0 * pi / 180.0}"/>
+  <xacro:property name="j4_lower" value="${0.0   * pi / 180.0}"/>
   <xacro:property name="j4_upper" value="${270.0 * pi / 180.0}"/>
-  <!-- J5 wrist_pitch: 指令 0~270°，零位 0° -->
-  <xacro:property name="j5_lower" value="${0.0 * pi / 180.0}"/>
+  <xacro:property name="j5_lower" value="${0.0   * pi / 180.0}"/>
   <xacro:property name="j5_upper" value="${270.0 * pi / 180.0}"/>
-  <!-- J6 wrist_roll: 指令 0~270°，零位 0° -->
-  <xacro:property name="j6_lower" value="${0.0 * pi / 180.0}"/>
+  <xacro:property name="j6_lower" value="${0.0   * pi / 180.0}"/>
   <xacro:property name="j6_upper" value="${270.0 * pi / 180.0}"/>
+
+  <!-- === 零位偏移（rad）：零位姿态对应的**指令角** ===
+       [AI] 关节值改用指令角后，URDF 的 joint origin 必须补一个固定反向旋转，
+       使"关节值 = zero_jN"时几何仍是原来的零位姿态（直臂，J1..J6 同轴朝上）。
+       推导：要让 T_origin·Rot(axis,q) = Rot(axis, q−zero)，取 T_origin = Rot(axis,−zero)。
+       只有 J2/J3 非零 —— J2 轴 +Y、J3 轴 −Y。 -->
+  <xacro:property name="zero_j1" value="${0.0   * pi / 180.0}"/>
+  <xacro:property name="zero_j2" value="${135.0 * pi / 180.0}"/>
+  <xacro:property name="zero_j3" value="${180.0 * pi / 180.0}"/>
+  <xacro:property name="zero_j4" value="${0.0   * pi / 180.0}"/>
+  <xacro:property name="zero_j5" value="${0.0   * pi / 180.0}"/>
+  <xacro:property name="zero_j6" value="${0.0   * pi / 180.0}"/>
 
   <!-- === effort(N·m)/velocity(rad/s) ===
        effort：舵机规格转述值（MG995≈0.98, MG996R≈1.08 N·m）。TODO(measured)

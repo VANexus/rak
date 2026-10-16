@@ -19,14 +19,16 @@ URDF = os.path.join(HERE, "..", "..", "rak_description", "urdf", "rak_arm.urdf.x
 SRDF = os.path.join(HERE, "..", "config", "rak_arm.srdf")
 
 EXPECTED_JOINTS = {
-    # name: (axis, lower_deg, upper_deg)  limits relative to zero pose
-    # (zero = commanded J1=0 J2=135 J3=180 J4=0 J5=0 J6=0, user 2026-10-08)
-    "base_yaw_joint":       ("0 0 1",    0.0, 270.0),
-    "shoulder_pitch_joint": ("0 1 0", -135.0, 120.0),
-    "elbow_pitch_joint":    ("0 -1 0", -180.0,  90.0),
-    "forearm_roll_joint":   ("0 0 1",    0.0, 270.0),
-    "wrist_pitch_joint":    ("0 1 0",    0.0, 270.0),
-    "wrist_roll_joint":     ("0 0 1",    0.0, 270.0),
+    # name: (axis, lower_deg, upper_deg)
+    # [AI] 2026-10-15：域已统一为**指令角**（绝对角，与真机契约 FROZEN 同域），
+    # 不再是相对零位的 q_urdf。J2 上限是实测硬件限 255°（不是 270°）。
+    # 零位偏移已烘进 URDF 的 joint origin rpy，故这里直接就是指令角。
+    "j1_base":        ("0 0 1",    0.0, 270.0),
+    "j2_shoulder":    ("0 1 0",    0.0, 255.0),
+    "j3_elbow":       ("0 -1 0",   0.0, 270.0),
+    "j4_forearm":     ("0 0 1",    0.0, 270.0),
+    "j5_wrist_pitch": ("0 1 0",    0.0, 270.0),
+    "j6_wrist_roll":  ("0 0 1",    0.0, 270.0),
 }
 
 
@@ -108,15 +110,15 @@ def main() -> None:
     homes = [gs for gs in srdf.findall("group_state") if gs.get("name") == "home"]
     if not homes:
         fail("SRDF missing home group_state")
-    # home = safe pose (user 2026-10-08): commands 0/225/270/0/0/0
-    # → q = cmd − zero_cmd(0/135/180/0/0/0) = J2 +90°, J3 +90°, rest 0
+    # [AI] 2026-10-15：域统一成指令角后，home 直接就是固件指令角
+    # J1=0° J2=225° J3=270° J4=0° J5=0° J6=0°（不再有 q_urdf 换算）。
     expected_home = {
-        "base_yaw_joint": 0.0,
-        "shoulder_pitch_joint": 90.0,
-        "elbow_pitch_joint": 90.0,
-        "forearm_roll_joint": 0.0,
-        "wrist_pitch_joint": 0.0,
-        "wrist_roll_joint": 0.0,
+        "j1_base": 0.0,
+        "j2_shoulder": 225.0,
+        "j3_elbow": 270.0,
+        "j4_forearm": 0.0,
+        "j5_wrist_pitch": 0.0,
+        "j6_wrist_roll": 0.0,
     }
     home_joints = {j.get("name"): float(j.get("value")) for j in homes[0].findall("joint")}
     if set(home_joints) != set(EXPECTED_JOINTS):

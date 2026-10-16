@@ -1,13 +1,18 @@
 <?xml version="1.0"?>
-<!-- [AI] 全机静态骨架 URDF：底盘几何 + 传感器安装帧 + 机械臂安装帧。
-     仅承载“静态坐标系”（fixed joints）与四轮连续关节；机械臂 6 轴 + 夹爪的
-     **运动链几何**在 rak_arm.urdf.xacro（独立 robot，不并入本文件——两边都定义
-     arm_base_link）。<ros2_control> 里的 7 轴臂**位置接口**则在本文件
-     （2026-10-14 落地，ADR-0012 待闭合项 #1；名称/行程见
-     docs/arm_moveit_contract.md §1 与下方注释），并配套一条**零长度控制桩链**
-     挂在 arm_base_link 下——Jazzy component_parser 要求 <ros2_control> 的关节必须
-     同时存在于运动学树，否则 controller_manager 拒绝初始化；桩链只提供句柄与
-     指令角域 <limit>，真实几何仍只在 rak_arm.urdf.xacro。
+<!-- [AI] 全机静态骨架 URDF：底盘几何 + 传感器安装帧 + **机械臂的真实运动链**。
+     承载“静态坐标系”（fixed joints）、四轮连续关节，以及臂的 6 个旋转关节。
+
+     [AI] 2026-10-15：机械臂的真实几何**已并入本文件**。几何本体单点定义在
+     macros/arm_chain.xacro 的 <xacro:rak_arm_chain/> 宏里，由本文件与
+     rak_arm.urdf.xacro **共用同一个宏** —— 不存在两份需要手工同步的副本。
+     并入的理由：robot_state_publisher 只发本文件的 TF，而任何消费者（RViz、
+     MoveIt、外部工具）要看到机械臂，就必须有 shoulder_link…tool0 这些帧；
+     2026-10-15 之前这里是一条零长度桩链，发不出它们，真机的臂在 RViz 里是隐形的。
+     <ros2_control> 里的 7 轴臂**位置接口**在本文件（2026-10-14 落地，
+     ADR-0012 待闭合项 #1；名称/行程见 docs/arm_moveit_contract.md §1）。
+     夹爪（第 7 路）**没有真实几何** —— 真实臂链止于 tool0（ADR-0008），本文件只在
+     tool0 之后补一个无几何的 gripper_link 帧，因为 component_parser 要求
+     <ros2_control> 的每个关节都存在于运动学树。
      该文件是 robot_state_publisher 的唯一静态几何来源。
 
      坐标系约定 (REP-103)：X 前，Y 左，Z 上。
@@ -17,6 +22,16 @@
                       机械臂在后·中轴。
      z 高度 / 前后精确距离为 TODO(measured) 占位，装车标定后回填。 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rak_chassis">
+
+  <!-- [AI] 机械臂几何的唯一来源（见 macros/arm_chain.xacro 头注）。
+       前三个是 <xacro:rak_arm_chain/> 宏体的依赖，必须在**调用之前**就位；
+       宏内刻意不 include，因为 <material> 在同一棵树里重复会产生 urdfdom
+       "not unique" 报错。 -->
+  <xacro:include filename="properties_arm.xacro"/>
+  <xacro:include filename="macros/inertial_macros.xacro"/>
+  <xacro:include filename="macros/materials.xacro"/>
+  <xacro:include filename="macros/arm_chain.xacro"/>
+
   <xacro:arg name="host_build_id" default="0xA0DE0002"/>
   <xacro:arg name="allow_motion" default="false"/>
   <!-- [AI] 每轮极性（装配事实，顺序 FL FR RL RR）：+1 正常，-1 该轮命令+反馈同时取反。
@@ -141,70 +156,41 @@
   </joint>
 
   <!-- 机械臂安装帧：后·中轴。姿态/安装面高度 TODO(measured)；
-       六轴运动链在 rak_arm.urdf.xacro（wbc_base.urdf.xacro 为分析镜像，值须同步） -->
-  <link name="arm_base_link"/>
+       六轴运动链在 macros/arm_chain.xacro（本文件与 rak_arm.urdf.xacro 共用同一宏；
+       wbc_base.urdf.xacro 为分析镜像，值须同步） -->
   <joint name="arm_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="arm_base_link"/>
     <origin xyz="${arm_x} 0 ${arm_z}" rpy="0 0 0"/>
   </joint>
 
-  <!-- [AI] 臂控制用运动学桩链（ADR-0012 待闭合项 #1，2026-10-14）。
-       为什么必须存在：Jazzy hardware_interface/component_parser.cpp 对
-       <ros2_control> 的每个 joint 都要在 URDF 模型里 getJoint() 一次，查不到就抛
-       "Joint 'x' not found in URDF"；controller_manager 的 import_joint_limiters
-       捕到后放弃初始化（实测卡死在 "Waiting for data on 'robot_description'"）。
-       为什么是零长度桩：本文件 <limit> 是**指令角域**（0..270°，契约
-       docs/arm_moveit_contract.md §1），真实几何/轴向/q_urdf 在 rak_arm.urdf.xacro
-       ——两套约定不能混进同一棵树。限幅取 <limit> 与 <command_interface> min/max
-       的交集（update_interface_limits），故这里必须写契约值，否则会被截错。
-       轴方向与真实臂一致（J2/J5 +Y、J3 −Y）；7 帧与 arm_base_link 重合、无几何。 -->
-  <link name="arm_ctrl_j1_link"/>
-  <joint name="j1_base" type="revolute">
-    <parent link="arm_base_link"/><child link="arm_ctrl_j1_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
-  </joint>
-  <link name="arm_ctrl_j2_link"/>
-  <joint name="j2_shoulder" type="revolute">
-    <parent link="arm_ctrl_j1_link"/><child link="arm_ctrl_j2_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 1 0"/>
-    <!-- J2 实测硬件限 0..255°（properties_arm.xacro），不是 270° -->
-    <limit lower="0.0" upper="4.45059" effort="5.0" velocity="6.0"/>
-  </joint>
-  <link name="arm_ctrl_j3_link"/>
-  <joint name="j3_elbow" type="revolute">
-    <parent link="arm_ctrl_j2_link"/><child link="arm_ctrl_j3_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 -1 0"/>
-    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
-  </joint>
-  <link name="arm_ctrl_j4_link"/>
-  <joint name="j4_forearm" type="revolute">
-    <parent link="arm_ctrl_j3_link"/><child link="arm_ctrl_j4_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
-  </joint>
-  <link name="arm_ctrl_j5_link"/>
-  <joint name="j5_wrist_pitch" type="revolute">
-    <parent link="arm_ctrl_j4_link"/><child link="arm_ctrl_j5_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 1 0"/>
-    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
-  </joint>
-  <link name="arm_ctrl_j6_link"/>
-  <joint name="j6_wrist_roll" type="revolute">
-    <parent link="arm_ctrl_j5_link"/><child link="arm_ctrl_j6_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="0.0" upper="4.71239" effort="5.0" velocity="6.0"/>
-  </joint>
-  <link name="arm_ctrl_gripper_link"/>
+  <!-- [AI] 机械臂的真实运动链（2026-10-15 并入，替换掉原来的零长度桩链）。
+       宏会产出 arm_base_link（即上面 arm_mount_joint 的 child），所以本文件
+       **不再**自己定义 <link name="arm_base_link"/> —— 同一棵树里定义两次会直接
+       解析失败。宏同时产出 6 个关节，其 <limit> 直接引用 properties_arm.xacro 的
+       ${jN_lower}/${jN_upper}（指令角域 0..270°、J2 0..255°），与 2026-10-15
+       之前的桩链**数值完全相同**，所以 controller_manager 的有效限幅不变。 -->
+  <xacro:rak_arm_chain/>
+
+  <!-- [AI] 夹爪控制手柄（**非几何**）：真实臂链止于 tool0（ADR-0008 —— 夹爪不在这
+       个模型里，支架也从未实测）。但本文件的 <ros2_control> 需要 gripper_joint 存在，
+       而 Jazzy component_parser 对其中的每个 joint 都要在运动学树里 getJoint() 一次，
+       查不到就抛 "Joint 'x' not found in URDF"、controller_manager 放弃初始化
+       （症状是卡在 "Waiting for data on 'robot_description'"，很难查）。
+       所以 tool0 之后接一个**无 visual/collision/inertial** 的帧 —— 这是刻意的：
+       没有量过的几何就不画，免得像底座那条圆柱一样变成"看起来有依据"的假数据。
+       为什么用 revolute 而不是 prismatic：物理通道是位置舵机（GRIP，指令角域
+       0..270°）；prismatic 会凭空宣布一个"开度约 4.71 米"的伪造量程。
+       ⚠️ [AI] 2026-10-16：本文件的臂关节已改成引用 ${jN_lower}/${jN_upper}，
+       唯独这个夹爪是**字面量** —— 而且这里的 `<limit>` 与下方 <ros2_control> 里
+       `gripper_joint` 的 command max 是**两个字面量，必须同值**
+       （新加的 src/rak_chassis/test/validate_chassis_urdf.py 会断言二者相等；
+        它们不等就意味着 import_joint_limiters 与 JointSaturationLimiter 打架）。
+       刻意**不**引用 properties_arm.xacro：夹爪从未标定，把它塞进「臂标定单点」
+       等于把没量过的东西混进实测数据。**改夹爪行程时两处一起改。** -->
+  <link name="gripper_link"/>
   <joint name="gripper_joint" type="revolute">
-    <parent link="arm_ctrl_j6_link"/><child link="arm_ctrl_gripper_link"/>
+    <parent link="tool0"/><child link="gripper_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <limit lower="0.0" upper="4.71239" effort="2.0" velocity="6.0"/>
@@ -262,46 +248,48 @@
          rak_arm.urdf.xacro 的 q_urdf（两者零位差一个换算，见该文件头注）。
          min/max 必填：controller_manager 的 JointSaturationLimiter 靠它限幅，
          与 Session 层饱和（负值截 0、>270° 截 270°）构成双保险。
-         J2 上限 255°（properties_arm.xacro 实测硬件约束，非 270°）。 -->
+         [AI] 2026-10-15：这里原先是字面量 4.71239 / 4.45059（魔法数字），现改为
+         引用 properties_arm.xacro 的 ${jN_lower}/${jN_upper} —— 与上面的臂 <limit>
+         变成**同一个表达式**，有效限幅恒等于契约值，且标定改动只需动一处。 -->
     <joint name="j1_base">
       <command_interface name="position">
-        <param name="min">0.0</param>
-        <param name="max">4.71239</param>
+        <param name="min">${j1_lower}</param>
+        <param name="max">${j1_upper}</param>
       </command_interface>
       <state_interface name="position"/>
     </joint>
     <joint name="j2_shoulder">
       <command_interface name="position">
-        <param name="min">0.0</param>
-        <param name="max">4.45059</param>
+        <param name="min">${j2_lower}</param>
+        <param name="max">${j2_upper}</param>
       </command_interface>
       <state_interface name="position"/>
     </joint>
     <joint name="j3_elbow">
       <command_interface name="position">
-        <param name="min">0.0</param>
-        <param name="max">4.71239</param>
+        <param name="min">${j3_lower}</param>
+        <param name="max">${j3_upper}</param>
       </command_interface>
       <state_interface name="position"/>
     </joint>
     <joint name="j4_forearm">
       <command_interface name="position">
-        <param name="min">0.0</param>
-        <param name="max">4.71239</param>
+        <param name="min">${j4_lower}</param>
+        <param name="max">${j4_upper}</param>
       </command_interface>
       <state_interface name="position"/>
     </joint>
     <joint name="j5_wrist_pitch">
       <command_interface name="position">
-        <param name="min">0.0</param>
-        <param name="max">4.71239</param>
+        <param name="min">${j5_lower}</param>
+        <param name="max">${j5_upper}</param>
       </command_interface>
       <state_interface name="position"/>
     </joint>
     <joint name="j6_wrist_roll">
       <command_interface name="position">
-        <param name="min">0.0</param>
-        <param name="max">4.71239</param>
+        <param name="min">${j6_lower}</param>
+        <param name="max">${j6_upper}</param>
       </command_interface>
       <state_interface name="position"/>
     </joint>
