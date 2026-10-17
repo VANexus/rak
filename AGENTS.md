@@ -149,7 +149,10 @@ Two gitignored local directories live *inside* the repo (moved out of `~` on 202
   `tools/harness-sdk/` (vendored `claude-agent-sdk` overlay for the P1 agent loop's
   subprocess — its pydantic v2 tree must never enter the ROS system Python), `tools/cosyvoice/`
   (vendored CosyVoice3 + torchaudio shim + matcha for the GPU TTS backend; J7.2 adaptations
-  in-file), `tools/graspnet/`
+  in-file), `tools/qwentts.cpp/` (vendored Qwen3-TTS GGML runtime — the **default** TTS
+  content layer per ADR-0018: `build/tts-server` + `models/*.gguf`, local uncommitted
+  `QT_MAX_SEQ` patch in `src/pipeline-tts.cpp`; rebuild to keep the binaries in step),
+  `tools/graspnet/`
   (capture/verification artifacts), `tools/remote_check.sh`,
   `tools/iwlwifi-patches/`.
 - `debug/` — hardware debug scraps (`spi_loopback.c`, `i2c_meter.sh`, `spi_meter.sh`).
@@ -171,6 +174,8 @@ ROS_DOMAIN_ID=77 PYTHONPATH=src/rak_base_driver:$PYTHONPATH python3 -m pytest sr
 ros2 run rak_stereo_driver stereo_node
 ros2 launch rak_bringup lidar.launch.py
 ros2 launch rak_bringup speech.launch.py  # array: capture -> ASR, board wake -> /speech/wake, /speech/say -> speaker
+python3 scripts/make_quick_phrases.py     # 重新生成即时反应层素材(serena);跑 TTS 前先跑一次
+ros2 topic pub --once /speech/quick std_msgs/String '{data: ack_wake}'  # 即时层:直出预合成 wav
 
 # Memory/DMA mode of the board itself: status | headless | desktop (needs sudo; see Gotchas)
 sudo scripts/rak-mode.sh headless
@@ -409,13 +414,21 @@ caveats above.
   `gripper_controller`). Check with
   `ps -eo pid,etime,cmd | grep chassis_bringup` — it must print exactly one line — before
   launching.
-- **语音栈现状（2026-10-15 bench）**：ASR 默认引擎是流式 Zipformer（14M，`acoustic/models/
+- **语音栈现状（2026-10-17）**：ASR 默认引擎是流式 Zipformer（14M，`acoustic/models/
   sherpa-onnx-streaming-zipformer-zh-14M-*`，sherpa-onnx，`engine:=zipformer`；Vosk 保留为
-  `engine:=vosk` 回退）；TTS 默认 sherpa/kokoro（`backend:=sherpa`），`backend:=cosyvoice` 走
-  GPU CosyVoice3-0.5B（情感 instruct 经 Say.srv additive 新字段）。用户 site 已装
+  `engine:=vosk` 回退）。**TTS 默认三层（ADR-0018，已接受）**：即时层播预合成素材
+  （`acoustic/models/quick/*.wav`，由 `scripts/make_quick_phrases.py` 生成，清单
+  `src/rak_speech/config/quick_phrases.toml`，`/speech/quick` 按 key 直出，无推理）；
+  内容层默认 `backend:=qwentts`——qwentts.cpp 的常驻 `tts-server` + speaker `serena` +
+  24 kHz 流式 PCM（首帧 ~0.5–1.0 s，整句 RTF 3.5–5.6，CPU；`qwentts_max_seq` 默认 2048
+  = 448MB KV）；单句超预算丢弃并降级为即时素材。备选 `backend:=sherpa`（kokoro CPU）与
+  `backend:=cosyvoice`（GPU CosyVoice3-0.5B，情感 instruct 经 Say.srv）仍在，但 cosyvoice
+  已证内存不可行。qwentts 的 GPU 路径被上游 sm87 bug 堵着（qwentts.cpp#40），只用 CPU。
+  用户 site 已装
   torch 2.12.0+cu132（R39.2 原生可用，sm_87 走 sm_80 回退）与 onnxruntime-gpu 1.28
   （TensorRT EP 可用；numpy 钉 1.26.4，因 ORT-GPU/pyarrow 的 2.x 需求与系统栈互斥）。
   **GPU 堆注意事项**：反复 cudaMalloc OOM 被杀会留下坏堆（>1GB 分配必失败，重启即愈）；
   CosyVoice3 推理需 ~1.7GB 显存，桌面会话在跑时仅 ~1.3GB 可用——跑它先 headless。
-  agent loop 的 SDK 必须 `permission_mode="bypassPermissions"`：ark-code-latest 在
+  qwentts 内容层常驻约 1.2–1.5GB 内存（Q4_K_M 权重 + 448MB KV + codec），跑之前同样先
+  headless。agent loop 的 SDK 必须 `permission_mode="bypassPermissions"`：ark-code-latest 在
   acceptEdits 下会自行脑补"等弹窗放行"而拒绝调用运动工具；权威始终在执行器侧，不变。
