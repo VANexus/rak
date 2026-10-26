@@ -138,7 +138,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "imu", default_value="true",
-            description="start the Jetson-direct LSM6DSRTR SPI node (/imu/data_raw)",
+            description="start the Jetson-direct LSM6DSRTR I2C node (/imu/data_raw)",
         ),
         DeclareLaunchArgument(
             "mic", default_value="true",
@@ -194,16 +194,23 @@ def generate_launch_description():
                        condition=IfCondition(LaunchConfiguration("camera_on"))),
 
         # ---- Jetson-direct IMU ----------------------------------------------
+        # [AI] 2026-10-26: 改用 I2C。SPI 路径在本机走不通——LSM6DSR 在上电时按 CS
+        # 电平选接口，而 Jetson 的 SPI CS 空闲为高，芯片因此锁定 I2C 模式；
+        # I2C 实测 994-1000 Hz、错误率约 2.5 万分之一（详见 i2c_imu.py 头注）。
+        # axis_map 默认值由驱动提供（-z,-x,y，本机安装朝向实测校准），这里显式
+        # 写出只是为了让 launch 自解释；换模块/重装后必须重测三轴。
         Node(
             package="rak_imu_driver",
-            executable="spi_imu",
-            name="spi_imu",
+            executable="i2c_imu",
+            name="i2c_imu",
             output="screen",
             parameters=[{
-                "device": "/dev/spidev0.0",
+                "device": "/dev/i2c-7",
+                "address": 0x6B,
                 "rate_hz": 1000.0,
                 "frame_id": "imu_link",
                 "topic": "/imu/data_raw",
+                "axis_map": "-z,-x,y",
             }],
             condition=IfCondition(LaunchConfiguration("imu")),
         ),
