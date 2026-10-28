@@ -1,6 +1,32 @@
 # 项目总体状态
 
-更新日期：2026-10-14
+更新日期：2026-10-15
+
+## 2026-10-15 增量：机械臂几何并入整车 URDF + MoveIt 真机档
+
+- **几何单点化**：臂的运动链（7 link + 6 joint）抽到
+  `src/rak_description/urdf/macros/arm_chain.xacro` 的 `<xacro:rak_arm_chain/>` 宏，
+  由 `rak_arm.urdf.xacro`（MoveIt 用）与 `rak_chassis.urdf.xacro`（真机 CM 用）
+  **共用**。此前两边各写一份：整车那份是零长度控制桩，没有几何。
+- **RSP 现在会发臂的 TF**：ADR-0015 待闭合项 #4 随之闭合。本机实测
+  `tf2` 查 `arm_base_link→tool0` = (0.10, 0, 0.33)（Home 位）。
+  → RViz / 任何外部消费者这才**看得到**机械臂（rviz 的 RobotModel 是逐 link 查 TF 的）。
+- **契约不变**：`<ros2_control>` 仍是 11 关节（4 轮 + j1..j6 + gripper）、顺序与接口
+  种类不变；臂的 `<limit>` 与 command min/max 改为引用 `properties_arm.xacro`
+  的 `${jN_lower/upper}`（消掉 12 个魔法数字），有效限幅恒等于契约值。
+  新增 `src/rak_chassis/test/validate_chassis_urdf.py` 把整套契约钉进 `colcon test`。
+- **夹爪**：`tool0` 之后补了一个**无几何**的 `gripper_link` 帧（`gripper_joint`，
+  revolute，限位与旧桩同值）——只为满足 component_parser 的"joint 必须在树里"，
+  **不编造未实测的几何**（夹爪支架没量过）。
+- **MoveIt 真机档**：`rak_moveit_config/launch/rak_arm.launch.py` 新增
+  `use_hardware`（默认 **false**）。`true` 时**不再起**本地
+  `controller_manager` / spawner / `robot_state_publisher`，只起 `move_group`(+RViz)，
+  对接真机 `chassis_bringup` 起的同名 `arm_controller`。
+  本机用 mock 替身验证：规划 69 点、Execute `error_code=0`、零
+  "action client not connected"。仿真档（默认）行为不变。
+- **仍未做**：真机的 J2–J6 运动/限位/急停验证（Arm Unlock Gates，未解除）；
+  臂末端**没有急停**（契约 §2.5：急停只作用于轮驱动）；舵机无编码器，
+  反馈是指令回声，MoveIt 无法知道真机是否真的到位。
 
 ## 2026-10-14 增量：删除 USB v2 链路（ADR-0016）
 
@@ -61,7 +87,7 @@
 | 硬件启动路径 | 真底盘经 `chassis_bringup.launch.py` → `mecanum_drive_controller` → `rak_chassis` → CAN；`task_navigation.launch.py` 的 `motion_backend` 只有 `sim\|stub` | 尚未在真实传感器或 F407 上完成整车运行验收；`allow_motion` 默认 false 拒绝运动 |
 | 机械臂 | 六关节加独立夹爪的软件动作夹具和 MoveIt 配置已实现 | 模型、限位是测试占位；F407 仅有六路 PWM、无关节反馈，夹爪通道和硬件控制器未完成 |
 | 感知与语音 | 雷达/深度相机已有驱动或测试基础；语音链已通（2026-10-10：XFM-DP → `audio_capture` → `/audio` → Vosk 转写/意图；2026-10-11：板端唤醒/方位 `vtn_node` → `/speech/wake`、离线 TTS `tts_node` → `/audio_out` → `audio_play` → USB 喇叭，电气链路与真人唤醒均已实测）；当前仍以文字入口验证任务 | 传感器融合和完整导航输入链未验收；阵列声学段需真人说话验收；识别解码 0.84–1.01× 实时，余量不足；TTS 合成约 0.75× 实时（kokoro 24 kHz），播报音色/音量待真人验收；`/speech/say` 尚无决策层消费者 |
-| Jev / Harness | `rak_agent` 保留现有 S1/S2 原型与冻结的数据契约；TensorRT decider 已接入；ADR-0010 定义了 Harness 包、仲裁缝与云端客户端 | `src/rak_harness` / `harness_node` 未创建；S2 回复目前不会驱动执行器；表达层是门控 no-op stub |
+| Jev / Harness | `rak_agent` 保留现有 S1/S2 原型与冻结的数据契约；TensorRT decider 已接入；`src/rak_harness` + `harness_node` 已实现（2026-10-15 软件闭环）：`/harness/request|proposal|event` 契约、`slow_planner:=harness`、唤醒门控语音对话环（提交任务/pause-resume-cancel/播报结果）、人格卡+车况快照、云端 client stub（无 key 时本地保底），fake-Nav2 隔离域验证通过 | 云端通路未实测（无 `ANTHROPIC_API_KEY`）；S2 回复仍不驱动执行器；持续方位流、打断、流式 TTS 未做；表达层仍是门控 no-op stub |
 
 ## 已有验证证据
 

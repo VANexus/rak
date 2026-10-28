@@ -26,7 +26,6 @@ from std_srvs.srv import SetBool
 import tf2_ros
 
 from rak_wbc.hqp import HqpSolver, WbcInput, WbcParams
-from rak_wbc import joint_map
 from rak_wbc.model_builder import build_composite_urdf, WbcKinematics
 
 PARAM_DEFAULTS = {
@@ -47,37 +46,37 @@ PARAM_DEFAULTS = {
     "urdf_wbc_base": "",  # 空 = 解析本包 share/urdf/wbc_base.urdf.xacro
     "urdf_arm": "",  # 空 = 解析 rak_description share/urdf/rak_arm.urdf.xacro
     "arm_joint_names": [
-        "base_yaw_joint",
-        "shoulder_pitch_joint",
-        "elbow_pitch_joint",
-        "forearm_roll_joint",
-        "wrist_pitch_joint",
-        "wrist_roll_joint",
+        "j1_base",
+        "j2_shoulder",
+        "j3_elbow",
+        "j4_forearm",
+        "j5_wrist_pitch",
+        "j6_wrist_roll",
     ],
-    # [AI] /joint_states 里臂关节的**硬件侧**名字（ros2_control / joint_state_broadcaster）。
-    # 与上面的 arm_joint_names（运动学模型侧）一一对应，域换算见 joint_map。
-    "arm_state_joint_names": list(joint_map.ARM_CTRL_JOINTS),
-    # [AI] 零位指令角（rad，模型侧 q_urdf = 指令角 - 该值）；真源 properties_arm.xacro。
-    "arm_zero_q": list(joint_map.ARM_ZERO_Q),
-    # Home 安全位（ADR-0011 D4；指令 0/225/270/0/0/0 → q_urdf）
-    "home_q": list(joint_map.HOME_Q),
+    # [AI] 2026-10-16：改成**指令角域**（与 config/wbc_params.yaml 逐值相同）。
+    # 旧值是 q_urdf 域，2026-10-15 统一角度域之后会让臂停在/走向错姿态
+    # （home_q 会停到 J2=90° 而非 225°；arm_q_min 里的负角会被 Session 静默截 0）。
+    # ⚠️ 这一组值在 yaml 与这里**各写了一遍** —— 改一处必须改两处。
+    # （去重是另一个重构，见 /tmp 的审查记录，本轮不动结构。）
+    # Home 安全位（ADR-0011 D4）= 固件指令 0/225/270/0/0/0°
+    "home_q": [0.0, 3.9269908169872414, 4.71238898038469, 0.0, 0.0, 0.0],
     # 限位/速度：properties_arm.xacro 实测口径（TODO(measured) 带载回填）
-    "arm_q_min": [0.0, -2.356194490192345, -3.141592653589793, 0.0, 0.0, 0.0],
+    "arm_q_min": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     "arm_q_max": [
-        4.71238898038469,
-        2.0943951023931953,
-        1.5707963267948966,
-        4.71238898038469,
-        4.71238898038469,
-        4.71238898038469,
+        4.71238898038469,   # J1 270°
+        4.4505895925855405,  # J2 255°（实测硬件限，不是 270°）
+        4.71238898038469,   # J3 270°
+        4.71238898038469,   # J4 270°
+        4.71238898038469,   # J5 270°
+        4.71238898038469,   # J6 270°
     ],
     "arm_qd_max": [1.57, 0.5, 0.5, 1.57, 0.5, 1.57],
     # 底盘速度盒：ADR-0006 记录的占位口径（第一道线在 mecanum 控制器参数）
     "base_vmax": [0.25, 0.15, 0.5],
-    "wheel_radius": 0.0325,  # 占位（chassis_controllers.yaml 自注）
-    "wheel_k": 0.15,  # 占位
+    "wheel_radius": 0.0275,  # 2026-10-14 实测 Ø5.5（与 chassis_controllers.yaml 同步）
+    "wheel_k": 0.26,  # hw+ht = 0.1225+0.1375（2026-10-14 实测）
     "wheel_wmax": 10.0,  # URDF command clamp 口径
-    "support_half": [0.15, 0.15],  # 占位，TODO(measured)
+    "support_half": [0.1225, 0.1375],  # 半轴距/半轮距（2026-10-14 实测）
     "support_margin": 0.02,
     # 权重档位（spec §5；P1:P2:P3 ≈ 100:10:0.2）
     "w_ee_pos": 100.0,
@@ -165,16 +164,6 @@ class WbcNode(Node):
         )
         self._solver = HqpSolver(self._kinematics, self._params)
         self._arm_joint_names = [str(name) for name in param("arm_joint_names")]
-        # [AI] 硬件侧名字 + 零位偏移（见 joint_map）：模型侧名字只用于 Pinocchio，
-        # 读 /joint_states 必须用硬件侧名字，否则永远取不到状态（历史缺陷）。
-        self._arm_state_joint_names = [str(n) for n in param("arm_state_joint_names")]
-        self._arm_zero_q = [float(v) for v in param("arm_zero_q")]
-        if len(self._arm_state_joint_names) != len(self._arm_joint_names) or \
-                len(self._arm_zero_q) != len(self._arm_joint_names):
-            raise ValueError(
-                "arm_state_joint_names / arm_zero_q 长度必须与 arm_joint_names 一致"
-                f"（{len(self._arm_state_joint_names)}/{len(self._arm_zero_q)} vs"
-                f" {len(self._arm_joint_names)}）")
 
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
@@ -286,14 +275,16 @@ class WbcNode(Node):
 
     def _on_joint_state(self, msg: JointState):
         mapping = dict(zip(msg.name, msg.position))
-        if not all(name in mapping for name in self._arm_state_joint_names):
+        if not all(name in mapping for name in self._arm_joint_names):
             return
-        ctrl = [mapping[name] for name in self._arm_state_joint_names]
-        # [AI] 指令角域 -> q_urdf（模型侧）；A2 起 J1/J2 是编码器真测量，J3..J6 是回声。
-        self._q_arm = np.array(joint_map.ctrl_to_q(ctrl, self._arm_zero_q), dtype=float)
+        self._q_arm = np.array([mapping[name] for name in self._arm_joint_names], dtype=float)
 
-    def _on_enable(self, request: SetBool.Request):
-        response = SetBool.Response()
+    def _on_enable(
+        self, request: SetBool.Request, response: SetBool.Response
+    ) -> SetBool.Response:
+        # [AI] 2026-10-15 车载首跑抓到: rclpy 7.1.12 (Jazzy) 的 service 分发无条件以
+        # (request, response) 两参调用回调 (executors.py _take_service), 旧式单参签名
+        # 直接 TypeError 打死节点——仓库其余服务回调均为两参风格, 此处对齐。
         if request.data and not self._enabled:
             self._enabled = True
             self._degraded = False
@@ -318,16 +309,9 @@ class WbcNode(Node):
         msg.twist.angular.z = float(v_base[2])
         self._base_pub.publish(msg)
 
-    def _publish_arm(self, ctrl_positions):
-        """发布臂位置流（**指令角域** rad，顺序 = arm_state_joint_names）。
-
-        [AI] 值的域与消费端一致：arm_position_controller(Jazzy/lyrical 的
-        ForwardCommandController，interface_name: position) 直接把话题值写进
-        position 命令接口，硬件侧再按 0.1° 量化。所以这里必须发指令角，而不是
-        模型侧 q_urdf（见 joint_map 头注）。
-        """
+    def _publish_arm(self, positions):
         msg = Float64MultiArray()
-        msg.data = [float(value) for value in ctrl_positions]
+        msg.data = [float(value) for value in positions]
         self._arm_pub.publish(msg)
 
     def _publish_status(self, **fields):
@@ -384,9 +368,7 @@ class WbcNode(Node):
                     self._params.arm_q_max,
                 )
                 if self._tick_count % 2 == 0:  # 50 Hz：对齐舵机 PWM 帧率（spec §7）
-                    # [AI] q_urdf -> 指令角域并饱和（J2 上限 255°），再下发
-                    self._publish_arm(joint_map.clamp_cmd(
-                        joint_map.q_to_ctrl(self._arm_cmd, self._arm_zero_q)))
+                    self._publish_arm(self._arm_cmd)
         else:
             # 求解失败：先零速（停轮 + 臂保持）；连续失败到限 → degraded 停止发布
             self._publish_base(np.zeros(3))

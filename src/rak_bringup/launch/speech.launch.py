@@ -77,6 +77,16 @@ def generate_launch_description():
                 description="false: consume an already-published audio topic.",
             ),
             DeclareLaunchArgument(
+                "engine",
+                default_value="zipformer",
+                description="ASR engine: zipformer (streaming 14M, sherpa-onnx) | vosk.",
+            ),
+            DeclareLaunchArgument(
+                "tts_backend",
+                default_value="sherpa",
+                description="TTS backend: sherpa (kokoro CPU) | cosyvoice (GPU, emotional).",
+            ),
+            DeclareLaunchArgument(
                 "wake",
                 default_value="true",
                 description="false: no vtn_node (no /speech/wake from the array).",
@@ -152,6 +162,7 @@ def generate_launch_description():
                         "source": "topic",
                         "audio_topic": audio_topic,
                         "model_dir": model_dir,
+                        "engine": LaunchConfiguration("engine"),
                     }
                 ],
             ),
@@ -178,6 +189,7 @@ def generate_launch_description():
                     {
                         "model_dir": tts_model_dir,
                         "audio_topic": "/audio_out",
+                        "backend": LaunchConfiguration("tts_backend"),
                     }
                 ],
             ),

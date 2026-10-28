@@ -2,6 +2,9 @@
 # 回调只把文本入队——合成要几百毫秒到几秒,不能占住 executor;
 # accepted=true 表示已接受排队,不是已播完。
 string text
+# 可选的情感/风格 instruct(自然语言,如"用开心的语气说")。
+# CosyVoice 后端据此映射人格调色板;空=sherpa 后端的默认音色,或人格卡的 neutral。
+string instruct
 ---
 bool accepted
 string message

@@ -40,13 +40,14 @@ def test_base_tracking_tracks_cmd_vel(kin, params):
 
 
 def test_wheel_domain_caps_translation(kin, params):
-    # ω_max = 2 rad/s → 平移上限 ω_max·r ≈ 0.065 m/s，指令 0.3 必须被压住
+    # ω_max = 2 rad/s → 平移上限 ω_max·r；r=0.0275（2026-10-14 实测 Ø5.5，旧占位
+    # 0.0325 时上限 0.065）→ 0.055 m/s，指令 0.3 必须被压住
     solver = HqpSolver(kin, params(wheel_wmax=2.0))
     result = solver.solve(_nav_input(kin, params, solver.p.home_q, [0.3, 0.0, 0.0]))
     wheels = solver.p.wheel_matrix @ result.v[:3]
-    # 容差 2e-4：OSQP eps=1e-6 下经 wheel_matrix（≈30 rad/m）放大的残差上界
+    # 容差 2e-4：OSQP eps=1e-6 下经 wheel_matrix（≈36 rad/m，1/r）放大的残差上界
     assert np.all(np.abs(wheels) <= 2.0 + 2e-4)
-    assert 0.06 <= result.v[0] <= 0.065 + 1e-3
+    assert 0.0545 <= result.v[0] <= 0.055 + 1e-3
 
 
 def test_joint_barrier_caps_rate_near_limit(kin, params):
@@ -89,13 +90,23 @@ def test_task_conflict_arbitration_weight_decides_base_borrowing(kin, params):
 
 
 def test_support_cbf_locks_com_when_margin_consumed(kin, params):
-    """支撑域吃满（half = margin）时，CoM 的基座系速率必须为 0；宽松时允许。"""
+    """支撑域吃满（边界恰好落在静止 CoM 上）时，CoM 的基座系速率必须为 0；宽松时允许。"""
     q_arm = params().home_q
-    extended = params().arm_q_max  # 姿态目标远伸，试图把 CoM 推出去
+    # [AI] 2026-10-14 真实臂后置（mount_x=-0.15 实测）后两处旧前提失效，故调整：
+    # 1) 支撑域按实际静止 CoM 生成（half = |CoM| + margin → 边界正好落在 CoM 上）。
+    #    固定写 0.02 时 CoM(-0.0345) 已在域外，CBF 会正确地“往内拉”而非锁零——
+    #    求解器没错，错的是“CoM 静止时在支撑内”这个旧前提。
+    # 2) 姿态目标从 arm_q_max 换成“j1 转 180°”：后者端点虽更靠后，但 arm_q_max
+    #    的速度级首步需求是把 CoM 往域内拉（+3.6e-3，约束放行→锁不住）；j1 回转
+    #    的初始切向需求是纯 ±y，正撞在 com_y=0 的吃满边界上被挡死（loose 档放行
+    #    0.012）——“margin 吃满 → CoM 速率锁零；宽松 → 允许”的原意不变。
+    posture_target = [np.pi, np.pi / 2, np.pi / 2, 0.0, 0.0, 0.0]
+    com_home = np.abs(kin.com_base_xy(kin.q_from(np.zeros(3), q_arm)))
+    consumed_half = com_home + params().support_margin
 
-    tight_solver = HqpSolver(kin, params(support_half=[0.02, 0.02], support_margin=0.02))
+    tight_solver = HqpSolver(kin, params(support_half=consumed_half, support_margin=0.02))
     tight = tight_solver.solve(
-        _nav_input(kin, params, q_arm, np.zeros(3), posture_target=extended)
+        _nav_input(kin, params, q_arm, np.zeros(3), posture_target=posture_target)
     )
     q_full = kin.q_from(np.zeros(3), q_arm)
     jacobian = kin.com_base_xy_jacobian(q_full)
@@ -103,7 +114,7 @@ def test_support_cbf_locks_com_when_margin_consumed(kin, params):
 
     loose_solver = HqpSolver(kin, params(support_half=[0.5, 0.5]))
     loose = loose_solver.solve(
-        _nav_input(kin, params, q_arm, np.zeros(3), posture_target=extended)
+        _nav_input(kin, params, q_arm, np.zeros(3), posture_target=posture_target)
     )
     assert np.linalg.norm(jacobian @ loose.v) > 0.01
 

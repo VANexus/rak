@@ -17,9 +17,6 @@ wbc:
     ee_timeout: 0.5
     joint_states_topic: /joint_states
     base_reference_topic: /mecanum_drive_controller/reference
-    # [AI] 臂位置流出口（**指令角域** rad，0..270°，顺序 = arm_state_joint_names）。
-    # 由 chassis_bringup 以 arm_motion_writer:=wbc 启动时，arm_position_controller
-    # (ForwardCommandController) 的 ~/commands 被重映射到本话题（实测已验证）。
     arm_setpoints_topic: /wbc/arm_setpoints
     status_topic: /wbc/status
     publish_arm: false    # 臂接口就绪前保持 false（ADR-0011 待闭合 #1）
@@ -27,27 +24,30 @@ wbc:
     urdf_wbc_base: ""     # 空 = 本包 share/urdf/wbc_base.urdf.xacro
     urdf_arm: ""          # 空 = rak_description share/urdf/rak_arm.urdf.xacro
 
-    # [AI] 运动学模型侧名字（Pinocchio composite URDF）。
     arm_joint_names:
-      ["base_yaw_joint", "shoulder_pitch_joint", "elbow_pitch_joint",
-       "forearm_roll_joint", "wrist_pitch_joint", "wrist_roll_joint"]
-    # [AI] 硬件侧名字（/joint_states，ros2_control / joint_state_broadcaster）。
-    # 两者一一对应；只写模型侧名字会永远匹配不到 /joint_states（历史缺陷，2026-10-28 修）。
-    arm_state_joint_names:
-      ["j1_base", "j2_shoulder", "j3_elbow", "j4_forearm", "j5_wrist_pitch", "j6_wrist_roll"]
-    # [AI] 零位指令角（rad）：q_urdf = 指令角 - 该值（properties_arm.xacro：J2 135°、J3 180°）。
-    arm_zero_q: [0.0, 2.356194490192345, 3.141592653589793, 0.0, 0.0, 0.0]
-    home_q: [0.0, 1.5707963267948966, 1.5707963267948966, 0.0, 0.0, 0.0]
-    arm_q_min: [0.0, -2.356194490192345, -3.141592653589793, 0.0, 0.0, 0.0]
-    arm_q_max: [4.71238898038469, 2.0943951023931953, 1.5707963267948966,
-                4.71238898038469, 4.71238898038469, 4.71238898038469]
+      ["j1_base", "j2_shoulder", "j3_elbow",
+       "j4_forearm", "j5_wrist_pitch", "j6_wrist_roll"]
+    # [AI] 2026-10-16：这三个数组原先还是**旧的 q_urdf 域**（零位=各关节 0），
+    # 但 2026-10-15 把关节值统一成**指令角**后，零位偏移已经烘进 joint origin
+    # （见 rak_description/urdf/macros/arm_chain.xacro），本节点运行时合并的那份臂
+    # URDF 里**关节值就是指令角** —— 所以旧值会让臂停在/走向**错姿态**：
+    #   home_q 停在 J2=90°（真 Home 是 225°）；arm_q_min[1]=-135° 低于真机下限 0°，
+    #   HQP 解出的负角会被 Session「负值截 0」**静默吃掉**（臂不动且不报错）；
+    #   arm_q_max[1]=120° 又把 J2 限死在 120°（真机可到 255°）。
+    # 换算 = 各关节 + 零位偏移（J2 +135°、J3 +180°，其余 0），换算后正好等于
+    # properties_arm.xacro 的 jN_lower/jN_upper 与契约 §1 的行程。
+    # 单位 rad；J2 上限 255° 是**实测硬件限**（properties_arm.xacro 注明），不是 270°。
+    home_q:    [0.0, 3.9269908169872414, 4.71238898038469, 0.0, 0.0, 0.0]                       # 0/225/270/0/0/0 °
+    arm_q_min: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]                                                   # 全 0 °
+    arm_q_max: [4.71238898038469, 4.4505895925855405, 4.71238898038469,
+                4.71238898038469, 4.71238898038469, 4.71238898038469]                            # 270/255/270/270/270/270 °
     arm_qd_max: [1.57, 0.5, 0.5, 1.57, 0.5, 1.57]
 
     base_vmax: [0.25, 0.15, 0.5]
-    wheel_radius: 0.0325
-    wheel_k: 0.15
+    wheel_radius: 0.0275   # 2026-10-14 实测 Ø5.5 cm
+    wheel_k: 0.26          # hw 0.1225 + ht 0.1375（2026-10-14 实测轴距 24.5/轮距 27.5）
     wheel_wmax: 10.0
-    support_half: [0.15, 0.15]
+    support_half: [0.1225, 0.1375]  # 半轴距/半轮距（2026-10-14 实测）
     support_margin: 0.02
 
     w_ee_pos: 100.0

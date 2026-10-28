@@ -13,6 +13,10 @@ gripper_controller。上层工具（chassis_tui / arm_tui 等）只经 ROS 接�
     /wbc/arm_setpoints —— rak_wbc(HQP) 的位置流入口（速度级 WBC，ADR-0011）。
   - none：只起底盘，臂接口不激活（纯导航联调 / 臂未接线时）。
 
+⚠️ MoveIt 真机档（rak_moveit_config/launch/rak_arm.launch.py 的 hardware 模式）
+**依赖 jtc**：它不起 controller_manager，直接对接同名的 `arm_controller`。
+选 wbc/none 时该真机档找不到 arm_controller，会起不来（这是预期，不是 bug）。
+
 安全:
 - allow_motion 默认 false —— 硬件永远只发 DISARMED 零目标，臂指令在 Session 层被抑制。
 - allow_motion:=true 是显式运动许可，前提: 车轮架空 + 电池可控 + 有急停手段，

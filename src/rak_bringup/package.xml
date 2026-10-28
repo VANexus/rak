@@ -52,6 +52,9 @@
   <!-- 任务/决策/仿真 -->
   <exec_depend>rak_agent</exec_depend>
   <exec_depend>rak_task_executor</exec_depend>
+  <!-- Jev↔executor 仲裁缝 + 语音对话环(ADR-0010) -->
+  <exec_depend>rak_harness</exec_depend>
+  <exec_depend>rak_tool_executor</exec_depend>
   <!-- 语音链:audio_common 采集阵列 → /audio → asr_node;vtn_node 唤醒桥;
        tts_node → /audio_out → audio_play 播报 -->
   <exec_depend>audio_capture</exec_depend>

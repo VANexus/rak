@@ -89,7 +89,7 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument("lidar_z", default_value="0.10", description="base_link -> laser_link height [m]"),
+            DeclareLaunchArgument("lidar_z", default_value="0.1525", description="base_link -> laser_link height [m] (2026-10-14 实测)"),
             DeclareLaunchArgument(
                 "odom_source",
                 default_value="rf2o",

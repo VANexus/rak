@@ -5,6 +5,7 @@ imports `system2.py` and vice versa -- that is what makes "the harness only
 lives on the slow path" a structural fact rather than a convention.
 
 Run:  python -m rak_agent.loop --scenario approach --decider stub --ticks 50
+      python -m rak_agent.loop --scenario approach --decider tensorrt --ticks 50
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import uuid
 from pathlib import Path
 
 from .body import MockBody
-from .system1 import Decider, StubDecider, resolve
+from .system1 import Decider, make_decider, resolve
 from .system2 import Consultant, StubConsultant
 from .types import Decision, SceneState, Tier
 
@@ -125,11 +126,7 @@ def run(
     verbose: bool = True,
 ) -> Logger:
     body = MockBody(scenario)
-    if decider != "stub":
-        raise RuntimeError(
-            f"decider {decider!r} is unavailable; use stub until the TensorRT backend is integrated"
-        )
-    s1: Decider = StubDecider()
+    s1: Decider = make_decider(decider)
     s2 = consultant or StubConsultant()
     log = Logger(out_dir=out_dir)
     log.log(
@@ -206,7 +203,7 @@ def run(
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scenario", default="approach", choices=["approach", "cross", "clear"])
-    p.add_argument("--decider", default="stub", choices=["stub"])
+    p.add_argument("--decider", default="stub", choices=["stub", "tensorrt"])
     p.add_argument("--ticks", type=int, default=50)
     p.add_argument("--force-s2", type=int, default=None, help="force escalation from this tick")
     p.add_argument("--out", default=str(EPISODE_DIR))

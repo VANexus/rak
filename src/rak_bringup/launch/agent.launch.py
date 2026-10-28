@@ -31,7 +31,7 @@ def _param(name: str, value_type):
 def generate_launch_description() -> LaunchDescription:
     parameters = dict(
         [
-            _param("decider", str),  # stub | tensorrt (TensorRT integration pending)
+            _param("decider", str),  # stub | tensorrt
             _param("consultant", str),  # stub | rai | a vendor name
             _param("scenario", str),  # approach | cross | clear
             _param("sim", bool),

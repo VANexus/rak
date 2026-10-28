@@ -19,6 +19,16 @@
       </Interfaces>
       <AllowMulticast>true</AllowMulticast>
     </General>
+    <Discovery>
+      <!-- [AI] 2026-10-15: 默认 Discovery/MaxAutoParticipantIndex=9 (0.10.5 xsd)。每进程一个
+           participant index，域 47 实测进程数 ~20+（chassis 栈 + nav2/slam 栈 12 + 相机 TF
+           静态节点 + 语音栈），超限的节点启动即死于
+           "Failed to find a free participant index for domain 47"
+           (实测 velocity_smoother / lifecycle_manager 因此退出)。
+           注意必须放在 <Discovery> 下——放 <Internal> 下是未知元素，整个 DDS 域创建失败。
+           端口号 = 7400 + 250*47 + 2*index + offset，index 须 <120 (schema 约束)，取 100。 -->
+      <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
+    </Discovery>
     <Internal>
       <MaxMessageSize>65500</MaxMessageSize>
     </Internal>

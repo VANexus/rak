@@ -41,6 +41,9 @@ class SpeechTts(Node):
         self.declare_parameter("audio_topic", "/audio_out")
         self.declare_parameter("model_dir", "")
         self.declare_parameter("model_file", "")  # 具体 .onnx;空=自动挑选
+        self.declare_parameter(
+            "backend", "sherpa"
+        )  # sherpa(kokoro/vits,CPU) | cosyvoice(CosyVoice3-0.5B,GPU,情感 instruct)
         # kokoro 是 82M 参数的 24 kHz 模型,CPU 上约 0.75× 实时;留 2 个核给
         # ASR/驱动。要更低延迟可 model_dir 换 vits-aishell3(8 kHz,约 3× 实时)。
         self.declare_parameter("num_threads", 4)
@@ -50,6 +53,7 @@ class SpeechTts(Node):
         self.declare_parameter("queue_max", 4)
 
         g = lambda name: self.get_parameter(name).value  # noqa: E731
+        self._backend = str(g("backend"))
         self._model_dir = str(g("model_dir"))
         self._model_file = str(g("model_file"))
         self._num_threads = int(g("num_threads"))
@@ -99,7 +103,7 @@ class SpeechTts(Node):
                 self.get_logger().warning(
                     f"tts queue full: dropped oldest utterance ({self._dropped} total)"
                 )
-            self._queue.append(text)
+            self._queue.append((text, request.instruct or ""))
             self._cond.notify()
         response.accepted = True
         response.message = "queued" if self._state == "ready" else "queued (engine loading)"
@@ -128,13 +132,20 @@ class SpeechTts(Node):
                     self._cond.wait(timeout=0.5)
                 if self._stop.is_set():
                     return
-                text = self._queue.popleft()
+                text, instruct = self._queue.popleft()
             try:
-                self._speak(text)
+                self._speak(text, instruct)
             except Exception as exc:  # noqa: BLE001 -- 单句失败不能停播
                 self.get_logger().error(f"synthesis failed for {text!r}: {exc}")
 
-    def _speak(self, text: str) -> None:
+    def _speak(self, text: str, instruct: str = "") -> None:
+        if self._backend == "cosyvoice":
+            sample_rate, samples = self._engine.synthesize(text, instruct)
+            pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+            self._audio_pub.publish(AudioData(data=pcm))
+            self.get_logger().info(
+                f"say [cosyvoice] ({len(pcm) // (2 * sample_rate) + 1}s): {text}")
+            return
         out = self._engine.generate(text, sid=self._sid, speed=self._speed)
         samples = np.asarray(out.samples, dtype=np.float32)
         if samples.size == 0:
@@ -147,6 +158,15 @@ class SpeechTts(Node):
     # -- 模型定位与引擎构建 ----------------------------------------------------------
 
     def _load_engine(self):
+        if self._backend == "cosyvoice":
+            from .cosyvoice_backend import CosyvoiceSynthesizer
+
+            synth = CosyvoiceSynthesizer(
+                model_dir=self._model_dir,
+                instruct="",  # 人格卡 neutral 默认
+            )
+            self._sample_rate = synth.sample_rate
+            return synth, "cosyvoice"
         import sherpa_onnx  # 延迟导入:模型缺失/没装 sherpa 时服务仍能降级应答
 
         model_dir = Path(self._model_dir) if self._model_dir else self._find_model()

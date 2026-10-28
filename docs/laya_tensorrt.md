@@ -1,13 +1,21 @@
 # Laya TensorRT Export Runbook
 
-Status (2026-10-07): the full-model BF16 ONNX export and the TensorRT engine
-build have both run successfully on the Jetson. The artifacts are under
-`brain/data/models/laya-typed-decisions/` (gitignored):
+Status (2026-10-14): fully integrated and verified end to end on the Jetson. The
+full-model BF16 ONNX export and the TensorRT engine build both ran on 2026-10-07.
+The artifacts live under the gitignored repo-root `data/models/laya-typed-decisions/`
+(ADR-0013 moved them out of the old `brain/data/`, and `tensorrt_decider.py`'s
+search subpath followed on 2026-10-14):
 `laya-typed-decisions-bf16.onnx` + `.onnx.data` (~843 MB), and
-`laya-typed-decisions-bf16.plan` (~807 MB, TensorRT 10.16.2.10). The engine
-deserializes under the system TensorRT Python binding with the expected
-bindings. **Numerical acceptance is still open** — see the last section. The
-build produced the artifacts only; `rak_agent` still has no TensorRT decider.
+`laya-typed-decisions-bf16.plan` (~807 MB, TensorRT 10.16.2.10). The numerical
+acceptance below passed on 2026-10-07 and the tests re-verified it on 2026-10-14:
+`src/rak_agent/test/test_tensorrt_decider.py` pins the token layout and runs the
+engine end to end. `decider:=tensorrt` (ROS) / `--decider tensorrt` (CLI) load the
+engine, report `s1_device=cuda`, and measure 50-80 ms per tick (first call ~130 ms).
+
+Runtime dependencies are the JetPack TensorRT Python binding, system `numpy`, and
+`tokenizers` (installed in the user pip site; there is no rosdep key for it — checked
+against rosdistro's python.yaml/base.yaml on 2026-10-14 — which is why `package.xml`
+does not declare it and `rosdep install` must not be expected to provide it).
 
 The wrapper [`scripts/export_laya_onnx.py`](../scripts/export_laya_onnx.py)
 needed two fixes that the earlier "preparation" pass did not anticipate; both
@@ -30,10 +38,10 @@ are recorded under "Export gotchas" below.
   Batch, sequence length, and marker count are exported as dynamic dimensions.
 - The exporter writes only the ONNX file. The runtime also needs the checkpoint's
   `rl_agent_config.json` and `tokenizer/` files. Keep these assets under
-  `brain/data/` (gitignored), not in source control.
+  `data/models/` at the repo root (gitignored), not in source control.
 
-The seven `ACTION_CRITERIA` labels in `brain/rak_ai/system1.py` mean the current
-agent call has seven markers. With the pinned tokenizer and current question,
+The seven `ACTION_CRITERIA` labels in `src/rak_agent/rak_agent/system1.py` mean the
+current agent call has seven markers. With the pinned tokenizer and current question,
 empty-scene and one-person states produce 118 and 134 tokens respectively, with
   seven markers at positions 15 through 88. The model has different forward
   branches for one marker versus multiple markers, so this export declares
@@ -154,7 +162,7 @@ dependencies.
 
 ## Prepared Assets
 
-The pinned model is already downloaded to the ignored `brain/data/` directory.
+The pinned model is already downloaded to the ignored repo-root `data/` directory (ADR-0013).
 The safetensors header was inspected without loading its weights: 206 tensors,
 all F16. `git check-ignore` confirms the weights will not enter Git. Re-fetch
 only if this directory is later removed:
@@ -163,7 +171,7 @@ only if this directory is later removed:
 python3 -c 'from huggingface_hub import snapshot_download; snapshot_download(
     "convaiinnovations/laya-typed-decisions",
     revision="e929ae5cf69bc34259cd2f95c9e91145b818b1f0",
-    local_dir="brain/data/models/laya-typed-decisions",
+    local_dir="data/models/laya-typed-decisions",
     allow_patterns=["model.safetensors", "rl_agent_config.json",
                     "tokenizer/*", "encoder/*"])'
 ```
@@ -179,7 +187,7 @@ if [ "$AVAILABLE_KIB" -lt 2097152 ]; then
   echo "Need at least 2 GiB MemAvailable; found $((AVAILABLE_KIB / 1024)) MiB." >&2
   exit 1
 fi
-MODEL="$PWD/brain/data/models/laya-typed-decisions"
+MODEL="$PWD/data/models/laya-typed-decisions"
 PYTHONPATH=/tmp/laya-export-src TORCHDYNAMO_DISABLE=1 \
   python3 scripts/export_laya_onnx.py \
   --model "$MODEL" \
@@ -210,7 +218,7 @@ if [ "$AVAILABLE_KIB" -lt 2097152 ]; then
   echo "Need at least 2 GiB MemAvailable; found $((AVAILABLE_KIB / 1024)) MiB." >&2
   exit 1
 fi
-MODEL="$PWD/brain/data/models/laya-typed-decisions"
+MODEL="$PWD/data/models/laya-typed-decisions"
 trtexec \
   --onnx="$MODEL/laya-typed-decisions-bf16.onnx" \
   --saveEngine="$MODEL/laya-typed-decisions-bf16.plan" \
@@ -249,7 +257,7 @@ checkpoint built in the same bf16 compute dtype, on CPU, with the upstream
 directly against PyTorch covers steps 1 and 2 at once and is the stronger check
 (ONNX Runtime is not installed on this image).
 
-1. **Token layout — exact.** The port in `brain/rak_ai/tensorrt_decider.py`
+1. **Token layout — exact.** The port in `src/rak_agent/rak_agent/tensorrt_decider.py`
    produces ids and `[MASK]` markers identical to upstream `build_sequence` on
    four states. The empty scene is 118 tokens and the seven markers land at
    `[15, 28, 42, 51, 63, 75, 88]`, matching the layout recorded above.
@@ -268,8 +276,8 @@ directly against PyTorch covers steps 1 and 2 at once and is the stronger check
 4. **Measured.** Inference latency 45–80 ms per tick (engine execution alone
    ~58 ms at 118 tokens, first call); engine file 807 MB, plus the CUDA context.
    RSS/CMA under the full stack is measured by the stress run, not here.
-5. **Held.** The plan, ONNX and weights stay under `brain/data/`; nothing is
-   committed. `brain/tests/test_tensorrt_decider.py` skips rather than fails when
+5. **Held.** The plan, ONNX and weights stay under repo-root `data/`; nothing is
+   committed. `src/rak_agent/test/test_tensorrt_decider.py` skips rather than fails when
    the assets are absent, so a clean checkout still runs.
 
 Wired into the node as `decider:=tensorrt` (`-p decider_model_dir:=` overrides

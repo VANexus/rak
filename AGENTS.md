@@ -36,8 +36,9 @@ is now the *only* transport, and `Session` (`src/rak_chassis`) has a single impl
 regrouped by subsystem** — `brain/` moved to `src/rak_agent`, CAN v3 stack retired (local
 `attic/` archive deleted 2026-10-10 — the code lives only in git history). On 2026-10-29 the
 two remaining v3 leftovers were also removed: the `rak_can_driver` package (deleted) and the
-never-committed `rak_base_driver` dir; `scripts/check_workspace.py`'s `EXPECTED` is now **20**
-owned packages (was 23 pre-regroup).
+never-committed `rak_base_driver` dir. `scripts/check_workspace.py`'s `EXPECTED` is now **22**
+owned packages (v3 `rak_can_driver` gone; upstream meanwhile added `rak_harness` and
+`rak_tool_executor`).
 
 - `docs/adr/*` are immutable (append/supersede only), indexed by `docs/adr/README.md`.
   **ADR-0007 supersedes ADR-0001**; the valid set is 0002 + 0003 (v4 layer) + 0004–0015.
@@ -46,8 +47,16 @@ owned packages (was 23 pre-regroup).
   masses/geometry remain hard gates — read its closed items before wiring hardware.
 - ADR-0010's target — Harness as a standard ROS 2 package `src/rak_harness` + node
   `harness_node`, the Jev↔executor arbitration seam, a separate `anthropic` cloud client and a
-  gated "呼吸感" expression interface — is **accepted but design-only**: there is no
-  `src/rak_harness`, and the expression layer is a no-op stub behind closed hardware gates.
+  gated "呼吸感" expression interface — is **accepted but design-only**: the expression layer is
+  a no-op stub behind closed hardware gates, and as of 2026-10-15 `src/rak_harness` also hosts the
+  **P1 agentic tool loop** (Claude Agent SDK in a subprocess, `voice_path:=agent|dialogue|auto`)
+  from the design draft below — that loop itself still **needs its ADR** before it is considered
+  accepted.
+  The **DESIGN DRAFT** for the brain↔arm/tools operation layer (versioned tool-proposal
+  contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption — no CLI/MCP external
+  control surface, phasing P0–P5) is
+  `docs/brain_arm_tools_design.md` (2026-10-15, **not accepted** — needs an ADR; do not
+  implement it as if it were one).
 - ADR-0007's target — whole robot on `ros2_control`, host-side mecanum IK — is **partially
   implemented as of 2026-10-14**: `src/rak_chassis` (ex `rak_hardware`, renamed by ADR-0013)
   exports 4 wheel velocity interfaces (F407 chassis smoke test, firmware R37) **plus 7 arm
@@ -61,10 +70,13 @@ owned packages (was 23 pre-regroup).
   jog**: j1 +5° and Home both SUCCEEDED, the wire carried 35 `ARM_CMD_A` frames ramping
   0.1°→5.0°→0.0° at 0.1° quantization (event-driven, no periodic replay), readback followed,
   no faults. Still unverified: J2–J6 physical motion, limit/estop behavior under motion,
-  and the gripper (no hardware channel — readback is always 0). The 7 arm joints are backed
-  by a documented zero-length control stub chain in `rak_chassis.urdf.xacro` (Jazzy requires
-  every `<ros2_control>` joint to exist in the kinematic tree); real geometry stays in
-  `rak_arm.urdf.xacro`.
+  and the gripper (no hardware channel — readback is always 0). The 7 arm joints' real
+  geometry is defined **once** in `src/rak_description/urdf/macros/arm_chain.xacro`
+  (`<xacro:rak_arm_chain/>`, 2026-10-16) and shared by `rak_arm.urdf.xacro` and
+  `rak_chassis.urdf.xacro`; the former zero-length control stub chain is gone. The gripper
+  has no geometry — a bare `gripper_link` frame after `tool0` only keeps Jazzy's
+  "every `<ros2_control>` joint must exist in the kinematic tree" satisfied.
+  `src/rak_chassis/test/validate_chassis_urdf.py` pins that contract under `colcon test`.
   `src/rak_moveit_config/test/validate_six_axis_sim.py:36` still asserts the
   six-axis **sim fixture** URDF contains no `<ros2_control>` tag — that fixture is not the
   real arm.
@@ -162,7 +174,11 @@ Two gitignored local directories live *inside* the repo (moved out of `~` on 202
 `tools/` in `src/`):
 
 - `tools/` — local tooling and third-party copies: `tools/camera/` (OrbbecSDK 1.10.18),
-  `tools/graspnet/` (capture/verification artifacts), `tools/remote_check.sh`,
+  `tools/harness-sdk/` (vendored `claude-agent-sdk` overlay for the P1 agent loop's
+  subprocess — its pydantic v2 tree must never enter the ROS system Python), `tools/cosyvoice/`
+  (vendored CosyVoice3 + torchaudio shim + matcha for the GPU TTS backend; J7.2 adaptations
+  in-file), `tools/graspnet/`
+  (capture/verification artifacts), `tools/remote_check.sh`,
   `tools/iwlwifi-patches/`.
 - `debug/` — hardware debug scraps (`spi_loopback.c`, `i2c_meter.sh`, `spi_meter.sh`).
 
@@ -187,9 +203,11 @@ ros2 launch rak_bringup speech.launch.py  # array: capture -> ASR, board wake ->
 # Memory/DMA mode of the board itself: status | headless | desktop (needs sudo; see Gotchas)
 sudo scripts/rak-mode.sh headless
 
-# The brain as a standard ROS node (system Python; TRT backend is not implemented yet)
+# The brain as a standard ROS node (system Python; decider:=stub | tensorrt)
 ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
 ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
+ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=tensorrt  # engine under data/models/
+PYTHONPATH=src/rak_agent python3 src/rak_agent/test/test_tensorrt_decider.py  # needs the engine; skips if absent
 
 # Python decision/intent tests, no ROS
 PYTHONPATH=src/rak_agent python3 -m rak_agent.loop --scenario approach --decider stub --ticks 50
@@ -270,8 +288,11 @@ caveats above.
   the finetune corpus. There is deliberately no training pipeline here.
 - `--decider stub` is the default and stays runnable without a model. The target System 1
   runtime is in-process TensorRT from JetPack; do not add a model service or generic
-  CUDA/PyTorch wheel dependency. TensorRT model loading is not implemented until its
-  ONNX/tokenizer contract is validated.
+  CUDA/PyTorch wheel dependency. The TensorRT backend is integrated (`decider:=tensorrt`
+  in the node, `--decider tensorrt` in the CLI loop): one factory in
+  `src/rak_agent/rak_agent/system1.py` (`make_decider`), engine + tokenizer under the
+  gitignored repo-root `data/models/laya-typed-decisions/` (override with
+  `RAK_LAYA_MODEL_DIR` or `-p decider_model_dir:=`), runbook `docs/laya_tensorrt.md`.
 - `rak_task_executor` is the only task/goal lifecycle owner. Pause is not reported until
   Nav2 cancellation is confirmed and fresh repeated stationary telemetry arrives; resume
   submits the semantic map goal again. Its default parser is local; optional RAI planning
@@ -376,8 +397,10 @@ caveats above.
   `LayaDecider.device/.weights/.place_error` and the node's `s1_device=`/`s1_weights=`
   startup fields describe that legacy implementation; do not run `decider:=laya`.
 - The legacy PyTorch/Laya fp16 parity run compared executed actions and safety tiers over
-  90 states. Do not use it to qualify TensorRT: a new engine requires separate output
-  parity and `resolve()` behavior tests before it can be enabled.
+  90 states. It does not qualify TensorRT: the engine's own acceptance (token layout exact,
+  numerics within bf16, argmax identical, same `Decision` contract) is recorded in
+  `docs/laya_tensorrt.md` §Acceptance and pinned by
+  `src/rak_agent/test/test_tensorrt_decider.py`; a *new* engine needs that pass again.
 - **The left wheels (FL/RL) are wired inverted — measured 2026-10-14.** `DRIVE_CMD`
   `[++++]` (all four commanded identical, i.e. what a straight line looks like on the
   wire) makes the left pair roll backward and the right pair forward, so the base spins in
@@ -396,15 +419,17 @@ caveats above.
 - **A `read() lost feedback` line is usually a downstream symptom, and `cmd_stale` is not
   a fault.** `kStateFaultMask = 0x003D` in `can_session.cpp` includes `STATE.bit3
   cmd_stale`, which the F407 sets whenever `DRIVE_CMD` stops for 100 ms (PROTOCOL v4
-  §6.2) — that is, exactly when no controller is active. So the chain is: controllers
-  fail to load → nobody sends `DRIVE_CMD` → deadman trips → `fault_bitmap=0x0008` →
-  `read()` errors → controller_manager deactivates the hardware → the controllers can
-  never load. **Only a full relaunch escapes it.** The healthy case prints
+  §6.2). Historically the extra `fault_bitmap != 0` check inside `read()` pulled bit3 into
+  the feedback veto, producing the self-latching chain: no controller active → deadman →
+  `fault_bitmap=0x0008` → `read()` errors → controller_manager deactivates the hardware →
+  controllers can never load → only a full relaunch escaped. **Settled by ADR-0017
+  (2026-10-14): `read()` now vetoes on `(fault_bitmap & ~0x0008) != 0`** — cmd_stale is
+  diagnostic only (still published in `fault_bitmap`), `bat_uv`/`can_recovering` remain
+  vetoes, and `kStateFaultMask` is untouched. The healthy log shape was
   `connected=1 handshaken=1 feedback_valid=1 faulted=0 feedback_age=2ms` with `0x0008` the
-  only nonzero field; do not read that as a hardware fault. `faulted` itself correctly
-  excludes bit3 (it tests `state & 0x0005` plus MODE) — it is the extra
-  `fault_bitmap != 0` check inside `read()` that pulls it in, which is a self-latching
-  design flaw to be settled with ADR-0017, not by editing the mask ad hoc.
+  only nonzero field; after the fix a `lost feedback` line means something other than
+  bit3 (or `feedback_age > 120 ms`) actually failed — read the printed fields, and do not
+  re-add `fault_bitmap != 0` wholesale or edit the mask to "fix" a log line.
 - **Never run two `chassis_bringup` instances.** Both put a node named
   `/controller_manager` on the domain, so the second launch's `spawner`s reach the first
   one's manager and die with `Failed to configure controller` / `Failed loading
@@ -412,3 +437,13 @@ caveats above.
   `gripper_controller`). Check with
   `ps -eo pid,etime,cmd | grep chassis_bringup` — it must print exactly one line — before
   launching.
+- **语音栈现状（2026-10-15 bench）**：ASR 默认引擎是流式 Zipformer（14M，`acoustic/models/
+  sherpa-onnx-streaming-zipformer-zh-14M-*`，sherpa-onnx，`engine:=zipformer`；Vosk 保留为
+  `engine:=vosk` 回退）；TTS 默认 sherpa/kokoro（`backend:=sherpa`），`backend:=cosyvoice` 走
+  GPU CosyVoice3-0.5B（情感 instruct 经 Say.srv additive 新字段）。用户 site 已装
+  torch 2.12.0+cu132（R39.2 原生可用，sm_87 走 sm_80 回退）与 onnxruntime-gpu 1.28
+  （TensorRT EP 可用；numpy 钉 1.26.4，因 ORT-GPU/pyarrow 的 2.x 需求与系统栈互斥）。
+  **GPU 堆注意事项**：反复 cudaMalloc OOM 被杀会留下坏堆（>1GB 分配必失败，重启即愈）；
+  CosyVoice3 推理需 ~1.7GB 显存，桌面会话在跑时仅 ~1.3GB 可用——跑它先 headless。
+  agent loop 的 SDK 必须 `permission_mode="bypassPermissions"`：ark-code-latest 在
+  acceptEdits 下会自行脑补"等弹窗放行"而拒绝调用运动工具；权威始终在执行器侧，不变。

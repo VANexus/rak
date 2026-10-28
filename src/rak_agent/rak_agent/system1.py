@@ -131,6 +131,27 @@ class Decider(Protocol):
     def decide(self, state: SceneState) -> Decision: ...
 
 
+def make_decider(name: str, model_dir: str = "") -> Decider:
+    """The one decider factory, shared by the CLI loop and the ROS node.
+
+    Two copies would eventually disagree on which backends exist or on their
+    rejection messages. The TensorRT module is imported lazily *inside* the
+    branch, so the stub path runs on a box with no TensorRT binding at all.
+    """
+    if name == "stub":
+        return StubDecider()
+    if name == "tensorrt":
+        from .tensorrt_decider import TensorRtDecider  # noqa: PLC0415 -- lazy on purpose
+
+        return TensorRtDecider(model_dir=model_dir or None)
+    if name == "laya":
+        raise RuntimeError(
+            "The legacy PyTorch Laya backend is disabled; "
+            "use decider=tensorrt (the built engine) instead"
+        )
+    raise ValueError(f"unknown decider {name!r}; expected stub or tensorrt")
+
+
 class StubDecider:
     """Rule-based stand-in so the loop runs end to end without Laya.
 

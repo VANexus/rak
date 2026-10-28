@@ -48,3 +48,24 @@ scan_to_scan_filter_chain:
       type: laser_filters/LaserScanBinningFilter
       params:
         num_bins: 525
+    # [AI] 2026-10-15 车载 nav2 goto 首跑定位到的自遮挡: 六轴臂安装面离地 0.10 m
+    # (arm_z, rak_chassis.urdf.xacro), 折叠 Home 位的臂体切过 0.1525 m 激光平面,
+    # 实测 78 个回波落在 base_link 系 |x|<0.28,|y|<0.22 内且全在车体后半
+    # (x<=0.03)——车体内部不可能存在外部障碍, 这些是机械臂自身.
+    # 后果链: collision_monitor 的 PolygonStop(min_points:1) 被永久触发 ->
+    # publishVelocity 输出恒为零, 且零速持续 1s (stop_pub_timeout=2s) 后彻底静默
+    # -> /cmd_vel 无任何消息 -> WBC 收不到指令 -> nav2 进度检查失败 -> 目标 ABORTED.
+    # 同一批点还污染 SLAM 地图与两级 costmap (规划器 "Failed to create plan").
+    #
+    # LaserScanFootprintFilter: 投影到 base_link (硬编码 frame, 本车即 base_link),
+    # 车体方框 inscribed_radius 内的点置 NaN——obstacle_layer 对 NaN 跳过
+    # (不打标也不 raytrace 清除, 与 inf 的穿透语义不同, 遮挡记忆保留).
+    # 0.22 与 nav2_params 的 robot_radius 同口径: 实测自点全在 |x|<=0.175,
+    # |y|<=0.216 内, 0.22 方框 0 残留; 代价是车体外 7 cm 内侧向近障不再进
+    # costmap/stop 区——接触在即区, 由 inflation 层兜底.
+    # 复测命令: 见 docs/project_status.md (scan 探针统计 stop 框内点数).
+    filter3:
+      name: drop_arm_self_hits
+      type: laser_filters/LaserScanFootprintFilter
+      params:
+        inscribed_radius: 0.22

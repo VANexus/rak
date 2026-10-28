@@ -31,7 +31,11 @@ _NAV2_SERVERS = (
     ("nav2_planner", "planner_server", "planner_server", False),
     ("nav2_behaviors", "behavior_server", "behavior_server", True),
     ("nav2_bt_navigator", "bt_navigator", "bt_navigator", False),
-    ("nav2_velocity_smoother", "velocity_smoother", "velocity_smoother", False),
+    # [AI] 2026-10-14: smoother 输入必须 remap 到 cmd_vel_nav（与上游
+    # navigation_launch.py 一致）。不 remap 时它订阅的是 collision_monitor 的
+    # 输出 /cmd_vel、自己的 /cmd_vel_smoothed 又喂回 collision_monitor——自环，
+    # 而 MPPI 的 /cmd_vel_nav 无人消费。速度链端到端验证之前从未暴露。
+    ("nav2_velocity_smoother", "velocity_smoother", "velocity_smoother", True),
     ("nav2_collision_monitor", "collision_monitor", "collision_monitor", False),
 )
 
@@ -81,13 +85,23 @@ def generate_launch_description():
             description="Final /cmd_vel adapter; none leaves it to an outer bringup.",
         ),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
-        DeclareLaunchArgument("lidar_z", default_value="0.10"),
+        # [AI] 实测高度（2026-10-14：激光扫描面距地 0.18m，减 base 高 0.0275）。
+        # 旧默认 0.10 是占位值；URDF 默认已同步，这里保持一致。
+        DeclareLaunchArgument("lidar_z", default_value="0.1525"),
         DeclareLaunchArgument("odom_source", default_value="rf2o", choices=["rf2o", "ekf", "none"]),
+        # [AI] 与 chassis_bringup 同跑时必须传 false——否则两个
+        # robot_state_publisher 都发 base_footprint->base_link（ADR-0015 一帧一发布者）。
+        DeclareLaunchArgument(
+            "publish_robot_tf",
+            default_value="true",
+            description="start robot_state_publisher for the body tree; false if chassis_bringup already does",
+        ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(nav_share, "launch", "slam.launch.py")),
             launch_arguments={
                 "lidar_z": LaunchConfiguration("lidar_z"),
                 "odom_source": LaunchConfiguration("odom_source"),
+                "publish_robot_tf": LaunchConfiguration("publish_robot_tf"),
             }.items(),
         ),
         Node(

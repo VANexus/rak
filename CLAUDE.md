@@ -21,6 +21,9 @@ Read these before changing behavior — they record decisions the code does not 
   arbitration seam and the reserved "呼吸感" expression
   interface; it is **design-only** — `src/rak_harness` / `harness_node` do not exist yet.
 - `docs/hardware_acceptance.md` — gates that must pass before any physical base/arm test.
+- `docs/brain_arm_tools_design.md` — **DESIGN DRAFT** (2026-10-15, not accepted): tool-proposal
+  contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption (no CLI/MCP external
+  control surface), phasing P0–P5. Needs an ADR before implementation.
 - `docs/migration.md` — the 2026-10-04 unified `rak_` package rename (old name → new name table).
 - `TODO.md` — prioritized roadmap (P0–P3). Tasks only; rationale lives in the ADRs.
 - `AGENTS.md` — parallel agent-instruction file. It overlaps this one but is **not** identical;
@@ -64,10 +67,15 @@ spawns `arm_controller` (JointTrajectoryController) + `gripper_controller` from
 (feedback sync, controllers active, action path + `arm_tui` end-to-end) and then with
 `allow_motion:=true` for a real j1 jog + Home round-trip (frame-level verified on can0:
 event-driven `ARM_CMD` ramps at 0.1° quantization, no faults); J2–J6 motion, limits and
-estop-under-motion remain unverified. The 7 arm joints ride on a zero-length control stub chain inside
-`rak_chassis.urdf.xacro` (Jazzy requires every `<ros2_control>` joint in the kinematic tree);
-real geometry stays in `rak_arm.urdf.xacro`, and the gripper has no physical feedback
-channel. Its transport seam is the `Session` abstraction:
+estop-under-motion remain unverified. The 7 arm joints' **real geometry** is defined **once** in
+`src/rak_description/urdf/macros/arm_chain.xacro` (a single `<xacro:rak_arm_chain/>` macro,
+2026-10-16) and shared by **both** `rak_arm.urdf.xacro` (MoveIt side) and
+`rak_chassis.urdf.xacro` (the real robot's `robot_state_publisher` — this is what makes
+`shoulder_link…tool0` TF exist at all; the former "zero-length control stub chain" is gone).
+The gripper has no geometry and no physical feedback channel; a bare `gripper_link` frame
+after `tool0` exists only because Jazzy requires every `<ros2_control>` joint to be in the
+kinematic tree. `src/rak_chassis/test/validate_chassis_urdf.py` pins that 11-joint contract
+under `colcon test`. Its transport seam is the `Session` abstraction:
 `CanSession` (SocketCAN CAN v4) is the **only** implementation — ADR-0016 (2026-10-14)
 deleted the USB v2 link, its `SerialSession`, `rak_base_driver` and `rak_serial_link`, the
 direct-connect commissioning TUIs, the serial scripts and `docs/protocol/` (snapshot: git
@@ -96,8 +104,10 @@ Two facts that are easy to get wrong:
 ## Layout
 
 `colcon build` runs from the repo root and picks up `src/` (ADR-0013: everything buildable
-lives there; the 2026-10-09 regroup maps 23 packages → 18 buildable + 2 archived, see
-`docs/migration.md` for the full dated table).
+lives there; the 2026-10-09 regroup mapped 23 packages → 18 buildable + 2 archived, see
+`docs/migration.md` for the full dated table). As of 2026-10-29 `check_workspace.py`'s
+`EXPECTED` holds **22** owned packages (v3 `rak_can_driver` removed; `rak_harness` and
+`rak_tool_executor` added upstream since the regroup).
 
 | Package | Contents |
 |---|---|
@@ -170,8 +180,8 @@ PYTHONPATH=src/rak_intent python3 src/rak_intent/test/test_task_intent.py
 ```
 
 Install package dependencies with rosdep. Do not create a project venv or install generic
-CUDA/PyTorch wheels. The target in-process TensorRT decider is not implemented until the
-ONNX and tokenizer contract is verified.
+CUDA/PyTorch wheels. The in-process TensorRT decider is integrated and verified against
+the pinned engine (`decider:=tensorrt`; see `docs/laya_tensorrt.md`).
 
 Use `build/architecture` + `install/architecture`, never the old `build/` / `install/`
 artifacts. Decision-layer-only work skips the GPU packages: `--packages-up-to rak_agent`.
@@ -202,6 +212,8 @@ ros2 launch rak_moveit_config six_axis_sim.launch.py # six-axis fixture
 ros2 launch rak_description view_urdf.launch.py
 ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
 ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
+ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=tensorrt  # engine under data/models/
+PYTHONPATH=src/rak_agent python3 src/rak_agent/test/test_tensorrt_decider.py  # needs the engine; skips if absent
 ros2 run rak_stereo_driver stereo_node
 ros2 launch rak_bringup speech.launch.py    # array: capture->ASR, board wake->/speech/wake, /speech/say->speaker
 sudo scripts/rak-mode.sh status | headless | desktop   # board memory/DMA mode
@@ -334,7 +346,11 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   as a shortcut. A launch argument is not firmware compatibility.
 - `--decider stub` is the default and must stay runnable without a model. The target System 1
   runtime is in-process TensorRT from JetPack; do not add a model service or generic
-  CUDA/PyTorch wheel dependency. The TensorRT decider is not implemented yet.
+  CUDA/PyTorch wheel dependency. The TensorRT backend is integrated: one factory
+  (`make_decider` in `src/rak_agent/rak_agent/system1.py`) serves both the CLI loop
+  (`--decider tensorrt`) and the ROS node (`decider:=tensorrt`); the engine and tokenizer
+  live under the gitignored repo-root `data/models/laya-typed-decisions/` (override with
+  `RAK_LAYA_MODEL_DIR` or `-p decider_model_dir:=`).
 - **Two LLM keys, two providers.** RAI's slow path reads `OPENAI_API_KEY` (SiliconFlow,
   `src/rak_agent/config.toml [openai]`); the ADR-0010 Harness client reads `ANTHROPIC_API_KEY`
   (DeepSeek's Anthropic-compatible endpoint). Do not share one variable across providers, and
@@ -399,17 +415,18 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   there was no CUDA; do not use it for current Jetson runs.
 - If it did not fit, `laya` caught CUDA OOM and dropped to CPU at ~1.6 s/predict — slower
   than the sensor rate. This is historical only; the ROS node rejects `decider:=laya` and
-  `decider:=tensorrt` until TensorRT assets are integrated.
+  `decider:=tensorrt` is the integrated backend (engine under repo-root `data/models/`).
 - The legacy PyTorch/Laya parity test measured the executed policy over 90 states. It does
-  not qualify TensorRT; a new engine needs separate logits/probability parity and
-  `resolve()` behavior tests before enabling it.
+  not qualify TensorRT; the engine's own acceptance (token layout exact, numerics within
+  bf16, same `Decision` contract) is recorded in `docs/laya_tensorrt.md` §Acceptance and
+  pinned by `src/rak_agent/test/test_tensorrt_decider.py`. A rebuilt engine needs it again.
 - **System 2 latency is 12–30 s per call** (measured), so S2 is fire-and-forget in a thread
   and replies are applied on a later tick. `_drain()` currently only *records* replies; it
   does not execute them. The S1 callback also precedes safety resolution, so this prototype
   is **not** an independent real-time safety controller.
 - C++ is C++17 with `-Wall -Wextra -Wpedantic` in the GPU/stereo packages; `rak_stereo_driver`
   runs `ament_lint_auto` under `BUILD_TESTING`, `rak_gpu` has no functional tests.
-- `brain/data/`, `build/`, `install/`, `log/` are gitignored. Stray
+- `data/`, `build/`, `install/`, `log/` are gitignored. Stray
   `frames_*.gv` / `frames_*.pdf` at the root are debugging artifacts, not deliverables.
 - **`colcon build` only ever runs from the repo root** (`--base-paths src`). Run it from `~`
   and it drops orphan `~/build` / `~/install` / `~/log` in the home directory *and* drags

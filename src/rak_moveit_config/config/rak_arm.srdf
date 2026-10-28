@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <!--
-  rak_arm.srdf — 真实六轴机械臂的语义模型（2026-10-08）。
-  [AI] 与 six_axis_sim.srdf 完全隔离；关节名与 rak_arm.urdf.xacro 一致。
-  零位（home，q=0）对应固件指令：J1=0° J2=135° J3=180° J4=0° J5=0° J6=0°
-  （用户 2026-10-08 指定；q_urdf = 指令角 − 零位指令角）。
+  rak_arm.srdf — 真实六轴机械臂的语义模型（2026-10-08，2026-10-15 统一命名/角度域）。
+  [AI] 关节名与 rak_arm.urdf.xacro 一致，且 = docs/arm_moveit_contract.md §1（FROZEN）
+  的 j1_base 系 —— 与真机 rak_chassis.urdf.xacro 同名同域，规划结果可直接发真机。
+  角度域：**指令角**（绝对 0..270°，J2 实测硬件限 0..255°）。
   轴序约定（固件 R42 app_car.h）：axis[0..5] = J1..J6，与 MoveIt joint 顺序一致。
 -->
 <robot name="rak">
@@ -20,15 +20,23 @@
   <!-- 夹爪（第 7 路 PWM 舵机）不进规划组，由独立接口控制（ADR-0008） -->
 
   <group_state name="home" group="arm">
-    <!-- Home/初始/结束/安全位（用户 2026-10-08 指定）：固件指令
-         J1=0° J2=225° J3=270° J4=0° J5=0° J6=0°
-         → q_urdf = 指令 − 零位指令（零位见文件头注）= J2 +90°、J3 +90°、其余 0 -->
-    <joint name="base_yaw_joint"         value="0"/>
-    <joint name="shoulder_pitch_joint"   value="1.5707963"/>
-    <joint name="elbow_pitch_joint"      value="1.5707963"/>
-    <joint name="forearm_roll_joint"     value="0"/>
-    <joint name="wrist_pitch_joint"      value="0"/>
-    <joint name="wrist_roll_joint"       value="0"/>
+    <!-- [AI] 2026-10-15：关节值域已统一成**指令角**（与真机契约 FROZEN 同域），
+         故 home 直接就是固件指令角 J1=0° J2=225° J3=270° J4=0° J5=0° J6=0°，
+         不再需要 q_urdf 换算。
+
+         [AI] 2026-10-16 订正 j3 的**刀口值**：270° 的精确值是 4.71238898038…，
+         原先写 4.7123890 比它**大 1.96e-8**，即**超出 URDF 上限**。
+         （同一类错在 rak_arm.urdf.xacro 的 <ros2_control> initial_value 上已经踩过 ——
+           controller_manager 会判 out of limits 并每秒刷一条 ERROR。）
+         这里取**向下截断**的 4.7123889，与 URDF 的 initial_value 对齐。
+         ⚠️ 压线的角度值一律**向下截**，别四舍五入。
+         j2 的 3.9269908（225°，精确 3.9269908169…）本来就小于真值，无需改。 -->
+    <joint name="j1_base"         value="0"/>
+    <joint name="j2_shoulder"     value="3.9269908"/>
+    <joint name="j3_elbow"        value="4.7123889"/>
+    <joint name="j4_forearm"      value="0"/>
+    <joint name="j5_wrist_pitch"  value="0"/>
+    <joint name="j6_wrist_roll"   value="0"/>
   </group_state>
 
   <disable_collisions link1="arm_base_link"    link2="shoulder_link"      reason="Adjacent"/>

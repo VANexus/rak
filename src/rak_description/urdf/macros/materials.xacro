@@ -17,4 +17,24 @@
     <color rgba="0.20 0.40 0.80 1.0"/>
   </material>
 
+  <!-- [AI] 2026-10-15 从 rak_arm.urdf.xacro 搬来（原本只在那里定义）。
+       挂在 macros/arm_chain.xacro 里的 link 引用它们，而那个宏会被**两棵树**调用
+       （独立臂模型 + 整车模型），所以颜色必须放在这个共享单点上，
+       否则整车那棵树里 arm_* 全是未定义材质，RViz 只画成默认灰。 -->
+
+  <!-- 可视化专用：每节连杆一个颜色，便于在 RViz 里分辨是哪一节。
+       自旋（J1/J4/J6）绕自身轴转，光秃秃的圆柱转起来**完全看不出来**，
+       所以每个连杆额外挂一个径向"指针"小方块（各 link 的第 2 个 <visual>），
+       指针扫过去就能看见角度。
+       ⚠️ 全部只加 <visual>，绝不碰 <collision> —— 不改动碰撞几何，规划不受影响。 -->
+  <material name="arm_shoulder">    <color rgba="0.85 0.25 0.25 1.0"/></material>
+  <material name="arm_upper">       <color rgba="0.90 0.55 0.15 1.0"/></material>
+  <material name="arm_forearm">     <color rgba="0.85 0.80 0.20 1.0"/></material>
+  <material name="arm_forearm_roll"><color rgba="0.30 0.75 0.35 1.0"/></material>
+  <material name="arm_wrist_pitch"> <color rgba="0.25 0.70 0.85 1.0"/></material>
+  <material name="arm_wrist_roll">  <color rgba="0.45 0.40 0.85 1.0"/></material>
+  <material name="arm_tool">        <color rgba="0.95 0.95 0.95 1.0"/></material>
+  <material name="arm_tab">         <color rgba="0.08 0.08 0.08 1.0"/></material>
+  <material name="arm_band">        <color rgba="0.15 0.15 0.18 1.0"/></material>
+
 </robot>

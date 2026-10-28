@@ -12,20 +12,27 @@ import rclpy
 from rak_interfaces.msg import Decision
 
 from rak_agent.node import BrainNode, DECISION_TOPIC, _make_decider
+from rak_agent.tensorrt_decider import DEFAULT_MODEL_DIR
 
 
 def main():
     assert type(_make_decider("stub")).__name__ == "StubDecider"
-    for backend, message in (
-        ("laya", "disabled"),
-        ("tensorrt", "not integrated"),
-    ):
-        try:
-            _make_decider(backend)
-        except RuntimeError as exc:
-            assert message in str(exc)
-        else:
-            raise AssertionError(f"unavailable backend {backend!r} was accepted")
+    # The legacy PyTorch backend stays rejected, whatever else is true.
+    try:
+        _make_decider("laya")
+    except RuntimeError as exc:
+        assert "disabled" in str(exc)
+    else:
+        raise AssertionError("legacy laya backend was accepted")
+
+    # The TensorRT backend is integrated: it must construct when the engine is
+    # present and skip (not fail) when this checkout has not built it.
+    if (DEFAULT_MODEL_DIR / "laya-typed-decisions-bf16.plan").is_file():
+        s1 = _make_decider("tensorrt")
+        assert type(s1).__name__ == "TensorRtDecider"
+        s1.close()
+    else:
+        print("  skip: TensorRT engine not built")
 
     with tempfile.TemporaryDirectory(prefix="rak-agent-smoke-") as output:
         rclpy.init(args=[

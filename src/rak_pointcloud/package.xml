@@ -11,6 +11,9 @@
   <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
   <depend>rak_gpu</depend>
+  <!-- perception_container.launch.py 按 launch 引用要求声明(门禁) -->
+  <exec_depend>rak_astra_driver</exec_depend>
+  <exec_depend>rak_stereo_driver</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <test_depend>ament_lint_auto</test_depend>

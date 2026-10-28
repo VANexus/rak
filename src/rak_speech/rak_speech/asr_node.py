@@ -52,11 +52,15 @@ class SpeechAsr(Node):
         self.declare_parameter("intent_topic", "/speech/intent")
         self.declare_parameter("parse_intent", True)
         self.declare_parameter("once", False)  # exit when a file source ends
+        self.declare_parameter(
+            "engine", "zipformer"
+        )  # zipformer (sherpa-onnx streaming 14M, fast) | vosk (legacy CPU)
 
         g = lambda name: self.get_parameter(name).value  # noqa: E731
         self._source_kind = str(g("source"))
         self._wav_path = str(g("wav_path"))
         self._device = str(g("device"))
+        self._engine = str(g("engine"))
         self._model_dir = str(g("model_dir")) or self._find_model()
         self._parse_intent = bool(g("parse_intent"))
         self._once = bool(g("once"))
@@ -111,12 +115,25 @@ class SpeechAsr(Node):
             )
 
     def _find_model(self, starts: tuple[Path, ...] | None = None) -> str:
-        """Locate the Vosk model beside the other model assets, the same way the
+        """Locate the ASR model beside the other model assets, the same way the
         decider does -- an installed copy of this module cannot use `__file__`.
 
         Assets live under `data/models/` at the repo root since ADR-0013 moved
-        `brain/`; `-p model_dir:=` overrides the search entirely.
+        `brain/`; the streaming zipformer (14M, sherpa-onnx) lives next to the
+        kokoro TTS under `acoustic/models/`. `-p model_dir:=` overrides both.
         """
+        if self._engine == "zipformer":
+            for start in starts or (Path.cwd(),):
+                for base in (start, *start.parents):
+                    candidate = base / "acoustic" / "models"
+                    if candidate.is_dir():
+                        models = sorted(
+                            p for p in candidate.iterdir()
+                            if p.name.startswith("sherpa-onnx-streaming-zipformer")
+                        )
+                        if models:
+                            return str(models[-1])
+            return ""
         relative = Path("data") / "models"
         for start in starts or (Path(__file__).resolve().parent, Path.cwd()):
             for base in (start, *start.parents):
@@ -131,37 +148,87 @@ class SpeechAsr(Node):
 
     def _run(self) -> None:
         try:
-            import vosk
-
-            vosk.SetLogLevel(-1)  # the Kaldi banner is noise on a robot's log
-            if not self._model_dir:
-                raise FileNotFoundError(
-                    "no Vosk model found; set -p model_dir:= or place one under "
-                    "data/models/vosk-model-*"
-                )
-            model = vosk.Model(self._model_dir)
-            recognizer = vosk.KaldiRecognizer(model, SAMPLE_RATE)
-            source = build_source(
-                self._source_kind,
-                wav_path=self._wav_path,
-                device=self._device,
-                inbox=self._inbox,
-                stop=self._stop,
-            )
-            self.get_logger().info(
-                f"speech up: source={self._source_kind} model={self._model_dir}"
-            )
-            for chunk in source.chunks():
-                if self._stop.is_set():
-                    return
-                if recognizer.AcceptWaveform(chunk):
-                    self._publish(json.loads(recognizer.Result()).get("text", ""))
-            self._publish(json.loads(recognizer.FinalResult()).get("text", ""))
+            if self._engine == "zipformer":
+                self._run_zipformer()
+                return
+            self._run_vosk()
         except Exception as exc:  # noqa: BLE001 -- a dead mic must not take the node down
             self.get_logger().error(f"speech recognition stopped: {exc}")
         finally:
             if self._once:
                 rclpy.shutdown()
+
+    def _run_vosk(self) -> None:
+        import vosk
+
+        vosk.SetLogLevel(-1)  # the Kaldi banner is noise on a robot's log
+        if not self._model_dir:
+            raise FileNotFoundError(
+                "no Vosk model found; set -p model_dir:= or place one under "
+                "data/models/vosk-model-*"
+            )
+        model = vosk.Model(self._model_dir)
+        recognizer = vosk.KaldiRecognizer(model, SAMPLE_RATE)
+        source = build_source(
+            self._source_kind,
+            wav_path=self._wav_path,
+            device=self._device,
+            inbox=self._inbox,
+            stop=self._stop,
+        )
+        self.get_logger().info(
+            f"speech up: source={self._source_kind} model={self._model_dir}"
+        )
+        for chunk in source.chunks():
+            if self._stop.is_set():
+                return
+            if recognizer.AcceptWaveform(chunk):
+                self._publish(json.loads(recognizer.Result()).get("text", ""))
+        self._publish(json.loads(recognizer.FinalResult()).get("text", ""))
+
+    def _run_zipformer(self) -> None:
+        """Streaming Zipformer (14M, sherpa-onnx): ~5-10x realtime on CPU,
+        unlike Vosk's measured 0.84-1.01x (docs/microphone_array.md)."""
+        import numpy as np
+        import sherpa_onnx
+
+        if not self._model_dir:
+            raise FileNotFoundError(
+                "no zipformer model found; set -p model_dir:= or place one under "
+                "acoustic/models/sherpa-onnx-streaming-zipformer-*"
+            )
+        model_dir = Path(self._model_dir)
+        recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+            tokens=str(model_dir / "tokens.txt"),
+            encoder=str(model_dir / "encoder-epoch-99-avg-1.onnx"),
+            decoder=str(model_dir / "decoder-epoch-99-avg-1.onnx"),
+            joiner=str(model_dir / "joiner-epoch-99-avg-1.onnx"),
+            num_threads=2,
+            provider="cpu",  # a CUDA/TensorRT sherpa wheel (JP7.x) flips this
+        )
+        source = build_source(
+            self._source_kind,
+            wav_path=self._wav_path,
+            device=self._device,
+            inbox=self._inbox,
+            stop=self._stop,
+        )
+        self.get_logger().info(
+            f"speech up: source={self._source_kind} zipformer={model_dir.name}"
+        )
+        stream = recognizer.create_stream()
+        for chunk in source.chunks():
+            if self._stop.is_set():
+                return
+            samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+            stream.accept_waveform(SAMPLE_RATE, samples)
+            while recognizer.is_ready(stream):
+                recognizer.decode_stream(stream)
+            if recognizer.is_endpoint(stream):
+                text = recognizer.get_result(stream)
+                recognizer.reset(stream)
+                self._publish(text)
+        self._publish(recognizer.get_result(stream))
 
     def _publish(self, text: str) -> None:
         text = text.strip()

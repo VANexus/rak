@@ -1,6 +1,6 @@
 # [AI] ros2_control 控制器配置（CAN v4 硬件链路）：四轮 + 7 轴臂 + 夹爪。
-# ⚠️ wheels_radius / sum_of_robot_center_projection_on_X_Y_axis 为占位值（未实测签核），
-#    实车标定后必须更新。
+# [AI] 2026-10-14 装车实测回填：wheels_radius=0.0275（Ø5.5 cm）、
+#    sum=0.26（hw 0.1225 + ht 0.1375；轴距 24.5/轮距 27.5，外廓量法−轮径/轮宽）。
 # [AI] lyrical：type 查找段在 controller_manager 下；控制器运行参数经 spawner -p 载入。
 controller_manager:
   ros__parameters:
@@ -117,10 +117,11 @@ mecanum_drive_controller:
     # 0.5s 由 Nav2 20Hz 指令流裕度定；上层应 ≥10Hz 持续发布
     reference_timeout: 0.5
     kinematics:
-      # [AI] 与固件 R30 标定表同源（app_wheel_control.c）：轮半径 32.5 mm、
-      # 半轴距+半轮距和 150 mm——均来自台架历史值，未实测签核
-      wheels_radius: 0.0325
-      sum_of_robot_center_projection_on_X_Y_axis: 0.15
+      # [AI] 2026-10-14 装车实测（取代固件 R30 台架值 32.5 mm / 150 mm）：
+      # 轮半径 27.5 mm（Ø5.5 cm）；sum = hw+ht = 0.1225+0.1375 = 0.26
+      # （轴距 24.5、轮距 27.5，量法：前后外廓30−轮径5.5、左右外廓30−轮宽2.5）
+      wheels_radius: 0.0275
+      sum_of_robot_center_projection_on_X_Y_axis: 0.26
       base_frame_offset:
         x: 0.0
         y: 0.0

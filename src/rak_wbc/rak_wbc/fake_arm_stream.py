@@ -8,11 +8,6 @@ P1/伺服模式需要在 ROS 链路上端到端可验。本节点照 `rak_arm_si
 `ARM_STATE` 的 `measured=unavailable` 语义一致（真机无关节位置传感器）。夹具不得被
 当作测量源；抓取闭环仍要靠视觉（ADR-0008/ADR-0011 D4）。
 
-[AI] 2026-10-28：对齐真机接口——名字用**硬件侧** `j1_base..j6_wrist_roll`、值用
-**指令角域**（rad，0..270°，Home 0/225/270/0/0/0），即与 /joint_states 完全同构，
-这样 WBC 的 joint_map 换算（指令角 <-> q_urdf）在影子链路上也被端到端走到。
-（J1/J2 在真机 A2 起是编码器真测量，这里仍是回声——夹具不冒充测量。）
-
 安全：本节点不接触任何硬件，只发 ROS 话题。缺 setpoint 超过 timeout 时保持最后位置
 （对齐固件 lease 超时的"主动保持"语义）。
 """
@@ -24,15 +19,21 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
-from rak_wbc import joint_map
-
-DEFAULT_JOINT_NAMES = list(joint_map.ARM_CTRL_JOINTS)
-_HOME_CTRL = joint_map.q_to_ctrl(joint_map.HOME_Q)
+DEFAULT_JOINT_NAMES = [
+    "j1_base",
+    "j2_shoulder",
+    "j3_elbow",
+    "j4_forearm",
+    "j5_wrist_pitch",
+    "j6_wrist_roll",
+]
 PARAM_DEFAULTS = {
     "arm_setpoints_topic": "/wbc/arm_setpoints",
     "joint_states_topic": "/joint_states",
     "joint_names": DEFAULT_JOINT_NAMES,
-    "init_positions": _HOME_CTRL,
+    # [AI] 2026-10-16：**指令角域**（= 固件 Home 0/225/270/0/0/0°）。
+    # 原来是 q_urdf 域的 [0,90°,90°,0,0,0]，统一角度域后那个值已不等于 Home。
+    "init_positions": [0.0, 3.9269908169872414, 4.71238898038469, 0.0, 0.0, 0.0],
     "publish_rate_hz": 50.0,
     "setpoint_timeout": 0.5,
 }
