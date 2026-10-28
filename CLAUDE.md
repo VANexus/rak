@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Orientation
 
 Layered embodied-robot workspace for Jetson Orin Nano / ROS 2 Jazzy: perception + decision on
-the Orin, real-time control on **one** STM32F407 leaf node (see the topology change below).
+the Orin, real-time control on **two** STM32F407 leaf nodes (chassis + arm; see the topology
+changes below — the "one F407" phase is history again).
 Read these before changing behavior — they record decisions the code does not show:
 
 - `README.md` — engineering entry point (Chinese): layout, build, launch entries, hardware.
@@ -25,16 +26,23 @@ Read these before changing behavior — they record decisions the code does not 
 - `AGENTS.md` — parallel agent-instruction file. It overlaps this one but is **not** identical;
   keep both in sync when you change repository-wide guidance.
 
-**Trust hierarchy when docs disagree.** The 2026-10-04 docs (`README.md`, `docs/architecture.md`,
-`docs/project_status.md`) describe the code as it stood then (pre-ADR-0016 link, two-MCU CAN
-topology). The 2026-10-05 docs (`TODO.md`, `docs/CONSTRUCTION.md`, `docs/adr/0007`) describe the
-**accepted target** after the hardware changed. Neither is wrong, but the target is not yet
-implemented. Do not treat a 2026-10-04 status statement as current, and do not implement the
-2026-10-05 target as if the code already supports it.
+**Trust hierarchy when docs disagree.** `AGENTS.md` is the current lead on topology (updated
+2026-10-28/29); the sections below keep the historical reasoning. The 2026-10-04 docs
+(`README.md`, `docs/architecture.md`, `docs/project_status.md`) describe the code as it stood
+then; the 2026-10-05 docs (`TODO.md`, `docs/CONSTRUCTION.md`, `docs/adr/0007`) describe the
+**accepted target** after the first hardware change. Do not treat an old status line as current.
 
-## The 2026-10-05 topology change (most important context)
+## Topology changes (most important context)
 
-The arm board burned out. What changed:
+**2026-10-28 — two boards again (current).** The arm board was replaced/restored, so the
+2026-10-05 "one F407" phase is over. Now: **chassis board** (`vehical_rak_motion`, fw `R64`)
+= 4 wheels + IMU; **arm board** (`vehical_rak_edge_ai`, fw `A2`) = **J1/J2 encoder motors**
+(AT8236 + TIM6 25 kHz position loop, software zeroing) + J3..J6 servos. The Jetson wire
+contract is unchanged (only the board that answers `0x110/0x111`/`0x210/0x211` moved); the
+arm board adds additive `0x031`/`0x221` frames, which `rak_chassis` now subscribes to.
+Protocol stays v4. `R64`/`A2` have never been flashed; J1/J2 polarity/gains are `[AI]`.
+
+**2026-10-05 — the "one F407" phase (now superseded, kept for reasoning):**
 
 | | Before (ADR-0001, 2026-10-04) | Now (ADR-0007, 2026-10-05) |
 |---|---|---|

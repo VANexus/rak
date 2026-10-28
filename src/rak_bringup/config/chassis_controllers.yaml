@@ -23,9 +23,24 @@ controller_manager:
       type: joint_trajectory_controller/JointTrajectoryController
 
     # [AI] 夹爪第 7 路独立成组：无物理反馈（回读恒 0，契约 §2.3），JTC 的目标容差
-    # 对它永远不成立，故不进 arm_controller；用位置话题直接下发。
+    # 对它永远不成立，故不进 arm_controller；用位置话题直接下发（~/commands）。
+    #
+    # 2026-10-28 实测修正（本机 mock_components 栈）：lyrical 已不再提供
+    # position_controllers/JointGroupPositionController —— 实测报
+    #   "Loader for controller 'gripper_controller' (type
+    #    'position_controllers/JointGroupPositionController') not found"
+    # 改用等价的 forward_command_controller/ForwardCommandController
+    # （interface_name: position，话题同为 ~/commands）；Jazzy/lyrical 两端都有该类型。
     gripper_controller:
-      type: position_controllers/JointGroupPositionController
+      type: forward_command_controller/ForwardCommandController
+
+    # [AI] WBC 臂位置流入口（ADR-0011 D1 输出②）：6 定位轴的位置流控制器，话题
+    # 被 remap 到 /wbc/arm_setpoints（见 chassis_bringup arm_motion_writer:=wbc）。
+    # ⚠️ 与本文件 arm_controller(JTC) **共享同一批 position 命令接口**——同一时刻
+    # 只能激活一个（ros2_control 不做互斥保护，两个同时 active 会双写同一接口）。
+    # 由 chassis_bringup 的 arm_motion_writer 参数在启动期二选一。
+    arm_position_controller:
+      type: forward_command_controller/ForwardCommandController
 
 joint_state_broadcaster:
   ros__parameters:
@@ -55,12 +70,16 @@ arm_controller:
     # 固件指令回声，天然滞后一拍，可接受。刻意不用已废弃的 open_loop_control。
     # allow_motion=false 时回读不动，goal 会因容差超时 abort（TUI 屏上给出提示）。
     constraints:
-      # [AI] 舵机无编码器：回读=指令回声（±1° 实测），容差按 2026-10-09 实测口径放宽，
-      # 不假装毫米级精度（契约 §2.2：碰撞/卡死检测不可用该反馈）。
+      # [AI] 回读精度分两档（2026-10-28，机械臂板 A2 起）：
+      #  - J1_base/J2_shoulder：增量编码器电机闭环（app_joint 25 kHz 采样 + 1 kHz 定点
+      #    PI），回读是**真测量**（0.0059°/count）→ goal 容差收紧到 0.03 rad（≈1.7°）。
+      #  - J3..J6：舵机无编码器，回读=指令回声（±1° 实测），保持 0.05 rad 放宽口径。
+      # 两档都不得用于碰撞/卡死检测：J1/J2 的编码器只测电机轴位置，不含力矩
+      # （契约 §2.2）。0.03 是 TODO(measured)：台架实测位置环稳态误差后回填。
       stopped_velocity_tolerance: 0.05
       goal_time: 1.0
-      j1_base: {trajectory: 0.35, goal: 0.05}
-      j2_shoulder: {trajectory: 0.35, goal: 0.05}
+      j1_base: {trajectory: 0.35, goal: 0.03}
+      j2_shoulder: {trajectory: 0.35, goal: 0.03}
       j3_elbow: {trajectory: 0.35, goal: 0.05}
       j4_forearm: {trajectory: 0.35, goal: 0.05}
       j5_wrist_pitch: {trajectory: 0.35, goal: 0.05}
@@ -69,8 +88,22 @@ arm_controller:
 gripper_controller:
   ros__parameters:
     use_sim_time: false
+    joints: [gripper_joint]
+    interface_name: position
+
+# [AI] WBC 臂位置流（ADR-0011 D1）：顺序 = 契约 §1 的 j1_base..j6_wrist_roll；
+# 值域 = 舵机指令角 rad（0..4.71239；J2 上限 4.45059 由 CM 限幅器截）。
+# 话题 /wbc/arm_setpoints 由 spawner --controller-ros-args 重映射（见 bringup）。
+arm_position_controller:
+  ros__parameters:
+    use_sim_time: false
     joints:
-      - gripper_joint
+      - j1_base
+      - j2_shoulder
+      - j3_elbow
+      - j4_forearm
+      - j5_wrist_pitch
+      - j6_wrist_roll
     interface_name: position
 
 mecanum_drive_controller:

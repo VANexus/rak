@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     "rak_agent", "rak_arm_pinocchio_ik", "rak_arm_simulation", "rak_astra_driver",
-    "rak_bringup", "rak_can_driver", "rak_chassis",
+    "rak_bringup", "rak_chassis",
     "rak_commissioning", "rak_description", "rak_gpu", "rak_grasp_perception",
     "rak_imu_driver",
     "rak_intent",

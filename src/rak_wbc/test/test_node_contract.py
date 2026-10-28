@@ -19,6 +19,8 @@ def test_param_defaults_cover_node_contract():
         "ee_target_topic",
         "base_reference_topic",
         "arm_setpoints_topic",
+        "arm_state_joint_names",
+        "arm_zero_q",
         "publish_arm",
         "home_q",
         "arm_q_min",

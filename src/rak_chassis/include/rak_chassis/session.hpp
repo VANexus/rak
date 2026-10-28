@@ -6,8 +6,6 @@
 #ifndef RAK_CHASSIS__SESSION_HPP_
 #define RAK_CHASSIS__SESSION_HPP_
 
-#include "rak_chassis/protocol.hpp"
-
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -26,7 +24,12 @@ struct SessionSnapshot
   uint8_t feedback_valid_mask{};
   uint32_t accepted_features{};
   uint32_t boot_id{};
+  // [AI] 底盘板（0x220 DIAG）的 STATE 坏消息位掩码；0 = 健康。
   uint32_t fault_bitmap{};
+  // [AI] 底盘板（0x030 NODE_INFO）的 FAULT_u16（0=无故障；当前固件只在欠压时给 0x30）。
+  // 历史上该值曾被写进 fault_bitmap（与 0x220 互相覆盖，1 Hz vs 10 Hz 竞态）——
+  // 2026-10-28 拆成独立字段，两者都为空才算健康（消费端不得只看其中一个）。
+  uint16_t chassis_fault_code{};
   uint32_t encoder_epoch{};
   uint64_t sample_time_us{};
   std::array<double, 4> wheel_position{};
@@ -35,8 +38,22 @@ struct SessionSnapshot
   // servo_valid_mask bit0..5=J1..J6 读回有效；bit6 夹爪无反馈
   // 通道恒 0（协议保留位，固件遥测恒发 0，消费端不得当真实反馈用）。
   std::array<double, 7> joint_position{};
+  // [AI] A2（2026-10-28）起 arm 板 J1/J2 换成增量编码器电机：bit0/bit1 是**真测量**
+  // （编码器回读，0.0059°/count）；bit2..bit5（J3..J6）仍是舵机脉宽回声（±1°，
+  // 非物理测量）。bit6 夹爪无反馈通道，恒无效。消费端对 bit2..5 不得做碰撞/卡死检测。
   uint8_t servo_valid_mask{};
   std::chrono::milliseconds feedback_age{std::chrono::milliseconds::max()};
+  // ---- [AI] 机械臂板上行（双板架构，2026-10-28）：0x031 ARM_NODE_INFO / 0x221 ARM_DIAG ----
+  // 这两帧只描述机械臂板，与底盘板的 fault_bitmap/chassis_fault_code 互不覆盖。
+  bool arm_online{};        // 收到过 PROTO=4 的 ARM_NODE_INFO，且臂帧未超时
+  uint8_t arm_hw_rev{};     // ARM_NODE_INFO.HWREV_u8
+  uint16_t arm_build_tag{}; // ARM_NODE_INFO.BUILD_u16（build_tag 两字节 LE，"A2"→0x3241）
+  uint16_t arm_state{};     // 臂板 STATE_u16 位图（state_bits 语义同底盘板）
+  uint16_t arm_fault{};     // 臂板 FAULT_u16（A2 恒 0；J1/J2 位置环故障走 STATE.bit2）
+  uint8_t arm_mode{};       // 臂板 mode_enum（0 IDLE/1 REMOTE/2 ESTOP/3 FAULT）
+  uint8_t arm_servo_errcnt{};  // ARM_DIAG.SERVO_ERRCNT_u8（饱和 255）
+  bool arm_faulted{};       // 臂板 STATE 坏消息位或 MODE∈{2,3}（最后一次 ARM_DIAG/INFO）
+  std::chrono::milliseconds arm_feedback_age{std::chrono::milliseconds::max()};
 };
 
 // [AI] 传输无关的会话接口。实现必须线程安全：控制线程调 set_*，

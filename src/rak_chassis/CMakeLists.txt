@@ -18,7 +18,7 @@ find_package(Threads REQUIRED)
 pluginlib_export_plugin_description_file(hardware_interface rak_chassis_plugin.xml)
 
 add_library(rak_chassis_plugin SHARED
-  src/protocol.cpp
+  src/can_decode.cpp
   src/can_session.cpp
   src/rak_system.cpp
 )
@@ -54,6 +54,11 @@ if(BUILD_TESTING)
   if(TARGET system_interface_test)
     target_link_libraries(system_interface_test rak_chassis_plugin)
     target_link_libraries(system_interface_test hardware_interface::hardware_interface)
+  endif()
+  # [AI] CAN v4 帧解码的字节布局回归（纯函数，不需要 socket/ROS 运行时）
+  ament_add_gtest(can_frame_decode_test test/can_frame_decode_test.cpp)
+  if(TARGET can_frame_decode_test)
+    target_link_libraries(can_frame_decode_test rak_chassis_plugin)
   endif()
   # [AI] ADR-0016: Session 接口的唯一实现是 CanSession
 endif()

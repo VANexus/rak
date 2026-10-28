@@ -26,6 +26,7 @@ from std_srvs.srv import SetBool
 import tf2_ros
 
 from rak_wbc.hqp import HqpSolver, WbcInput, WbcParams
+from rak_wbc import joint_map
 from rak_wbc.model_builder import build_composite_urdf, WbcKinematics
 
 PARAM_DEFAULTS = {
@@ -53,8 +54,13 @@ PARAM_DEFAULTS = {
         "wrist_pitch_joint",
         "wrist_roll_joint",
     ],
+    # [AI] /joint_states 里臂关节的**硬件侧**名字（ros2_control / joint_state_broadcaster）。
+    # 与上面的 arm_joint_names（运动学模型侧）一一对应，域换算见 joint_map。
+    "arm_state_joint_names": list(joint_map.ARM_CTRL_JOINTS),
+    # [AI] 零位指令角（rad，模型侧 q_urdf = 指令角 - 该值）；真源 properties_arm.xacro。
+    "arm_zero_q": list(joint_map.ARM_ZERO_Q),
     # Home 安全位（ADR-0011 D4；指令 0/225/270/0/0/0 → q_urdf）
-    "home_q": [0.0, 1.5707963267948966, 1.5707963267948966, 0.0, 0.0, 0.0],
+    "home_q": list(joint_map.HOME_Q),
     # 限位/速度：properties_arm.xacro 实测口径（TODO(measured) 带载回填）
     "arm_q_min": [0.0, -2.356194490192345, -3.141592653589793, 0.0, 0.0, 0.0],
     "arm_q_max": [
@@ -159,6 +165,16 @@ class WbcNode(Node):
         )
         self._solver = HqpSolver(self._kinematics, self._params)
         self._arm_joint_names = [str(name) for name in param("arm_joint_names")]
+        # [AI] 硬件侧名字 + 零位偏移（见 joint_map）：模型侧名字只用于 Pinocchio，
+        # 读 /joint_states 必须用硬件侧名字，否则永远取不到状态（历史缺陷）。
+        self._arm_state_joint_names = [str(n) for n in param("arm_state_joint_names")]
+        self._arm_zero_q = [float(v) for v in param("arm_zero_q")]
+        if len(self._arm_state_joint_names) != len(self._arm_joint_names) or \
+                len(self._arm_zero_q) != len(self._arm_joint_names):
+            raise ValueError(
+                "arm_state_joint_names / arm_zero_q 长度必须与 arm_joint_names 一致"
+                f"（{len(self._arm_state_joint_names)}/{len(self._arm_zero_q)} vs"
+                f" {len(self._arm_joint_names)}）")
 
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
@@ -270,9 +286,11 @@ class WbcNode(Node):
 
     def _on_joint_state(self, msg: JointState):
         mapping = dict(zip(msg.name, msg.position))
-        if not all(name in mapping for name in self._arm_joint_names):
+        if not all(name in mapping for name in self._arm_state_joint_names):
             return
-        self._q_arm = np.array([mapping[name] for name in self._arm_joint_names], dtype=float)
+        ctrl = [mapping[name] for name in self._arm_state_joint_names]
+        # [AI] 指令角域 -> q_urdf（模型侧）；A2 起 J1/J2 是编码器真测量，J3..J6 是回声。
+        self._q_arm = np.array(joint_map.ctrl_to_q(ctrl, self._arm_zero_q), dtype=float)
 
     def _on_enable(self, request: SetBool.Request):
         response = SetBool.Response()
@@ -300,9 +318,16 @@ class WbcNode(Node):
         msg.twist.angular.z = float(v_base[2])
         self._base_pub.publish(msg)
 
-    def _publish_arm(self, positions):
+    def _publish_arm(self, ctrl_positions):
+        """发布臂位置流（**指令角域** rad，顺序 = arm_state_joint_names）。
+
+        [AI] 值的域与消费端一致：arm_position_controller(Jazzy/lyrical 的
+        ForwardCommandController，interface_name: position) 直接把话题值写进
+        position 命令接口，硬件侧再按 0.1° 量化。所以这里必须发指令角，而不是
+        模型侧 q_urdf（见 joint_map 头注）。
+        """
         msg = Float64MultiArray()
-        msg.data = [float(value) for value in positions]
+        msg.data = [float(value) for value in ctrl_positions]
         self._arm_pub.publish(msg)
 
     def _publish_status(self, **fields):
@@ -359,7 +384,9 @@ class WbcNode(Node):
                     self._params.arm_q_max,
                 )
                 if self._tick_count % 2 == 0:  # 50 Hz：对齐舵机 PWM 帧率（spec §7）
-                    self._publish_arm(self._arm_cmd)
+                    # [AI] q_urdf -> 指令角域并饱和（J2 上限 255°），再下发
+                    self._publish_arm(joint_map.clamp_cmd(
+                        joint_map.q_to_ctrl(self._arm_cmd, self._arm_zero_q)))
         else:
             # 求解失败：先零速（停轮 + 臂保持）；连续失败到限 → degraded 停止发布
             self._publish_base(np.zeros(3))

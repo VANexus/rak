@@ -9,7 +9,8 @@ setup(
                 ("share/rak_grasp_perception/config", glob("config/*"))],
     install_requires=["setuptools"], zip_safe=True, maintainer="xrak",
     maintainer_email="xrak@xrak.local", description="Offline point-cloud grasp inspection.",
-    license="Apache-2.0", tests_require=["pytest"],
+    # [AI] tests_require 在现代 setuptools 失效；用 extras_require["test"] 让 colcon 走 pytest。
+    license="Apache-2.0", extras_require={"test": ["pytest"]},
     entry_points={"console_scripts": [
         "capture_snapshot = rak_grasp_perception.capture:main",
         "infer_graspnet = rak_grasp_perception.infer:main",

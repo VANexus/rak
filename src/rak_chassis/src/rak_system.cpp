@@ -139,6 +139,9 @@ hardware_interface::CallbackReturn RakSystemHardware::on_init(
   arm_sent_.fill(0.0);
   arm_position_.fill(0.0);
   arm_ready_.store(false, std::memory_order_relaxed);
+  arm_node_ok_.store(true, std::memory_order_relaxed);
+  arm_fault_reported_ = false;
+  arm_online_reported_ = false;
   arm_nan_reported_ = false;
   return hardware_interface::CallbackReturn::SUCCESS;
 }
@@ -278,6 +281,9 @@ hardware_interface::CallbackReturn RakSystemHardware::on_cleanup(
   arm_sent_.fill(0.0);
   arm_position_.fill(0.0);
   arm_ready_.store(false, std::memory_order_relaxed);
+  arm_node_ok_.store(true, std::memory_order_relaxed);
+  arm_fault_reported_ = false;
+  arm_online_reported_ = false;
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -290,12 +296,37 @@ hardware_interface::return_type RakSystemHardware::read(
     return hardware_interface::return_type::ERROR;
   }
   const SessionSnapshot state = session_->snapshot();
+  /* [AI] 臂板健康门（双板架构 2026-10-28，见 rak_system.hpp arm_node_ok_）：
+   * 臂板 0x221 报故障（STATE 坏消息位 / MODE∈{2,3}）即抑制臂命令；恢复后自动解锁。
+   * 只收到过诊断才可能置位——不发 0x221 的旧固件不受影响（保持 true）。 */
+  {
+    const bool arm_ok = !state.arm_faulted;
+    if (!arm_ok && !arm_fault_reported_) {
+      RCLCPP_ERROR(
+        rclcpp::get_logger("rak_chassis_system"),
+        "arm board fault -> arm commands suppressed: arm_state=0x%04X arm_fault=0x%04X "
+        "arm_mode=%u arm_errcnt=%u (CLEAR_FAULT via SAFETY_CMD cmd=6 after the cause is gone)",
+        state.arm_state, state.arm_fault, state.arm_mode, state.arm_servo_errcnt);
+    }
+    arm_fault_reported_ = !arm_ok;
+    arm_node_ok_.store(arm_ok, std::memory_order_relaxed);
+    if (state.arm_online && !arm_online_reported_) {
+      RCLCPP_INFO(
+        rclcpp::get_logger("rak_chassis_system"),
+        "arm board online: build_tag='%c%c' (0x%04X) hw_rev=%u arm_state=0x%04X",
+        static_cast<char>(state.arm_build_tag & 0xFFU),
+        static_cast<char>((state.arm_build_tag >> 8U) & 0xFFU),
+        state.arm_build_tag, state.arm_hw_rev, state.arm_state);
+    }
+    arm_online_reported_ = state.arm_online;
+  }
   /* [AI] R37 联测对齐：不再要求 feedback_valid_mask==0x0F（固件 kick 学习
    * 上电前 mask 可为 0，学习本身依赖 ARMED 指令——按 mask 卡反馈会死锁）。
    * 反馈有效性只看 valid + 新鲜度；mask 保留为诊断信息。 */
   if (!state.connected || !state.handshaken || !state.feedback_valid ||
     state.faulted ||
-    state.fault_bitmap != 0U || state.feedback_age > std::chrono::milliseconds(120))
+    state.fault_bitmap != 0U || state.chassis_fault_code != 0U ||
+    state.feedback_age > std::chrono::milliseconds(120))
   {
     wheel_position_.fill(0.0);
     wheel_velocity_.fill(0.0);
@@ -310,10 +341,14 @@ hardware_interface::return_type RakSystemHardware::read(
           rclcpp::get_logger("rak_chassis_system"),
           "read() lost feedback -> controllers will be deactivated: connected=%d "
           "handshaken=%d feedback_valid=%d faulted=%d fault_bitmap=0x%04X "
-          "feedback_age=%ldms (limit 120ms)",
+          "chassis_fault=0x%04X feedback_age=%ldms (limit 120ms); arm_online=%d "
+          "arm_state=0x%04X arm_fault=0x%04X arm_mode=%u",
           static_cast<int>(state.connected), static_cast<int>(state.handshaken),
           static_cast<int>(state.feedback_valid), static_cast<int>(state.faulted),
-          state.fault_bitmap, static_cast<long>(state.feedback_age.count()));
+          state.fault_bitmap, state.chassis_fault_code,
+          static_cast<long>(state.feedback_age.count()),
+          static_cast<int>(state.arm_online), state.arm_state, state.arm_fault,
+          state.arm_mode);
       }
       return hardware_interface::return_type::ERROR;
     }
@@ -364,8 +399,10 @@ hardware_interface::return_type RakSystemHardware::write(
   /* [AI] 7 轴臂：事件驱动（契约 §2.1 / PROTOCOL §10.1 #7）——只有目标变化才交给
    * Session，是否真上总线由 Session 在 motion_enabled 下裁决（唯一安全门在底层，
    * 上层无从绕过；也绝不周期重放旧目标）。arm_ready_=false（激活时回读未就绪、
-   * 或已停用/断链）= 臂整轮静默，轮子路径不受影响。 */
-  if (arm_ready_.load(std::memory_order_relaxed)) {
+   * 或已停用/断链）或 arm_node_ok_=false（臂板报故障）= 臂整轮静默，轮子路径不受影响。 */
+  if (arm_ready_.load(std::memory_order_relaxed) &&
+    arm_node_ok_.load(std::memory_order_relaxed))
+  {
     const bool finite = std::all_of(arm_command_.begin(), arm_command_.end(),
       [](double command) {return std::isfinite(command);});
     if (!finite) {

@@ -21,7 +21,8 @@ setup(
     maintainer_email="xrak@todo.todo",
     description="Velocity-level whole-body arbitration (WBC/HQP); single regular motion writer (ADR-0011).",
     license="Apache-2.0",
-    tests_require=["pytest"],
+    # [AI] tests_require 在现代 setuptools 失效；用 extras_require["test"] 让 colcon 走 pytest。
+    extras_require={"test": ["pytest"]},
     entry_points={
         "console_scripts": [
             "wbc_node = rak_wbc.node:main",

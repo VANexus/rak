@@ -11,6 +11,8 @@ setup(
     packages=["rak_commissioning"],
     install_requires=["setuptools"],
     zip_safe=True,
+    # [AI] 让 colcon 用 pytest 跑测试（tests_require 在现代 setuptools 已失效）。
+    extras_require={"test": ["pytest"]},
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{PACKAGE_NAME}"]),
         (f"share/{PACKAGE_NAME}", ["package.xml"]),

@@ -63,6 +63,8 @@ private:
   SessionSnapshot snapshot_;
   std::chrono::steady_clock::time_point last_feedback_at_{};
   std::chrono::steady_clock::time_point last_node_info_at_{};
+  // [AI] 机械臂板最近一次上行（0x031/0x221）时间戳：arm_online 新鲜度判据用
+  std::chrono::steady_clock::time_point last_arm_info_at_{};
   uint8_t safety_counter_{};        // [AI] e2e alive counter 0..15
   int socket_fd_{-1};
   std::thread io_thread_;

@@ -16,6 +16,7 @@ setup(
     maintainer_email="xrak@xrak.local",
     description="Software-only joint trajectory and gripper action servers.",
     license="Apache-2.0",
-    tests_require=["pytest"],
+    # [AI] tests_require 在现代 setuptools 失效；用 extras_require["test"] 让 colcon 走 pytest。
+    extras_require={"test": ["pytest"]},
     entry_points={"console_scripts": ["fake_joint_controllers = rak_arm_simulation.controllers:main"]},
 )

@@ -17,6 +17,9 @@ wbc:
     ee_timeout: 0.5
     joint_states_topic: /joint_states
     base_reference_topic: /mecanum_drive_controller/reference
+    # [AI] 臂位置流出口（**指令角域** rad，0..270°，顺序 = arm_state_joint_names）。
+    # 由 chassis_bringup 以 arm_motion_writer:=wbc 启动时，arm_position_controller
+    # (ForwardCommandController) 的 ~/commands 被重映射到本话题（实测已验证）。
     arm_setpoints_topic: /wbc/arm_setpoints
     status_topic: /wbc/status
     publish_arm: false    # 臂接口就绪前保持 false（ADR-0011 待闭合 #1）
@@ -24,9 +27,16 @@ wbc:
     urdf_wbc_base: ""     # 空 = 本包 share/urdf/wbc_base.urdf.xacro
     urdf_arm: ""          # 空 = rak_description share/urdf/rak_arm.urdf.xacro
 
+    # [AI] 运动学模型侧名字（Pinocchio composite URDF）。
     arm_joint_names:
       ["base_yaw_joint", "shoulder_pitch_joint", "elbow_pitch_joint",
        "forearm_roll_joint", "wrist_pitch_joint", "wrist_roll_joint"]
+    # [AI] 硬件侧名字（/joint_states，ros2_control / joint_state_broadcaster）。
+    # 两者一一对应；只写模型侧名字会永远匹配不到 /joint_states（历史缺陷，2026-10-28 修）。
+    arm_state_joint_names:
+      ["j1_base", "j2_shoulder", "j3_elbow", "j4_forearm", "j5_wrist_pitch", "j6_wrist_roll"]
+    # [AI] 零位指令角（rad）：q_urdf = 指令角 - 该值（properties_arm.xacro：J2 135°、J3 180°）。
+    arm_zero_q: [0.0, 2.356194490192345, 3.141592653589793, 0.0, 0.0, 0.0]
     home_q: [0.0, 1.5707963267948966, 1.5707963267948966, 0.0, 0.0, 0.0]
     arm_q_min: [0.0, -2.356194490192345, -3.141592653589793, 0.0, 0.0, 0.0]
     arm_q_max: [4.71238898038469, 2.0943951023931953, 1.5707963267948966,

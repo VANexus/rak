@@ -17,7 +17,8 @@ setup(
     maintainer_email='xrak@todo.todo',
     description='Test-only motion relay and simulated base telemetry adapter.',
     license='MIT',
-    tests_require=['pytest'],
+    # [AI] tests_require 在现代 setuptools 失效；用 extras_require["test"] 让 colcon 走 pytest。
+    extras_require={'test': ['pytest']},
     entry_points={
         'console_scripts': [
             'cmd_vel_stub = rak_motion_stub.cmd_vel_stub:main',
