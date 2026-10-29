@@ -28,6 +28,7 @@ Read these before changing behavior — they record decisions the code does not 
   talk to drivers only through topic/action/service. `ADR-0010` defines the Jev↔Harness
   arbitration seam and the reserved "呼吸感" expression
   interface; it is **design-only** — `src/rak_harness` / `harness_node` do not exist yet.
+- `docs/adr/0022-jetson-canopen-contract-layer.md` — how the **Jetson** side binds to CANopen v5: protocol stack = lely-core (ADR-0021), this repo only *derives* COB-IDs / PDO layout / rates / quantization from the MCU SSOT (`src/rak_canopen/`) and gate-checks that v4 and v5 never share a bus.
 - `docs/hardware_acceptance.md` — gates that must pass before any physical base/arm test.
 - `docs/brain_arm_tools_design.md` — **DESIGN DRAFT** (2026-10-15, not accepted): tool-proposal
   contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption (no CLI/MCP external
