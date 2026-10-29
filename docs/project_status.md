@@ -1,6 +1,46 @@
 # 项目总体状态
 
-更新日期：2026-10-15
+更新日期：2026-10-29
+
+## 2026-10-29 增量：运行期编排与受管生命周期（ADR-0020）+ v5 事实核对（ADR-0021）
+
+**先说影响最大的一条**：下位机已按 ADR-0021 切到 **v5 = CANopen**（在板 R73/A14），而本仓
+`src/rak_chassis` 的 `CanSession`/`can_decode` 仍说 v4 帧 → **真机链路当前不可用**，
+台架只能用伞仓 `tools/canopen_bringup.py` 验下位机；生产主站是待办 **P3（lely-core）**。
+本轮**没有**做链路迁移，只做了运行期编排层。
+
+新增 `src/rak_lifecycle`（基础设施包，不依赖任何自有包）+ `rak_bringup` 编排接线：
+
+- 清单 = 故障域/组件/所有权/判据的唯一来源；`system_manager` 按依赖闭包拉起、稳态按新鲜度降级，
+  **只降级自己拥有的组件**；`rak_system status|start|stop|recover` 是操作员入口。
+- 真机清单 + **软件夹具清单**两套（`profile:=fixture` 不碰硬件，专用于验证编排本身）。
+- 转换了两个自有节点：`rak_task_executor`（未激活没有 action server；配置失败从崩进程变成
+  可读 FAULTED）与 `rak_wbc`（configure=复合 URDF+HQP，activate=100 Hz 环；停用不补发零速，
+  停车靠 `mecanum_drive_controller.reference_timeout` 与臂 lease）。
+- 阈值有出处：`/imu/data_raw` 903.6 Hz、`/odometry/filtered` 30.0 Hz、`/tf` 83.3 Hz
+  是 2026-10-29 在本机 `ros2 topic hz` 实测（清单里标 `basis: measured`）；雷达 10 Hz 仍标
+  `nominal`（现场那套栈 `lidar:=false`，没测到）。
+
+**实测过的**（Orin 独立 worktree `~/rak-lifecycle`，`ROS_DOMAIN_ID=77`，全程未触碰硬件与
+现场那棵有未提交在制品的工作树）：23 包 `colcon build` 成功；`rak_lifecycle` **27/27**、
+`rak_task_executor` **4/4**；9 个新增/修改 launch `--show-args` 全绿；结构门禁
+`check_workspace.py`（非 installed 模式）23 包通过。
+
+**未跑/未验证**（本机→Orin 链路中断：`orin.xrak` 不解析、100.121.213.20 无路由）：
+全量 `check_workspace.py --installed`、`colcon test --packages-select rak_bringup`
+（清单↔launch 一致性门禁）、`profile:=fixture` 的实机编排演示（拉起/降级/单域停用）。
+这三项跑绿之前，编排层**不得称"已验证"**。
+
+**已知先存在性问题**（不是本轮引入，已在未改动的现场树上复现同样失败）：
+`rak_wbc/test/test_hqp_numerical.py` 的 `test_support_cbf_locks_com_when_margin_consumed` 与
+`test_solver_matches_true_optimum_across_objective_change` 2 项失败。
+
+下一步顺序（按用户定案）：先把本层收尾合入 → 再做 P3 CANopen 主站（届时 `link` 域整段重声明，
+拥有者改为 v5 主站自带的网络管理，遵守 ADR-0020 §3 单一所有者）。
+
+---
+
+## 历史（2026-10-15 及更早）
 
 ## 2026-10-15 增量：机械臂几何并入整车 URDF + MoveIt 真机档
 

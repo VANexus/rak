@@ -182,6 +182,7 @@ python3 scripts/check_workspace.py --installed        # package/resource/launch/
 colcon test --build-base build/architecture --install-base install/architecture \
   --packages-select rak_description rak_moveit_config
 colcon test-result --test-result-base build/architecture --verbose
+ROS_DOMAIN_ID=77 python3 -m pytest src/rak_lifecycle/test           # ADR-0020 mechanism+orchestration
 ROS_DOMAIN_ID=77 python3 -m pytest src/rak_task_executor/test src/rak_arm_simulation/test
 PYTHONPATH=src/rak_agent python3 src/rak_agent/test/test_ai.py
 PYTHONPATH=src/rak_intent python3 src/rak_intent/test/test_task_intent.py
@@ -199,6 +200,14 @@ operator scripts use Cyclone DDS on domain 47 by default; test domains 77/187 st
 Treat `colcon build` + `src/rak_agent/test/test_ai.py` as the two checks to pass before
 claiming done. There is no CI, linter, formatter or pre-commit config in this repo.
 
+Two gates specifically protect the ADR-0020 orchestration layer, and both are cheap enough to
+run on every change to `rak_bringup/launch/` or `rak_lifecycle/`:
+`colcon test --packages-select rak_bringup` (the shipped `system_manifest.yaml` must satisfy the
+fault-domain invariants **and** every `owner: system_manager` component must actually be launched
+as a `LifecycleNode` in the launch file it names — a missed conversion is otherwise a silently
+inert node), and `python3 scripts/check_workspace.py --installed` (23 packages now, including
+`rak_lifecycle`, which must stay a pure foundation package).
+
 The ROS node runs directly under the ROS system Python. `package.xml` declares
 `python3-pydantic`; JetPack provides the TensorRT Python binding.
 
@@ -211,6 +220,10 @@ ros2 launch rak_bringup stereo.launch.py device:=/dev/video0
 ros2 launch rak_bringup chassis_bringup.launch.py    # ros2_control chassis chain (allow_motion default false)
 ros2 launch rak_bringup slam.launch.py [odom_source:=rf2o|ekf|none]
 ros2 launch rak_bringup nav2.launch.py               # includes lidar + SLAM + motion stub
+ros2 launch rak_bringup robot.launch.py stage:=sensors|teleop|nav|full   # one command, stage-selected
+ros2 launch rak_bringup supervisor.launch.py        # fault-domain orchestrator over the real manifest
+ros2 launch rak_bringup supervisor.launch.py profile:=fixture   # software fixtures only, touches no hardware
+ros2 run rak_lifecycle rak_system status             # per-domain state + reasons + data ages
 ros2 launch rak_task_executor task_simulation.launch.py   # fake Nav2 + estimated telemetry
 ros2 run rak_task_executor task_cli                  # "go to <waypoint alias>", pause/resume/cancel
 ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim   # default sim
@@ -327,6 +340,17 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   `rak_agent` (decision layer) must not gain dependents beyond `rak_bringup`; task-intent
   parsing lives in the shared `rak_intent` package, never re-implemented per consumer.
   `check_workspace.py` enforces all of this — fix the structure, not the assert.
+- **One lifecycle owner per component (ADR-0020 §3).** Nav2's six servers belong to
+  `nav2_lifecycle_manager`, `slam_toolbox` belongs to the event dance in `slam.launch.py`,
+  controllers belong to their spawners, and only `rak_*` nodes converted to `ManagedNode` belong to
+  `rak_lifecycle/system_manager`. `system_manager` **never** sends a transition to a component it
+  does not own — it only reads state. A second owner produces exactly the failure this repo has
+  already documented: a node that is running, configured-looking, and completely inert.
+- **Activation is not a motion permission (ADR-0020 §6).** `allow_motion` (default false) stays the
+  only way anything reaches the actuators; bringing a domain up must never change that. When v5
+  lands (ADR-0021), NMT `Pre-operational → Operational` is the link layer's own gate and the
+  `cmd_seq`/`cmd_flags.bit0` 100 ms deadman stays in the MCU — neither is a substitute for
+  `allow_motion`, and neither may be driven by the orchestrator.
 - **System 1 (Laya) is a direct function call.** Never route it through an orchestration
   framework or a cross-process boundary. The RAI harness belongs only on the System 2 slow path.
 - **Jev does not reach the task executor directly (ADR-0010).** The only new consumer of
@@ -384,6 +408,22 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
 
 ## Gotchas
 
+- **rclpy lifecycle footgun that costs a whole subsystem (found by test, 2026-10-29):** an
+  `on_activate` override that forgets `super().on_activate(state)` leaves every
+  `LifecyclePublisher` permanently disabled, and `publish()` on a disabled one is **silently
+  dropped** — the node looks healthy, spins, logs, and emits nothing. `ManagedNode` centralizes the
+  forwarding; any new lifecycle node must call `super()` in every transition hook.
+- Jazzy message details that differ from the usual documentation: `DiagnosticArray`'s field is
+  `status` (not `statuses`), `DiagnosticStatus` only has `OK/WARN/ERROR/STALE` (no `STOP`/`STAT`),
+  and the `TRANSITION_*` id constants live on `lifecycle_msgs.msg.Transition`, not on
+  `TransitionDescription` (which is a message type). All three were hit for real here.
+- `diagnostic_updater` is installed but its **Python** side has no `TopicMonitor`; use
+  `TopicDiagnostic`/`FrequencyStatus`/`TimeStampStatus`. `diagnostic_aggregator` is **not**
+  installed, so `/rak/system_state` is aggregated by `rak_lifecycle` itself (accepted cost,
+  ADR-0020 §后果).
+- `ros2 lifecycle set` on a node nobody activates is not a bug in the CLI: `LifecycleNode`s start
+  `unconfigured` and do nothing until configured. Check `ros2 lifecycle get <node>` before
+  concluding a node is broken.
 - **CMA memory contention.** The 1024×600 touchscreen and the camera compete for the same
   pool. A logged-in GNOME session drives `CmaFree` to ~0 kB of the 256 MiB CMA area, and the
   stereo node asks that pool for 4 `V4L2_MEMORY_MMAP` buffers — so capture fails in a way

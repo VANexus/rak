@@ -1,6 +1,6 @@
 # ADR-0020: 全栈受管生命周期 —— 故障域编排、单一所有者与存活性判据
 
-- **状态**: 已接受（2026-10-29）
+- **状态**: 已接受（2026-10-29；见文末修订记录 (a)——v5/CANopen 改变了 `link` 域，正文其余部分仍有效）
 - **日期**: 2026-10-29
 - **相关**: `src/rak_lifecycle/`（本决策的实现）· `src/rak_bringup/config/system_manifest.yaml` ·
   `src/rak_bringup/launch/supervisor.launch.py` · `src/rak_bringup/launch/robot.launch.py` ·
@@ -57,18 +57,22 @@
    | 策略 | 谁属于哪个域、依赖谁、谁有权激活、故障时降级谁 | `rak_lifecycle` + `system_manifest.yaml` |
    | 观测 | 现在每一域什么状态、数据新不新 | 标准 `diagnostic_msgs`（`/diagnostics` + `/rak/system_state`） |
 
-2. **八个故障域**（`system_manifest.yaml` 是唯一来源；域名对齐 `architecture.md` 的 L0–L5）：
+2. **故障域**（`system_manifest.yaml` 是唯一来源；实现按传感器/链路可独立启停的粒度细分，
+   概念上仍对齐 `architecture.md` 的 L0–L5）：
 
    | 域 | 内容 | 上游依赖 | 本域故障时 |
    | --- | --- | --- | --- |
-   | `link` | CAN 链路 + `controller_manager` + 两个硬件组件 + 控制器 | — | 下游**全部**降级 |
-   | `body` | `robot_state_publisher`（机体 TF 唯一发布者） | — | `sensing`/`localization` 降级 |
-   | `sensing` | 雷达 / 深度相机 / IMU / 麦克风 | `body` | `localization`/`task` 降级 |
-   | `localization` | rf2o 或 EKF + slam_toolbox | `body`,`sensing` | `navigation` 降级 |
-   | `navigation` | Nav2 六服务（仍由其自带的 manager 拥有） | `localization`,`link` | `task` 降级 |
-   | `arbitration` | `rak_wbc`（底盘/臂单一运动写者，ADR-0011） | `link` | `task` 降级 |
-   | `task` | `task_executor` / `tool_executor` / `harness` / `agent` | 见 manifest | `expression` 降级 |
-   | `expression` | TTS / 唤醒 / 放音 | `task` | 仅记录（叶子域） |
+   | `body` | `robot_state_publisher`（机体 TF 唯一发布者） | — | 下游全体降级 |
+   | `link` | CAN 链路 + `controller_manager` + 两个硬件组件 + 四个控制器 | `body` | 下游**全部**降级 |
+   | `lidar` / `imu` / `camera` / `mic` | 各传感器流（拆开是因为 `sensors.launch.py` 本来就有四个独立开关） | `body`（imu/lidar/camera） | 只降级依赖它的域 |
+   | `localization` | rf2o 或 EKF + slam_toolbox + world→map 锚 | `body`,`lidar` | `navigation` 降级 |
+   | `navigation` | Nav2 六服务（仍由 `nav2_lifecycle_manager` 拥有） | `localization`,`link` | `task` 降级 |
+   | `arbitration` | `rak_wbc`（单一运动写者，ADR-0011；默认 `enabled: false`） | `link` | `task` 降级 |
+   | `task` | `task_executor` / `tool_executor` / `harness` / `brain` | `link`,`navigation` | `expression` 降级 |
+   | `expression` | TTS / 放音 | `task` | 仅记录（叶子域） |
+
+   `robot.launch.py` 的 `stage` 决定**期望域集合**，且传感器开关（`lidar:=false` 等）
+   同步从期望集里剔除对应域 —— 否则 manager 会诚实但碍事地报"节点没出现在发现图里"。
 
 3. **单一所有者规则**：一个组件恰好有一个生命周期拥有者，写进 manifest 并由测试校验。
    Nav2 域继续归 `nav2_lifecycle_manager`、`slam_toolbox` 继续归 `slam.launch.py` 的事件、
@@ -174,3 +178,68 @@
   停掉 `expression` 域不影响 `navigation`；拔掉底盘板后 `link` 报 FAULTED 而 `sensing` 仍在。
 - 现网那套跑了 5 小时的 `sensors.launch.py`（IMU+雷达+slam+ekf）属**未受管运行**，
   本轮不做改动、不据其状态声明验收结论。
+
+---
+
+## 修订记录
+
+### 2026-10-29(a)：v5 = CANopen 已在线上生效（本文正文按 v4 现状写，偏差在此说明）
+
+- 依据：伞仓 `AGENTS.md` 顶部通告 + **`docs/CANOPEN-V5.md`**（CiA 301 + 304；SSOT 链
+  `docs/canopen/<node>.json` → `.eds` → 生成的 `OD.c/h`；门禁 `tools/canopen_gate.py`；
+  台架 `tools/canopen_bringup.py`）。在板 build_tag 底盘 **R73** / 臂 **A14**，
+  两板 CAN 层已是 CANopen，只有 `-DAPP_USE_CANOPEN=OFF` 才回 v4。
+- **`rak` 侧仍是 v4 主站，与 v5 板子不兼容**（AGENTS 原话；生产主站 = 待办 P3）。
+  连带效果：本文 §2 表里 `link` 域那 7 个组件是 **v4 形态**，P3 后整段要按
+  "NMT 主站 + node 1/2 + PDO 组 + SDO"重新声明；`arbitration`/`task`/`expression`
+  等域与链路层无关，不受影响。
+  所以本文 §2 的 `link` 域组件表描述的是 **v4 现状**，不是 v5 目标形态；
+  P3 换主站时 `link` 域必须重新声明，**不得沿用**。
+- v5 带来的生命周期语义与本文同构而非冲突，接入时应据此改写 `link` 域：
+  - **NMT**：节点上电停在 `Pre-operational`，Jetson 发 `Start` 进 `Operational` 后才允许 PDO
+    —— 这是链路层自带的 configure/activate 分界（§5 的"资源在 configure、I/O 在 activate"）。
+  - **deadman** 改为 `cmd_seq` 在 100 ms 内必须变化 **且** `cmd_flags.bit0=1` **且** 节点
+    `Operational`，不依赖 SYNC 在场；安全兜底仍在 MCU 与硬线急停，
+    所以 §6"激活 ≠ 运动许可"继续成立，且**更强**。
+  - **身份核验改走 SDO** `0x2F00 tag_packed`（实测 `52 37 33` = "R73"）+ `0x2F01 reset_cause`
+    → AGENTS §5 要求的"用 build_tag 判别实际运行版本"从此**可在总线上读**；
+    `link` 域的就绪判据应优先用它，而不是 v4 的 `NODE_INFO.PROTO==4`。
+  - **SYNC 2 ms 由 Jetson 产生**：主站自己成了有周期的写入者，它的存活必须进健康聚合，
+    否则"Jetson 侧 SYNC 停了"在总线上表现为所有同步 PDO 一起消失。
+- **`link` 域拥有者的归属由 ADR-0021 决定，不是本文的自由裁量**：ADR-0021 已接受
+  "P3 = **lely-core**（Apache-2.0 现成 CANopen 栈）实现 NMT 主站（Jetson=node 127）
+  + SYNC 产生者 + PDO 映射 + SDO 客户端"。本文只从中取一条结构结论：
+  **v5 主站自带网络管理，所以 `link` 域的生命周期拥有者是它，不是 `rak_lifecycle`**
+  —— 这是 §3 单一所有者规则的直接推论；本 manager 对 `link` 只 `GetState` 观测。
+- 备忘（不构成建议、也不与 ADR-0021 竞争）：Orin 上 `ros-jazzy-canopen-core`/
+  `canopen-interfaces` 0.3.4 apt 可见、`python3-can` 4.3.1 已装。若将来重开主站选型，
+  这条备选路径与 lely-core 的差别要单独出 ADR，不许在实现里悄悄混用。
+
+### 2026-10-29(b)：现成库优先导致的自研降级
+
+- 机制层不变（标准 `lifecycle_msgs`），但**编排引擎里能换成现成件的一律换**：
+  Nav2 域继续归 `nav2_lifecycle_manager`；CANopen 设备域归现成栈的 manager（见上条）；
+  `system_manager` 收敛为"清单 + 跨域门控 + 聚合"，域内转移在可替换处替换。
+- 新鲜度判据优先用 `diagnostic_updater`（Orin 已装）。**注意其实测边界**：
+  Python 侧没有 `TopicMonitor`（`from diagnostic_updater import TopicMonitor` →
+  ImportError），可用的是 `Updater`/`TopicDiagnostic`/`HeaderlessTopicDiagnostic`/
+  `FrequencyStatus`/`TimeStampStatus`/`DiagnosedPublisher`。自研的 age 订阅只保留给
+  **无法注入诊断的第三方节点**（radar/camera/orbbec 等）。
+- 缺口照实记：`diagnostic_aggregator` 本机未安装（`ros2 pkg list` 无该包），
+  聚合暂时由本包直接出 `DiagnosticArray`。装不装由用户定。
+
+### 2026-10-29(c)：实测结论与未闭合
+
+- **已过**（Orin 独立 worktree，`ROS_DOMAIN_ID=77`，全程不碰硬件、不碰现场那棵脏树）：
+  `rak_lifecycle` 27/27、`rak_task_executor` 4/4、23 包 `colcon build` 成功、
+  9 个新增/修改 launch `ros2 launch … --show-args` 全绿。
+- **未跑**（本机到 Orin 链路中断：`orin.xrak` 不解析、100.121.213.20 no route，待补）：
+  全量 `check_workspace.py --installed`（需 astra/stereo/lslidar 入库）、
+  `colcon test --packages-select rak_bringup`（清单↔launch 一致性门禁）、
+  `supervisor.launch.py profile:=fixture` 的实机编排演示（拉起 + 上游断数据降级下游 +
+  操作员停用单域）。这三项没跑绿之前，本文的实现**不得称为"已验证"**。
+- 测试过程中暴露的 5 个真实 API 误用（`DiagnosticStatus.STOP/STAT` 不存在、
+  `DiagnosticArray.statuses` 应为 `status`、转移常量挂在 `Transition` 而非
+  `TransitionDescription`、age 判据订阅不上时静默永久失效、
+  **`ManagedNode` 未转发 `super()` 导致 `LifecyclePublisher` 永不启用且不报错**）
+  已逐条修入提交历史；最后一条是本模式最危险的失败形态，已写进 `CLAUDE.md` Gotchas。

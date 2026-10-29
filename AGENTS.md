@@ -280,6 +280,25 @@ colcon knows the order from package manifests. Treat `colcon build` +
 `tests/test_ai.py` as the two checks to pass before claiming done — subject to the
 caveats above.
 
+## 运行期编排与生命周期（ADR-0020，2026-10-29）
+
+- 机制层用标准 `lifecycle_msgs` 转移，策略层是 `src/rak_bringup/config/system_manifest.yaml`
+  （故障域 / 组件 / 所有权 / 判据的唯一来源），观测层只出标准 `diagnostic_msgs`
+  （`/diagnostics` + `/rak/system_state`）。**没有新增 `.msg`**——`rak_interfaces` 是冻结契约。
+- 入口：`ros2 launch rak_bringup robot.launch.py stage:=sensors|teleop|nav|full`（stage 决定期望域，
+  传感器开关同步剔除对应域）；`ros2 launch rak_bringup supervisor.launch.py [profile:=fixture]`
+  只起编排者（fixture 档不碰硬件，用来验证编排本身）；`ros2 run rak_lifecycle rak_system status`
+  看每个域的状态与原因。`supervise:=false` 是排障逃生门（回到无编排行为）。
+- **两条不可协商的规则**：① 一个组件只有一个生命周期拥有者——Nav2 归 `nav2_lifecycle_manager`、
+  slam_toolbox 归 `slam.launch.py` 的事件、控制器归 spawner，`system_manager` 对别人的组件
+  **只读不写**；② **激活 ≠ 运动许可**，`allow_motion`（默认 false）仍是唯一许可，
+  任何域被拉起都不得产生执行器命令。
+- 门禁：`colcon test --packages-select rak_bringup`（清单不变量 + **受管组件在其声明的 launch 里
+  必须是 `LifecycleNode`**——漏改一个就是一个静默空转节点）；
+  `ROS_DOMAIN_ID=77 python3 -m pytest src/rak_lifecycle/test`（27 项机制与编排测试）。
+- ⚠️ 清单里的 `link` 域仍是 **v4 形态**，ADR-0021 之后对 R73/A14 板子无效；P3 换 lely-core 主站时
+  整段重声明，且届时拥有者是 v5 主站的网络管理，不是本 manager。
+
 ## Constraints that are easy to break
 
 - **Layering rules (ADR-0013) — the workspace contract.** Modules talk only through frozen
@@ -335,6 +354,14 @@ caveats above.
   structured goals only — never velocity or joint commands.
 
 ## Gotchas
+
+- **rclpy 生命周期最容易踩的坑（本轮被测试抓到）**：覆盖 `on_activate` 却忘了
+  `super().on_activate(state)` → `LifecyclePublisher` 永远不被启用，而未启用的发布器
+  **静默丢弃 publish 且不报错**：节点活着、日志正常、一帧不发。新写 lifecycle 节点时
+  每个转移钩子都要转发 super。
+- Jazzy 里几个与常见文档不同的名字：`DiagnosticArray` 的字段是 `status`（不是 `statuses`）、
+  `DiagnosticStatus` 只有 `OK/WARN/ERROR/STALE`（没有 `STOP`/`STAT`）、`TRANSITION_*` 常量挂在
+  `lifecycle_msgs.msg.Transition` 上（`TransitionDescription` 是个消息类型）。这三处本仓都实际踩过。
 
 - Build files hardcode JetPack paths: VPI at `/opt/nvidia/vpi4`, pkg-config module
   `nvjpeg-13.2`, CUDA headers at `/usr/local/cuda-13.2/targets/sbsa-linux/include`.

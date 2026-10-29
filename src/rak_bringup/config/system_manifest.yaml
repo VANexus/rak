@@ -14,6 +14,11 @@
 #
 # 未闭合（不要当已验证）：link 域里控制器级节点的转移服务名待现场复核 —— 本轮没有
 # 上板启动 controller_manager（现场另有栈在跑），见 ADR-0020 待闭合项 #3。
+#
+# ⚠️ 本文件的 `link` 域是 **v4 形态**（CanSession + 四个 ros2_control 控制器）。
+# 下位机已按 ADR-0021 切到 v5=CANopen，`rak` 侧 v4 主站对 R73/A14 板子无效；
+# P3（lely-core NMT 主站，Jetson=node 127 / 底盘=1 / 臂=2）落地时必须整段重声明 link 域，
+# 且届时该域的拥有者是 v5 主站自带的网络管理，不是本 manager（ADR-0020 §3 单一所有者）。
 
 version: 1
 
