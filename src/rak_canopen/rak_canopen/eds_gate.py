@@ -22,7 +22,6 @@ from pathlib import Path
 
 from . import contract
 
-BASE = Path(__file__).resolve().parents[1] / "config"
 TPDO_COM_BASE, TPDO_MAP_BASE = 0x1800, 0x1A00
 RPDO_COM_BASE, RPDO_MAP_BASE = 0x1400, 0x1600
 
@@ -48,9 +47,11 @@ def _get(eds, section: str, key: str, default: str | None = None) -> str | None:
     return eds.get((section.lower(), key.lower()), default)
 
 
-def check_node(node_name: str, contract_obj, *, tolerance_frames: int = 0) -> list[str]:
+def check_node(node_name: str, contract_obj, *, eds_dir: str | Path | None = None,
+               tolerance_frames: int = 0) -> list[str]:
     """返回不一致清单；空列表 = 一致。"""
-    path = BASE / f"{node_name}.eds"
+    root = Path(eds_dir) if eds_dir else (contract_obj.root or contract.default_config_dir())
+    path = root / f"{node_name}.eds"
     if not path.is_file():
         raise EdsError(f"缺少 EDS 副本：{path}")
     eds = read_eds(path)
@@ -131,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="rak_canopen.eds_gate")
     parser.add_argument("--node", default=None, choices=sorted(["chassis", "arm"]))
     args = parser.parse_args(argv)
-    c = contract.load(BASE)
+    c = contract.load()
     names = [args.node] if args.node else sorted(c.nodes)
     failed = False
     for name in names:

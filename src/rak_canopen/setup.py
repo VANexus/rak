@@ -11,6 +11,9 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/config", [
             "config/canopen_contract.yaml", "config/chassis.json", "config/arm.json",
+            # EDS 副本必须一起装：门禁比较的就是"契约派生 vs 同一份 EDS"，
+            # 只装 JSON 的话安装态跑 eds_gate 必然报"缺少 EDS 副本"。
+            "config/chassis.eds", "config/arm.eds",
         ]),
     ],
     install_requires=["setuptools", "PyYAML"],

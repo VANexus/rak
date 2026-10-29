@@ -158,6 +158,10 @@ class Contract:
     sync_cob_id: int = SYNC_COB_ID
     nmt_cob_id: int = NMT_COB_ID
     v4_cob_ids: dict[int, str] = field(default_factory=dict)
+    #: 装载时用的配置目录；EDS 副本就躺在同一目录里。
+    #: 必须由 load() 传进来——模块自己用 `__file__` 推目录在安装态会指到
+    #: `site-packages/config/`（本机实测踩过，见 default_config_dir 的注释）。
+    root: Path | None = None
 
     def node(self, name: str) -> NodeContract:
         if name not in self.nodes:
@@ -278,8 +282,23 @@ def command_liveness_ok(
 
 
 # ---------------------------------------------------------------- 装载
-def load(config_dir: str | Path, *, v4_source: str | Path | None = None) -> Contract:
-    root = Path(config_dir)
+def default_config_dir() -> Path:
+    """契约与 EDS 副本所在目录：安装态走 ament 索引，源码态走包目录。
+
+    这里**不能**用 `Path(__file__).parents[1] / "config"`：源码树里它恰好对，
+    装进 `share/`+`site-packages` 之后就指到 `site-packages/config/`（本机 lyrical
+    实测：门禁在 `colcon build` 出来的前缀里直接报"缺少 EDS 副本"）。板子档同样是安装态。
+    """
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        return Path(get_package_share_directory("rak_canopen")) / "config"
+    except Exception:  # noqa: BLE001 - 没 source ROS 时按源码树跑门禁是支持的用法
+        return Path(__file__).resolve().parents[1] / "config"
+
+
+def load(config_dir: str | Path | None = None, *, v4_source: str | Path | None = None) -> Contract:
+    root = Path(config_dir) if config_dir else default_config_dir()
     spec = yaml.safe_load((root / "canopen_contract.yaml").read_text(encoding="utf-8"))
     semantics = spec["semantics"]
     known_names = set(semantics)
@@ -346,7 +365,7 @@ def load(config_dir: str | Path, *, v4_source: str | Path | None = None) -> Cont
     source = v4_source or (root / spec.get("v4_id_source", ""))
     if source and Path(source).is_file():
         v4 = _parse_v4_ids(Path(source))
-    return Contract(nodes=nodes, v4_cob_ids=v4)
+    return Contract(nodes=nodes, v4_cob_ids=v4, root=root)
 
 
 def _parse_v4_ids(path: Path) -> dict[int, str]:
