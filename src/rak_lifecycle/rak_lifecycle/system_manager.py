@@ -61,9 +61,9 @@ _LEVEL = {
     DEGRADED: diagnostic_msgs.msg.DiagnosticStatus.WARN,
     BRINGING_UP: diagnostic_msgs.msg.DiagnosticStatus.WARN,
     IDLE: diagnostic_msgs.msg.DiagnosticStatus.WARN,
-    # `STOP` 只存在于 REP-105 的草案里，Jazzy 的 DiagnosticStatus 没有这个常量
-    # （实测 AttributeError）——"操作员主动停用"归到 STAT（无信息/未在处理）。
-    STOPPED: diagnostic_msgs.msg.DiagnosticStatus.STAT,
+    # Jazzy 的 DiagnosticStatus 只有 OK/WARN/ERROR/STALE 四个常量（实测 `dir()`；
+    # REP-105 里的 STOP/STAT 都没落地）。"操作员主动停用"= 不在处理 = STALE。
+    STOPPED: diagnostic_msgs.msg.DiagnosticStatus.STALE,
     FAULTED: diagnostic_msgs.msg.DiagnosticStatus.ERROR,
 }
 
