@@ -1,0 +1,55 @@
+# 即时反应层素材清单 — ADR-0018 层1(即时反应层)。
+#
+# key 对齐人格卡的模板 key(slot-free 的那些):Harness 渲染出的文案落回这里,
+# tts_node 按「文案精确匹配」直出预合成 wav,**不经过任何推理**(预算 <100ms)。
+# 带槽位的模板(ack_navigate/done/failed/...)文案每次不同,归内容层。
+#
+# wav 不进 git(acoustic/models/ 整体被忽略)。换机器或改文案后跑一次:
+#     python3 scripts/make_quick_phrases.py
+# 默认生成到 <repo>/acoustic/models/quick/<key>.wav(serena 音色)。
+#
+# emotion = 人格卡 `[persona.emotions]` 的 key,生成时翻译成 instruct 语气档;
+# 改语气只改人格卡,不改这里。
+
+[phrases.ack_wake]
+# 唤醒应答:沉默的唤醒读起来像死机,这条是强制出声。
+text = "我在。"
+emotion = "neutral"
+
+[phrases.ack_pause]
+text = "好，停一下。"
+emotion = "neutral"
+
+[phrases.ack_resume]
+text = "继续走。"
+emotion = "neutral"
+
+[phrases.ack_cancel]
+text = "任务取消了。"
+emotion = "neutral"
+
+[phrases.need_wake]
+text = "我在，先喊我一声。"
+emotion = "neutral"
+
+[phrases.no_task]
+text = "现在没有在执行的任务。"
+emotion = "neutral"
+
+[phrases.unknown]
+text = "这句我还没学会，换个说法试试？"
+emotion = "curious"
+
+[phrases.listen]
+# 被叫到但还没听懂时的注意力反馈(ADR-0010 呼吸感的即时出口)。
+text = "嗯？"
+emotion = "curious"
+
+[phrases.ok]
+text = "好嘞。"
+emotion = "happy"
+
+[phrases.hold]
+# 内容层超预算/失败时的降级素材:用一声「嗯……」替掉长静默。
+text = "嗯……"
+emotion = "gentle"

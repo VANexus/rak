@@ -35,9 +35,14 @@
 
 | 目录 | 用途 |
 |---|---|
-| `sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/` | ASR(Vosk 的备选,`live.py`/`rec.py` 用) |
-| `kokoro-multi-lang-v1_1/` | **TTS 默认**:24 kHz、中英双语、103 声库(`tts_node` 自动选中) |
+| `sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/` | ASR 默认(流式 zipformer,`engine:=zipformer`) |
+| `kokoro-multi-lang-v1_1/` | TTS 备选(`backend:=sherpa`):24 kHz、中英双语、103 声库 |
 | `vits-zh-aishell3/` | TTS 低延迟备选:8 kHz、约 3× 实时(`-p model_dir:=` 切换) |
+| `Fun-CosyVoice3-0.5B-2512/` + `cosyvoice_prompt_zh.wav` | TTS GPU 备选(`backend:=cosyvoice`,已证内存不可行) |
+| `quick/` | **即时反应层素材**(ADR-0018):`<key>.wav`,由 `scripts/make_quick_phrases.py` 用 serena 预合成 |
+
+> TTS 默认路线(`backend:=qwentts`)的模型不在这里:是 `tools/qwentts.cpp/models/` 下的
+> `qwen-talker-0.6b-customvoice-Q4_K_M.gguf` + `qwen-tokenizer-12hz-Q8_0.gguf`(GGUF)。
 
 ### `config/` —— 配置留档
 
@@ -51,15 +56,26 @@
 
 ---
 
-## 当前状态(2026-10-11)
+## 当前状态(2026-10-17)
 
 | 项 | 状态 |
 |---|---|
 | 唤醒词 | `hei4 rui4 ke4`,阈值 500(板上 res 资源) |
 | 方位 | **只在唤醒时报一次**(板子固件决定);「持续方位」还在研究 |
-| ASR | Vosk(topic 源)为生产路径;sherpa-onnx 可作备选后端 |
-| TTS | `tts_node` + kokoro(24 kHz 中英),`/speech/say` 服务;合成约 0.75× 实时 |
+| ASR | 流式 zipformer 14M 为默认(`engine:=zipformer`);Vosk 为 `engine:=vosk` 回退 |
+| TTS | **三层(ADR-0018)**:即时层播 `models/quick/*.wav`(<100ms,无推理);内容层 `backend:=qwentts`(qwentts.cpp + serena,首帧 ~1s,整句 RTF 3.5~5.6);超预算降级到即时素材 |
 | 喇叭 | USB C-Media 声卡,`plughw:CARD=Device`,`audio_play` 播 `/audio_out` |
+
+## 即时反应层素材(ADR-0018 层1)
+
+```bash
+python3 scripts/make_quick_phrases.py            # 全量重新生成(serena,逐条 1~20s)
+python3 scripts/make_quick_phrases.py --only ack_wake,hold --force
+```
+
+清单是 `src/rak_speech/config/quick_phrases.toml`(key 对齐人格卡模板,情感档取自
+`src/rak_harness/config/persona.toml`);改完文案/语气重跑一次即可,`tts_node` 启动时
+按文案精确匹配。素材缺失时即时层静默关闭(内容层照常),所以换机器后没生成也能跑。
 
 ---
 

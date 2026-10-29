@@ -1,9 +1,12 @@
 # ADR-0018: 语音响应分层——即时反应层 + 分句流式 + 响应预算
 
-- 状态: 提议中
+- 状态: **接受**(2026-10-17 实施,见文末「落地记录」;实施机制与本文件原方案有一处
+  偏离,已在落地记录里说明)
 - 日期: 2026-10-17
-- 相关: `src/rak_speech/`（`tts_node.py`、`cosyvoice_backend.py`）、ADR-0010（呼吸感表达接口）、
-  `tools/qwentts.cpp/`（板上 TTS runtime，`scripts/bench_*.py` 为选型依据）、
+- 相关: `src/rak_speech/`(`tts_node.py`、`tts_layers.py`、`qwentts_backend.py`、
+  `config/quick_phrases.toml`)、`scripts/make_quick_phrases.py`、ADR-0010(呼吸感表达接口)、
+  `tools/qwentts.cpp/`(板上 TTS runtime,`scripts/bench_*.py` 为选型依据)、
+  `tools/qwentts.cpp/src/tts-server.h`(落地用的 HTTP 服务形态)、
   memory `tts-selection-bench-2026-10-16`
 
 ## 背景
@@ -77,9 +80,63 @@ instruct 语气档（默认"清晰自然、亲切温和"；情感句按内容切
 
 ## 待闭合项
 
-- [ ] `tts_node` 三层重构 + `/speech/quick` 接口（新会话实施）
-- [ ] 即时层素材集：清单、情感档位、录制/合成流程
-- [ ] ADR-0010 呼吸感提案 → 即时层/内容层的映射规则
+- [x] `tts_node` 三层重构 + `/speech/quick` 接口（2026-10-17 落地，见下）
+- [x] 即时层素材集：清单、情感档位、生成流程（`config/quick_phrases.toml` +
+  `scripts/make_quick_phrases.py`，情感档取自人格卡 `[persona.emotions]`）
+- [ ] ADR-0010 呼吸感提案 → 即时层/内容层的映射规则（接口已就位：`/speech/quick`
+  按素材 key 直出；映射规则仍等表达层的提案内容定型）
 - [ ] 上游 issue #40（sm87 GET_ROWS）跟踪；修复后验证 GPU 路径（预期 RTF ~2），
       并重新评估是否需要 DAC/CodePredictor 两段的 TRT-Edge-LLM Plan B
 - [ ] qwentts.cpp fork 的长期维护策略（锁定 commit + 定期同步，或上游迁移）
+- [ ] 内容层按句切换 instruct（服务端已支持 `instructions` 字段，但 Harness 目前
+  只发文本；映射规则与 ADR-0010 一起定）
+
+## 落地记录（2026-10-17）
+
+实施范围：`src/rak_speech` 的 TTS 输出切到三层，默认后端换成 `qwentts`；备选
+`sherpa` / `cosyvoice` 保留（负面清单里的「过渡期并存」仍在）。
+
+**一处机制偏离（有意）**：内容层不用 CLI 的 `--stream-by-line`，改用同 fork 的
+`src/tts-server.h` / `tools/tts-server.cpp`（OpenAI 兼容本地服务）。理由是 CLI 给
+不了的两件事：
+
+1. **按请求 instruct**：CLI 的 `--instruct` 是进程级，按内容换情感档只能重启进程；
+   服务的 `instructions` 字段是按请求的。ADR 决策里的「情感句按内容切换 instruct」
+   只有服务形态能做。
+2. **精确分帧**：CLI 行模式在 stdout 上串「每句一个 RIFF 头」的裸流，句边界不带内
+   标记（句尾等于沉默），客户端只能靠超时猜；HTTP chunked 是可靠边界。
+
+定稿决策本身未变：qwentts.cpp 运行时 + `serena` 音色 + instruct 语气档。
+
+| 件 | 落点 |
+|---|---|
+| 三层决策 + 预算 | `rak_speech/tts_node.py`（`quick_*` / `sentence_*` / `first_frame_budget` 参数） |
+| 层1 素材清单/匹配 | `rak_speech/tts_layers.py` + `src/rak_speech/config/quick_phrases.toml` |
+| 层1 素材生成 | `scripts/make_quick_phrases.py` → `acoustic/models/quick/*.wav`（不进 git） |
+| 层2 内容后端 | `rak_speech/qwentts_backend.py`（常驻 `tts-server`，流式 PCM） |
+| 装配 | `rak_bringup/launch/speech.launch.py`（`tts_backend` 默认 `qwentts`）+ `harness_agent.launch.py` |
+| 单测 | `rak_speech/test/test_tts_layers.py`（分句/素材匹配/流式帧对齐） |
+| 素材生成器 | `scripts/make_quick_phrases.py`（10 条素材，serena，逐条 RTF 3.6–5.1） |
+
+内存：`tools/qwentts.cpp` 的本地补丁（`QT_MAX_SEQ`）已重新链接进 `tts-server`；
+节点参数 `qwentts_max_seq` 默认 2048（448MB KV），4096 是 896MB。
+
+### 板上实测（2026-10-17，CPU/10 W，`speech.launch.py capture:=false wake:=false playback:=false`）
+
+| 项 | 实测 |
+|---|---|
+| `tts-server` 就绪 | ~5–6 s（Q4_K_M talker + 12Hz codec，KV 2048） |
+| 启动 warm-up | 5.1–7.4 s（参数 `qwentts_warmup`，用一句废话垫掉首请求冷启动） |
+| 层1 命中 | `message='instant'`，播 1.44–2.0 s 素材，**在模型加载完成前就可用** |
+| 层2 首帧 | 1286–1601 ms（垫过 warm-up 后；未垫时首个请求 4626 ms） |
+| 层2 分句 | `把那份报告放到桌上。谢谢！` → 两句分别成流，句间停顿 |
+| 块粒度 | 4096 B/块（≈85 ms 音频），`/audio_out` 收到的是裸 S16LE 24k 单声道 |
+| 层1 打断内容层 | `/speech/quick` 命中时 worker 让位：`内容句被即时层打断(已播 1s)`，该条后续句不再播 |
+
+首帧偶发超 1.5 s 预算（1601 ms）出现在桌面会话 + 另有两个残留节点在跑的机器上；
+空载时 1.3–1.4 s。`first_frame_budget` 保留 1.5 s（ADR 决策值），超了只 log warning，
+不改变行为——它是「这台机器当时有多忙」的诚实信号。
+
+**未验证**：没在真机喇叭上做听感验收（素材与内容层只做了文件级校验，`playback:=false`）；
+GPU 路径仍不可用；`cosyvoice` 分支未在本次回归里跑（只跑了 `qwentts` 与 `sherpa`）；
+长内容的听测节奏（句间停顿 0.5 s 是否自然）没听过。
