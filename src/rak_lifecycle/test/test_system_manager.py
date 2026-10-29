@@ -49,7 +49,9 @@ class _Stub(ManagedNode):
             self._pub.publish(String(data=str(self.ticks)))
 
 
-def _manifest() -> dict:
+def _manifest(up: str, down: str) -> dict:
+    """节点名按用例生成：同名 LifecycleNode 在同一个进程里连续创建时，CycloneDDS
+    还没摘掉旧参与者，manager 的 change_state 可能被上一个用例的僵尸节点应答。"""
     return {
         "version": 1,
         "domains": [
@@ -58,11 +60,11 @@ def _manifest() -> dict:
                 "requires": [],
                 "timeout_ms": 8000,
                 "components": [{
-                    "node": "/rak_lc_up", "package": "rak_lifecycle",
+                    "node": f"/{up}", "package": "rak_lifecycle",
                     "executable": "system_manager", "mode": "managed",
                     "owner": "system_manager", "launch": "test",
                     "provides": [{
-                        "topic": "/rak_lc_up/out", "kind": "age",
+                        "topic": f"/{up}/out", "kind": "age",
                         "max_age_ms": 300, "basis": "measured",
                     }],
                 }],
@@ -72,7 +74,7 @@ def _manifest() -> dict:
                 "requires": ["up"],
                 "timeout_ms": 8000,
                 "components": [{
-                    "node": "/rak_lc_down", "package": "rak_lifecycle",
+                    "node": f"/{down}", "package": "rak_lifecycle",
                     "executable": "system_manager", "mode": "managed",
                     "owner": "system_manager", "launch": "test",
                 }],
@@ -93,13 +95,15 @@ class _StateReader:
 
 
 @pytest.fixture()
-def rig(tmp_path):
+def rig(tmp_path, request):
     if not rclpy.ok():
         rclpy.init()
+    slug = "".join(c if c.isalnum() else "_" for c in request.node.name).lower()[:16]
+    up, down = f"rak_lc_up_{slug}", f"rak_lc_dn_{slug}"
     manifest = tmp_path / "manifest.yaml"
-    manifest.write_text(yaml.safe_dump(_manifest()), encoding="utf-8")
+    manifest.write_text(yaml.safe_dump(_manifest(up, down)), encoding="utf-8")
 
-    up, down = _Stub("rak_lc_up"), _Stub("rak_lc_down")
+    up, down = _Stub(up), _Stub(down)
     manager = SystemManager(
         manifest_path=str(manifest),
         parameter_overrides=[
@@ -140,8 +144,8 @@ def test_manager_brings_domains_up_in_dependency_order(rig):
     assert _wait_for(lambda: reader.domains.get("up") == "ready"), reader.domains
     # 上游刚 ready 时下游才刚开始被拉起；最终两者都 active
     assert _wait_for(lambda: reader.domains.get("down") == "ready"), reader.domains
-    assert state_of(driver, "/rak_lc_up") == "active"
-    assert state_of(driver, "/rak_lc_down") == "active"
+    assert state_of(driver, f"/{up.get_name()}") == "active"
+    assert state_of(driver, f"/{down.get_name()}") == "active"
     assert up.ticks > 0 and down.ticks > 0
 
 
@@ -151,9 +155,9 @@ def test_upstream_data_loss_degrades_only_the_downstream(rig):
 
     up.silent = True  # 上游进程还活着，只是不再发数据
     assert _wait_for(lambda: reader.domains.get("up") == "faulted"), reader.domains
-    assert _wait_for(lambda: state_of(driver, "/rak_lc_down") == "inactive"), "下游没被降级"
+    assert _wait_for(lambda: state_of(driver, f"/{down.get_name()}") == "inactive"), "下游没被降级"
     # 故障传导是**向下**的：上游自己停在 inactive，不被 manager 顺手 cleanup
-    assert state_of(driver, "/rak_lc_up") in ("active", "inactive")
+    assert state_of(driver, f"/{up.get_name()}") in ("active", "inactive")
     assert reader.domains.get("down") == "faulted", reader.domains
 
 
@@ -162,13 +166,13 @@ def test_operator_can_disable_a_domain_without_touching_others(rig):
     assert _wait_for(lambda: reader.domains.get("down") == "ready"), reader.domains
 
     manager.set_parameters([Parameter("enabled_domains", value="up")])
-    assert _wait_for(lambda: state_of(driver, "/rak_lc_down") == "unconfigured"), "停用没生效"
+    assert _wait_for(lambda: state_of(driver, f"/{down.get_name()}") == "unconfigured"), "停用没生效"
     assert _wait_for(lambda: reader.domains.get("down") == "stopped"), reader.domains
     # 上游不受影响，仍然在发布
     before = up.ticks
     time.sleep(0.3)
     assert up.ticks > before
-    assert state_of(driver, "/rak_lc_up") == "active"
+    assert state_of(driver, f"/{up.get_name()}") == "active"
 
 
 def test_retry_epoch_brings_a_faulted_domain_back(rig):
@@ -181,4 +185,4 @@ def test_retry_epoch_brings_a_faulted_domain_back(rig):
 
     manager.set_parameters([Parameter("retry_epoch", value=1)])
     assert _wait_for(lambda: reader.domains.get("down") == "ready"), reader.domains
-    assert state_of(driver, "/rak_lc_down") == "active", "recover 之后下游没重新拉起"
+    assert state_of(driver, f"/{down.get_name()}") == "active", "recover 之后下游没重新拉起"

@@ -69,14 +69,12 @@ class ManagedNode(LifecycleNode):
 
     # ------------------------------------------------------------------ 发布
     def lifecycle_publisher(self, msg_type: type, topic: str, qos: Any = 10) -> Any:
-        return self.create_lifecycle_publisher(msg_type, topic, qos)
+        """未激活时 `publish()` 被 rclpy 静默丢弃 —— 这正是我们要的语义（ADR-0020 §5）。
 
-    def publish(self, publisher: Any, message: Any) -> bool:
-        """未激活时静默丢弃并返回 False —— 调用方据此计数，不该靠异常控制流。"""
-        if not self.active:
-            return False
-        publisher.publish(message)
-        return True
+        注意：必须让 `on_activate` 走到 rclpy 的默认实现（见下面的生命周期段），
+        否则发布器永远不会被启用，且**不会报任何错**。
+        """
+        return self.create_lifecycle_publisher(msg_type, topic, qos)
 
     # ------------------------------------------------------------------ timer
     def add_timer(self, period_s: float, callback: Callable[[], None]) -> Any:
@@ -152,25 +150,49 @@ class ManagedNode(LifecycleNode):
         self._health_pub.publish(DiagnosticArray(status=statuses))
 
     # -------------------------------------------------------------- 生命周期
-    def on_configure(self, state: Any) -> TransitionCallbackReturn:
+    # rclpy 的 LifecycleNode 在这些默认实现里逐个驱动**受管实体**
+    # （LifecyclePublisher 的 enable/disable 就是这么发生的）。覆盖钩子却不调 super()
+    # 的话，发布器永远停在未启用状态，`publish()` 被 `when_enabled` 静默丢弃 ——
+    # 节点看起来完全正常，但一帧都不发。这是本轮在 Orin 上实测抓到的坑。
+    def _chain(self, hook: str, state) -> "TransitionCallbackReturn":
+        ret = getattr(super(), hook)(state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            self.report(
+                "lifecycle",
+                DiagnosticStatus.ERROR,
+                f"{self._state_name}: 受管实体的 {hook}() 未成功",
+                {"entity_hook": hook},
+            )
+        return ret
+
+    def on_configure(self, state) -> TransitionCallbackReturn:
+        ret = self._chain("on_configure", state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
         self._state_name = "inactive"
         self._last_reason = ""
         return TransitionCallbackReturn.SUCCESS
 
-    def on_cleanup(self, state: Any) -> TransitionCallbackReturn:
+    def on_cleanup(self, state) -> TransitionCallbackReturn:
+        ret = self._chain("on_cleanup", state)
         self._state_name = "unconfigured"
         self.cancel_timers()
-        return TransitionCallbackReturn.SUCCESS
+        return ret
 
-    def on_activate(self, state: Any) -> TransitionCallbackReturn:
+    def on_activate(self, state) -> TransitionCallbackReturn:
+        ret = self._chain("on_activate", state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
         self._state_name = "active"
         return TransitionCallbackReturn.SUCCESS
 
-    def on_deactivate(self, state: Any) -> TransitionCallbackReturn:
+    def on_deactivate(self, state) -> TransitionCallbackReturn:
+        ret = self._chain("on_deactivate", state)
         self._state_name = "inactive"
         self.cancel_timers()
-        return TransitionCallbackReturn.SUCCESS
+        return ret
 
-    def on_shutdown(self, state: Any) -> TransitionCallbackReturn:
+    def on_shutdown(self, state) -> TransitionCallbackReturn:
+        ret = self._chain("on_shutdown", state)
         self.cancel_timers()
-        return TransitionCallbackReturn.SUCCESS
+        return ret
