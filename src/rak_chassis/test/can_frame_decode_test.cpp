@@ -10,8 +10,12 @@
 namespace
 {
 using rak_chassis::ArmDiagFrame;
+using rak_chassis::ArmImuFrame;
 using rak_chassis::ArmNodeInfoFrame;
+using rak_chassis::ChassisImuFrame;
 using rak_chassis::decode_arm_diag;
+using rak_chassis::decode_arm_imu;
+using rak_chassis::decode_chassis_imu;
 using rak_chassis::decode_diag;
 using rak_chassis::decode_node_info;
 using rak_chassis::DiagFrame;
@@ -121,4 +125,45 @@ TEST(CanDecode, BatteryUndervoltageAndBusRecoveryAreFaults)
   EXPECT_EQ(static_cast<uint16_t>(0x0010U & kStateFaultMask), 0x0010U);
   EXPECT_EQ(static_cast<uint16_t>(0x0020U & kStateFaultMask), 0x0020U);
   EXPECT_EQ(static_cast<uint16_t>(0x0002U & kStateFaultMask), 0U);
+}
+
+// ===== [AI] 2026-10-29：IMU 两帧（0x032 / 0x222）与 protocol-signals.yaml 对标 =====
+// CHASSIS_IMU VF：{DYAW 123 mrad, PITCH -150 (0.01°), ROLL 250 (0.01°), EVT 0x03, AGE 4}
+TEST(CanDecode, ChassisImuVectorVF)
+{
+  const std::array<uint8_t, 8> d{0x7B, 0x00, 0x6A, 0xFF, 0xFA, 0x00, 0x03, 0x04};
+  const ChassisImuFrame f = decode_chassis_imu(d);
+  EXPECT_EQ(f.dyaw_mrad, 123);
+  EXPECT_EQ(f.pitch_cdeg, -150);
+  EXPECT_EQ(f.roll_cdeg, 250);
+  EXPECT_EQ(f.events, 0x03U);
+  EXPECT_EQ(f.age_ms, 4U);
+}
+
+// 负偏航增量（左转）必须解成负数，不能被当成 u16 大正数
+TEST(CanDecode, ChassisImuNegativeYawDeltaIsSigned)
+{
+  const std::array<uint8_t, 8> d{0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  EXPECT_EQ(decode_chassis_imu(d).dyaw_mrad, -32768);
+}
+
+// ARM_IMU V10：{GZ -1234 (0.01°/s), AMAG 1450 mg, EVT 0x01, AGE 9}
+TEST(CanDecode, ArmImuVectorV10)
+{
+  const std::array<uint8_t, 8> d{0x2E, 0xFB, 0xAA, 0x05, 0x01, 0x09, 0x00, 0x00};
+  const ArmImuFrame f = decode_arm_imu(d);
+  EXPECT_EQ(f.gz_cdps, -1234);
+  EXPECT_EQ(f.amag_mg, 1450U);   // 静态 ≈1000 mg，量程内
+  EXPECT_EQ(f.events, 0x01U);
+  EXPECT_EQ(f.age_ms, 9U);
+}
+
+// 事件位在两端必须同一套：撞车会让“轻微冲击”被读成“打滑”
+TEST(CanDecode, ImuEventBitsMatchProtocol)
+{
+  EXPECT_EQ(rak_chassis::kImuEvtImpact, 0x01U);
+  EXPECT_EQ(rak_chassis::kImuEvtSlip, 0x02U);
+  EXPECT_EQ(rak_chassis::kImuEvtStill, 0x04U);
+  EXPECT_EQ(rak_chassis::kImuEvtSaturated, 0x08U);
+  EXPECT_EQ(rak_chassis::kImuEvtStale, 0x10U);
 }

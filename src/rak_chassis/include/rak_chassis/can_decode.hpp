@@ -75,6 +75,38 @@ struct ArmDiagFrame
   bool faulted{};   // STATE 坏消息位 || MODE∈{2,3}
 };
 ArmDiagFrame decode_arm_diag(const std::array<uint8_t, 8> &d);
+
+/* ==== [AI] 2026-10-29：IMU 两帧（纯加法，PROTOCOL §3.1）====
+ * 前提：三颗 IMU 全部装在**车体**上（机械臂板不在机械臂上）。刚体角速度与安装
+ * 位置无关 → 0x222.GZ 与 0x032.DYAW/帧周期 是**同源冗余**；加速度受位置影响，
+ * 只给模值/冲击。权威姿态仍是 Jetson 的 LSM6DSR（/imu），这两帧只给增量与事件。
+ */
+constexpr uint8_t kImuEvtImpact = 0x01U;
+constexpr uint8_t kImuEvtSlip = 0x02U;
+constexpr uint8_t kImuEvtStill = 0x04U;
+constexpr uint8_t kImuEvtSaturated = 0x08U;
+constexpr uint8_t kImuEvtStale = 0x10U;
+
+// 0x032 CHASSIS_IMU：DYAW_i16(mrad), PITCH_i16(0.01°), ROLL_i16(0.01°), EVT_u8, AGE_u8
+struct ChassisImuFrame
+{
+  int16_t dyaw_mrad{};      // 本帧区间内的偏航角增量（rad = mrad × 1e-3）
+  int16_t pitch_cdeg{};     // 俯仰（0.01°，未融合，加速度解算）
+  int16_t roll_cdeg{};      // 横滚（0.01°）
+  uint8_t events{};         // kImuEvt*
+  uint8_t age_ms{};         // 样本龄（饱和 255）
+};
+ChassisImuFrame decode_chassis_imu(const std::array<uint8_t, 8> &d);
+
+// 0x222 ARM_IMU：GZ_i16(0.01°/s), AMAG_u16(mg), EVT_u8, AGE_u8, RSVD16
+struct ArmImuFrame
+{
+  int16_t gz_cdps{};        // 偏航角速率（0.01 °/s），可与底盘板互校
+  uint16_t amag_mg{};       // 加速度模值 mg（静止≈1000）
+  uint8_t events{};
+  uint8_t age_ms{};
+};
+ArmImuFrame decode_arm_imu(const std::array<uint8_t, 8> &d);
 }  // namespace rak_chassis
 
 #endif  // RAK_CHASSIS__CAN_DECODE_HPP_

@@ -36,4 +36,25 @@ ArmDiagFrame decode_arm_diag(const std::array<uint8_t, 8> &d)
     frame.mode == 2U || frame.mode == 3U;
   return frame;
 }
+
+ChassisImuFrame decode_chassis_imu(const std::array<uint8_t, 8> &d)
+{
+  ChassisImuFrame frame;
+  frame.dyaw_mrad = read_i16(d, 0U);
+  frame.pitch_cdeg = read_i16(d, 2U);
+  frame.roll_cdeg = read_i16(d, 4U);
+  frame.events = d[6];
+  frame.age_ms = d[7];
+  return frame;
+}
+
+ArmImuFrame decode_arm_imu(const std::array<uint8_t, 8> &d)
+{
+  ArmImuFrame frame;
+  frame.gz_cdps = read_i16(d, 0U);
+  frame.amag_mg = read_u16(d, 2U);
+  frame.events = d[4];
+  frame.age_ms = d[5];
+  return frame;
+}
 }  // namespace rak_chassis

@@ -54,6 +54,23 @@ struct SessionSnapshot
   uint8_t arm_servo_errcnt{};  // ARM_DIAG.SERVO_ERRCNT_u8（饱和 255）
   bool arm_faulted{};       // 臂板 STATE 坏消息位或 MODE∈{2,3}（最后一次 ARM_DIAG/INFO）
   std::chrono::milliseconds arm_feedback_age{std::chrono::milliseconds::max()};
+
+  // ---- [AI] 2026-10-29 IMU 两帧（0x032 底盘 / 0x222 机械臂板，纯加法）----
+  // 前提：三颗 IMU 全在车体上。刚体角速度与安装位置无关 →
+  //   arm_gz_rad_s 与 (imu_dyaw_rad / 帧周期) 是**同源冗余**，消费端可互校。
+  // 加速度受安装位置影响，只给模值/冲击。权威姿态仍是 /imu（LSM6DSR）。
+  bool imu_valid{};                        // 最近 100 ms 内收到过 0x032
+  double imu_dyaw_rad{};                   // 上一帧区间的偏航增量（非累计）
+  uint32_t imu_dyaw_frames{};              // 增量帧计数（消费端用它自己的 dt 积分）
+  double imu_pitch_rad{};
+  double imu_roll_rad{};
+  uint8_t imu_events{};                    // kImuEvt*（impact/slip/still/saturated/stale）
+  std::chrono::milliseconds imu_age{std::chrono::milliseconds::max()};
+  bool arm_imu_valid{};                    // 最近 200 ms 内收到过 0x222
+  double arm_gz_rad_s{};
+  uint16_t arm_amag_mg{};
+  uint8_t arm_imu_events{};
+  std::chrono::milliseconds arm_imu_age{std::chrono::milliseconds::max()};
 };
 
 // [AI] 传输无关的会话接口。实现必须线程安全：控制线程调 set_*，

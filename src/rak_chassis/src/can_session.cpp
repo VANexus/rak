@@ -39,6 +39,10 @@ constexpr uint32_t kIdDiag = 0x220U;
  * 同总线 ID 全局唯一，故臂板另起 0x031/0x221，避免与 0x030/0x220 撞车。 */
 constexpr uint32_t kIdArmNodeInfo = 0x031U;  // ARM_NODE_INFO: PROTO/HWREV/BUILD/FAULT/STATE
 constexpr uint32_t kIdArmDiag = 0x221U;      // ARM_DIAG: FAULT/STATE/MODE/SERVO_ERRCNT/RSVD
+/* [AI] 2026-10-29：IMU 两帧（纯加法）—— 底盘板 0x032、机械臂板 0x222。
+ * 两板都装在车体上，陀螺可互校；加速度只当事件强度。 */
+constexpr uint32_t kIdChassisImu = 0x032U;   // CHASSIS_IMU: DYAW/PITCH/ROLL/EVT/AGE
+constexpr uint32_t kIdArmImu = 0x222U;       // ARM_IMU: GZ/AMAG/EVT/AGE/RSVD
 constexpr uint8_t kDidSafety = 0x01U;
 /* [AI] kStateFaultMask 与 LE 读取器统一搬到 can_decode.hpp（单点定义 + 可单测）。 */
 
@@ -46,9 +50,14 @@ constexpr int kDriveHz = 100;                     // [AI] DRIVE_CMD 周期（v4 
 /* [AI] 臂板上行新鲜度窗口：ARM_NODE_INFO @1 Hz + ARM_DIAG @10 Hz，取 1.5 s
  * （覆盖 1 Hz NODE_INFO 抖动；两帧都断流才判 arm_online=false）。 */
 constexpr int kArmInfoTimeoutMs = 1500;
+/* [AI] 2026-10-29 IMU 两帧的新鲜度窗：底盘 100 Hz → 100 ms（丢 10 帧即判失效）；
+ * 臂板同样 100 Hz，但给 200 ms（与 arm_imu_valid 注释一致，容忍调度抖动）。 */
+constexpr int kImuTimeoutMs = 100;
+constexpr int kArmImuTimeoutMs = 200;
 constexpr int kArmHz = 50;                        // [AI] ARM_CMD 上限节拍（v4 §3，实际事件驱动）
 constexpr double kDriveLsbRadS = 0.01;            // [AI] DRIVE_CMD 量化 0.01 rad/s
 constexpr double kSpdLsbRadS = 0.01;              // [AI] WHEEL_SPD 量化
+constexpr double kDegToRad = 0.017453292519943295;  // [AI] 2026-10-29: IMU 帧（度 → rad）
 // [AI] 舵机角量化 0.1°（v4 §5，0..2700 ↔ 0..270°）；遥测读回同系数
 constexpr double kServoLsbRad = 0.0017453292519943295;  // 0.1° in rad
 constexpr double kServoMaxRad = 4.71238898038469;       // 270° in rad
@@ -238,6 +247,24 @@ SessionSnapshot CanSession::snapshot() const
       result.arm_online = false;
     }
   }
+  /* [AI] 2026-10-29：IMU 两帧同律新鲜度。断流后只清 valid（保留最后一次数值给诊断），
+   * 否则消费端会把很久以前的偏航增量当成当前增量继续积分。 */
+  if (result.imu_valid) {
+    const auto imu_age = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - last_imu_at_);
+    if (imu_age > std::chrono::milliseconds(kImuTimeoutMs)) {
+      result.imu_valid = false;
+      result.imu_dyaw_rad = 0.0;
+    }
+  }
+  if (result.arm_imu_valid) {
+    const auto arm_imu_age = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - last_arm_imu_at_);
+    if (arm_imu_age > std::chrono::milliseconds(kArmImuTimeoutMs)) {
+      result.arm_imu_valid = false;
+      result.arm_gz_rad_s = 0.0;
+    }
+  }
   return result;
 }
 
@@ -361,6 +388,33 @@ void CanSession::process_rx(const std::array<uint8_t, 8> &d, uint32_t can_id)
           static_cast<double>(read_u16(d, i * 2U)) * kServoLsbRad;
       }
       snapshot_.servo_valid_mask |= 0x30U;
+      break;
+    case kIdChassisImu:
+      /* [AI] 2026-10-29：增量/事件，不是姿态本体。dyaw 是“上一帧区间”的增量，
+       * 消费端必须用自己的 dt 积分（不要拿它与绝对角速度混用）。 */
+      {
+        const ChassisImuFrame f = decode_chassis_imu(d);
+        snapshot_.imu_dyaw_rad = static_cast<double>(f.dyaw_mrad) * 1e-3;
+        snapshot_.imu_dyaw_frames++;
+        snapshot_.imu_pitch_rad = static_cast<double>(f.pitch_cdeg) * 1e-2 * kDegToRad;
+        snapshot_.imu_roll_rad = static_cast<double>(f.roll_cdeg) * 1e-2 * kDegToRad;
+        snapshot_.imu_events = f.events;
+        snapshot_.imu_age = std::chrono::milliseconds(f.age_ms);
+        snapshot_.imu_valid = true;
+        last_imu_at_ = now;
+      }
+      break;
+    case kIdArmImu:
+      /* [AI] 2026-10-29：GZ 与底盘板同源冗余，可用于“谁坏了”的判别。 */
+      {
+        const ArmImuFrame f = decode_arm_imu(d);
+        snapshot_.arm_gz_rad_s = static_cast<double>(f.gz_cdps) * 1e-2 * kDegToRad;
+        snapshot_.arm_amag_mg = f.amag_mg;
+        snapshot_.arm_imu_events = f.events;
+        snapshot_.arm_imu_age = std::chrono::milliseconds(f.age_ms);
+        snapshot_.arm_imu_valid = true;
+        last_arm_imu_at_ = now;
+      }
       break;
     case kIdDiag:
       // [AI] STATE 位图只把坏消息位写进 fault_bitmap（见 kStateFaultMask 注释）；

@@ -65,6 +65,10 @@ private:
   std::chrono::steady_clock::time_point last_node_info_at_{};
   // [AI] 机械臂板最近一次上行（0x031/0x221）时间戳：arm_online 新鲜度判据用
   std::chrono::steady_clock::time_point last_arm_info_at_{};
+  // [AI] 2026-10-29 IMU 两帧（0x032 / 0x222）最近到达时间：imu_valid / arm_imu_valid
+  // 的新鲜度判据。只置 true 不清零会让断流后消费端继续用陈旧增量 → 必须按窗超时。
+  std::chrono::steady_clock::time_point last_imu_at_{};
+  std::chrono::steady_clock::time_point last_arm_imu_at_{};
   uint8_t safety_counter_{};        // [AI] e2e alive counter 0..15
   int socket_fd_{-1};
   std::thread io_thread_;
