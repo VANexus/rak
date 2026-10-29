@@ -221,7 +221,7 @@ class SystemManager(Node):
         for name in self.manifest.order:
             view = self._domains[name]
             if name in desired:
-                if view.state in (IDLE, STOPPED, FAULTED, BRINGING_UP) and self._upstream_ready(name):
+                if view.state in (IDLE, STOPPED, BRINGING_UP) and self._upstream_ready(name):
                     self._bring_up_domain(view)
             else:
                 self._tear_down_domain(view)
@@ -481,7 +481,9 @@ class SystemManager(Node):
         remaining = max(0.5, deadline - time.monotonic())
         if not client.wait_for_service(timeout_sec=min(5.0, remaining)):
             return False, f"{node_fqn}/change_state 服务不可用"
-        description = getattr(lifecycle_msgs.msg.TransitionDescription, verb.upper())
+        # 转移 id 常量挂在 Transition 上；Jazzy 的 TransitionDescription 是一个
+        # **消息类型**（描述一次转移），没有 TRANSITION_* 常量（实测 dir()）。
+        description = getattr(lifecycle_msgs.msg.Transition, f"TRANSITION_{verb.upper()}")
         future = client.call_async(
             lifecycle_msgs.srv.ChangeState.Request(
                 transition=lifecycle_msgs.msg.Transition(id=description, label=verb)

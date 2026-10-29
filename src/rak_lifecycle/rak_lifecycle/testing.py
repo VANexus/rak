@@ -45,7 +45,8 @@ def transition(driver: Node, node_fqn: str, verb: str, timeout: float = 5.0) -> 
         return False
     request = lifecycle_msgs.srv.ChangeState.Request(
         transition=lifecycle_msgs.msg.Transition(
-            id=getattr(lifecycle_msgs.msg.TransitionDescription, verb.upper()), label=verb
+            id=getattr(lifecycle_msgs.msg.Transition, f"TRANSITION_{verb.upper()}"),
+            label=verb,
         )
     )
     response = _await(client.call_async(request), timeout)
