@@ -79,6 +79,8 @@ class ComponentView:
     last_frame: dict[str, float] = field(default_factory=dict)
     #: 年龄超限的起始时刻；连续超过 `fault_confirm_s` 才认定 FAULTED（一次抖动不算故障）。
     exceeded_since: float | None = None
+    #: 进入 ready 的时刻，用来给"从来没来过数据/没订阅上"这类判据一个观察窗口。
+    since_ready: float | None = None
 
     @property
     def node_name(self) -> str:
@@ -271,17 +273,18 @@ class SystemManager(Node):
             if not ok:
                 cv.state, cv.reason = FAULTED, detail
                 return
-            cv.state = READY
+            cv.state, cv.since_ready = READY, time.monotonic()
             return
 
         if component.mode == "managed":
             # 外部拥有（nav2 manager / slam.launch.py 事件 / spawner）：只等不推。
             ok, detail = self._await_state(component.node, ("active",), deadline)
             cv.state = READY if ok else FAULTED
+            cv.since_ready = time.monotonic() if ok else cv.since_ready
             cv.reason = "" if ok else f"等不到 active（拥有者 {component.owner}）：{detail}"
             return
 
-        cv.state = READY
+        cv.state, cv.since_ready = READY, time.monotonic()
 
     def _tear_down_domain(self, view: DomainView) -> None:
         if view.state == STOPPED:
@@ -313,12 +316,8 @@ class SystemManager(Node):
                         f"上游域 {name} FAULTED",
                         None,
                     )
-            view.state, view.reason = view.roll_up()
-            if view.state not in (STOPPED, FAULTED):
-                # 剩下的都是别人拥有的：本 manager 无权停它们，只能把域标成不可用。
-                view.state, view.reason = FAULTED, (
-                    f"上游域 {name} FAULTED；本域内外部拥有的组件由其拥有者负责"
-                )
+            # 组件是 STOPPED，但**域**是 FAULTED：不是操作员关的，是被上游拖垮的。
+            view.state, view.reason = FAULTED, f"因上游域 {name} FAULTED 而降级"
             self._log(f"degraded dependent domain {dependent} -> {view.state}")
 
     # ------------------------------------------------------------- 运行期判据
@@ -333,7 +332,25 @@ class SystemManager(Node):
                 if cv.state not in (READY, DEGRADED, FAULTED):
                     continue
                 for probe in component.provides:
-                    if probe.kind != "age" or probe.topic not in cv.last_frame:
+                    if probe.kind != "age":
+                        continue
+                    if probe.topic not in cv.last_frame:
+                        self._watch(cv, probe)  # 类型可能刚刚才出现
+                    if probe.topic not in cv.last_frame:
+                        # 订上了却一帧没来 / 压根没订上：给一个观察窗口再判。
+                        if cv.since_ready is None or now - cv.since_ready < self._fault_confirm_s:
+                            continue
+                        cv.state, cv.reason = (
+                            (FAULTED, f"{probe.topic} 订上了但一帧没来")
+                            if probe.escalation_allowed and probe.topic in self._age_subs
+                            else (
+                                DEGRADED,
+                                f"无法观测 {probe.topic} 的新鲜度"
+                                "（话题还没出现或类型未知）" if probe.topic not in self._age_subs
+                                else f"{probe.topic} 一帧没来（basis={probe.basis}，只告警）",
+                            )
+                        )
+                        changed = True
                         continue
                     last = cv.last_frame[probe.topic]
                     age_ms = (now - last) * 1000.0
@@ -365,13 +382,20 @@ class SystemManager(Node):
     def _component(self, view: DomainView, node: str) -> ComponentView:
         return view.components[node]
 
-    def _watch(self, cv: ComponentView, probe: Any) -> None:
-        """`kind: age` 需要知道消息类型才能订阅；解析不到就退化成发现图检查。"""
-        if probe.kind != "age" or probe.topic in self._age_subs:
-            return
+    def _watch(self, cv: ComponentView, probe: Any) -> bool:
+        """尽力建立一条新鲜度观测；返回是否真的订阅上了。
+
+        bring-up 那一刻组件常常还没建好发布器（`on_configure` 里才创建），类型因此解析不到。
+        早期版本在这里直接 return，于是这个 age 判据**永久失效且不报错** ——
+        "看起来在监控、其实什么都没看"。现在由 `_monitor` 每个周期重试。
+        """
+        if probe.kind != "age":
+            return False
+        if probe.topic in self._age_subs:
+            return True
         message_type = self._resolve_type(probe.topic)
         if message_type is None:
-            return
+            return False
 
         def on_message(_msg: Any, topic: str = probe.topic, view: ComponentView = cv) -> None:
             view.last_frame[topic] = time.monotonic()
@@ -381,6 +405,7 @@ class SystemManager(Node):
         self._age_subs[probe.topic] = self.create_subscription(
             message_type, probe.topic, on_message, depth
         )
+        return True
 
     def _await_topics(self, component: Any, deadline: float) -> tuple[bool, str]:
         """`presence: topic` 的组件：等它的 `exists` 判据在发现图里出现。"""
