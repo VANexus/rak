@@ -3,7 +3,7 @@
 <package format="3">
   <name>rak_chassis</name>
   <version>0.1.0</version>
-  <description>Wheel-only ros2_control hardware interface for the F407 CAN v4 link (SocketCAN).</description>
+  <description>ros2_control hardware interfaces for the two F407 CAN v4 nodes (SocketCAN): RakChassisHardware (4 wheels) and RakArmHardware (6 axes + gripper). Both share one CanSession.</description>
   <maintainer email="xrak@todo.todo">xrak</maintainer>
   <license>Apache-2.0</license>
 

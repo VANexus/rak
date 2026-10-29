@@ -1,8 +1,17 @@
 <library path="rak_chassis_plugin">
+  <!-- [AI] 2026-10-29 双下位机：底盘板与机械臂板拆成两个 <ros2_control> 段 =
+       两个 plugin = 两个故障域。两者共享同一个 CanSession（can_session_pool.hpp），
+       不是各开一个 socket。见 docs/architecture.md 与 ADR-0016。 -->
   <class
-    name="rak_chassis/RakSystemHardware"
-    type="rak_chassis::RakSystemHardware"
+    name="rak_chassis/RakChassisHardware"
+    type="rak_chassis::RakChassisHardware"
     base_class_type="hardware_interface::SystemInterface">
-    <description>四轮 ros2_control 硬件插件；唯一后端 CanSession（CAN v4，SocketCAN）。见 ADR-0016。</description>
+    <description>底盘板（C30D + 4 轮 AT8236）：0x030/0x200-202/0x220/0x032。共享 CanSession（CAN v4，SocketCAN）。</description>
+  </class>
+  <class
+    name="rak_chassis/RakArmHardware"
+    type="rak_chassis::RakArmHardware"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>机械臂板（C30D + 6 舵机 + J1/J2 编码器电机）：0x031/0x210/0x211/0x221/0x222。共享 CanSession。</description>
   </class>
 </library>

@@ -71,7 +71,7 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_task_executor` | 单一任务状态机、Nav2 Action 生命周期；意图解析来自 `rak_intent` | 原始底盘/关节命令、感知算法 |
 | `rak_speech` | 离线 ASR（Vosk）：输入为 audio_common `/audio`（`audio_capture` 采阵列）或 arecord 直采 → 转写 + 意图发布；板端唤醒/方位桥（`vtn_node` → `/speech/wake`）；离线 TTS（`tts_node` → `/audio_out` → `audio_play`） | 下发目标、速度/关节命令 |
 | `rak_wbc`（ADR-0011） | 全身运动仲裁：100 Hz 速度级 HQP（Pinocchio + OSQP）、底盘与臂的单一常规写入者；数值层桌面可回归 | 安全裁决、任务生命周期、直接读感知/决策 |
-| `rak_chassis` | `ros2_control` SystemInterface + `Session` 传输抽象（唯一实现 `CanSession`，CAN v4 唯一传输，ADR-0012/0016；当前导出 4 轮接口；臂接口待加） | 运动学仲裁、轮/臂语义重定义、上层传输分支 |
+| `rak_chassis` | 两个 `ros2_control` SystemInterface：`RakChassisHardware`（4 轮，0x030/0x200-202/0x220/0x032）与 `RakArmHardware`（6 定位轴 + 夹爪，0x031/0x210/0x211/0x221/0x222）；两者共享同一个 `CanSession`（`can_session_pool`），CAN v4 唯一传输（ADR-0012/0016/0019） | 运动学仲裁、轮/臂语义重定义、上层传输分支 |
 | `rak_commissioning` | `chassis_key_test` + `chassis_test.launch.py` | 生产运动接口、安全认证 |
 | `rak_arm_simulation` | 软件轨迹与夹爪 Action server、估算关节状态 | 物理仿真、真实硬件接口 |
 | `rak_moveit_config` | 旧 demo 与独立六轴仿真配置 | 电机闭环、实机几何声明 |

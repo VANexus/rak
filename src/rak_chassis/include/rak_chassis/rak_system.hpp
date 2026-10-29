@@ -17,9 +17,26 @@
 
 namespace rak_chassis
 {
-class RakSystemHardware final : public hardware_interface::SystemInterface
+/* [AI] 2026-10-29 双下位机拆分：同一块 C30D 板上的两个角色已经分成**两块板**
+ * （底盘板 / 机械臂板），Jetson 侧却在一个 SystemInterface 里同时管 4 轮 + 7 轴。
+ * 后果是故障域耦合：底盘板反馈超时 -> read() ERROR -> CM 停用整个 hardware ->
+ * 臂控制器一起被 deactivate（哪怕臂板还在正常上行）。
+ *
+ * 现在按 role 拆成两个 <ros2_control> 段：
+ *   kChassis -> 4 轮（0x030/0x200-202/0x220/0x032）
+ *   kArm     -> 7 轴（0x031/0x210/0x211/0x221/0x222）
+ * 逻辑仍在同一份实现里（靠 role_ 分派），但**导出的接口、on_init 校验、read/write
+ * 的失败判据都按板隔离**。两个组件共享同一个 CanSession（can_session_pool.hpp）。 */
+enum class Role
+{
+  kChassis,
+  kArm,
+};
+
+class RakSystemHardware : public hardware_interface::SystemInterface
 {
 public:
+  RakSystemHardware() = default;
   hardware_interface::CallbackReturn on_init(
     const hardware_interface::HardwareComponentInterfaceParams &params) override;
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
@@ -36,6 +53,11 @@ public:
     const rclcpp::Time &time, const rclcpp::Duration &period) override;
   hardware_interface::return_type write(
     const rclcpp::Time &time, const rclcpp::Duration &period) override;
+
+protected:
+  /* 只有两个薄子类会走这里（见文件末尾），外部一律用默认构造 = 底盘角色。 */
+  explicit RakSystemHardware(Role role)
+  : role_(role) {}
 
 private:
   /* [AI] 激活时等舵机回读（SERVO_STATE_A/B @50Hz，无需先发臂命令），把 6 轴
@@ -88,7 +110,27 @@ private:
   // read() 报错会让 CM 直接停用硬件，但报错本身必须留痕；该位保证每个失效
   // 片段只记一条，反馈恢复后复位，便于反复出现时逐次记录。
   bool feedback_loss_reported_{};
-  std::unique_ptr<Session> session_;  /* [AI] ADR-0016: 唯一后端 CanSession */
+  /* [AI] 共享会话，所有权在 can_session_pool（引用计数归零才真正 stop）。 */
+  std::shared_ptr<Session> session_;
+  Role role_{Role::kChassis};
+  /* [AI] 本板是否已经“在线过一次”：两板各自用自己的首帧时刻作启动宽限，
+   * 不再互相借道（以前臂板宽限要看底盘的 feedback_seen_）。 */
+  bool board_seen_{false};
+};
+
+/* ---- 两个 plugin 名 = 两个 <ros2_control> 段 = 两个故障域 ---- */
+class RakChassisHardware final : public RakSystemHardware
+{
+public:
+  RakChassisHardware()
+  : RakSystemHardware(Role::kChassis) {}
+};
+
+class RakArmHardware final : public RakSystemHardware
+{
+public:
+  RakArmHardware()
+  : RakSystemHardware(Role::kArm) {}
 };
 }  // [AI] 命名空间结束
 

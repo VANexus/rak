@@ -104,7 +104,7 @@
    `rak_arm.urdf.xacro` **共用同一个宏**（此前是两份互不相干的东西：一份真实几何、
    一份空壳）。RSP 现在会发 `arm_base_link→shoulder_link→…→tool0`。
    本机实测 `tf2` 查 `arm_base_link→tool0` = **(0.10, 0, 0.33)**（Home 位）✅。
-   `RakSystemHardware::on_init` 的 11 关节/顺序/接口契约不变，由
+   两个 hardware 组件（ADR-0019 起按板拆成 rak_chassis / rak_arm）的关节/顺序/接口契约不变，由
    `src/rak_chassis/test/validate_chassis_urdf.py` 钉住（已入 `colcon test`）。
 5. **`wbc_base.urdf.xacro` 的 `arm_mount_joint` 为镜像**：值与 `rak_chassis.urdf.xacro` 的
    `arm_mount_joint` 必须同步（ADR-0011 待闭合 #2/#3）。

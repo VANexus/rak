@@ -20,6 +20,7 @@ pluginlib_export_plugin_description_file(hardware_interface rak_chassis_plugin.x
 add_library(rak_chassis_plugin SHARED
   src/can_decode.cpp
   src/can_session.cpp
+  src/can_session_pool.cpp
   src/rak_system.cpp
 )
 target_include_directories(rak_chassis_plugin PUBLIC

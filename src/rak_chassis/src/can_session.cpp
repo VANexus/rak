@@ -54,6 +54,11 @@ constexpr int kArmInfoTimeoutMs = 1500;
  * 臂板同样 100 Hz，但给 200 ms（与 arm_imu_valid 注释一致，容忍调度抖动）。 */
 constexpr int kImuTimeoutMs = 100;
 constexpr int kArmImuTimeoutMs = 200;
+/* [AI] 底盘板握手新鲜度：NODE_INFO @1 Hz，给 1.5 s（丢两帧才判失效）。
+ * handshaken 以前只在 open/close 时复位——socket 还在而板子掉电/断线时
+ * 它会一直保持 true，只能靠 feedback_age(120 ms) 兜底。语义上“握手”同样
+ * 是一条有寿命的断言，必须带窗。 */
+constexpr int kNodeInfoTimeoutMs = 1500;
 constexpr int kArmHz = 50;                        // [AI] ARM_CMD 上限节拍（v4 §3，实际事件驱动）
 constexpr double kDriveLsbRadS = 0.01;            // [AI] DRIVE_CMD 量化 0.01 rad/s
 constexpr double kSpdLsbRadS = 0.01;              // [AI] WHEEL_SPD 量化
@@ -245,6 +250,15 @@ SessionSnapshot CanSession::snapshot() const
       std::chrono::steady_clock::now() - last_arm_info_at_);
     if (result.arm_feedback_age > std::chrono::milliseconds(kArmInfoTimeoutMs)) {
       result.arm_online = false;
+    }
+  }
+  /* [AI] 底盘板握手新鲜度（同 arm_online 律）：断流超窗 -> handshaken=false。
+   * 不比 feedback_age(120 ms) 更早触发，只是让“握手”这个断言不再永久为真。 */
+  if (result.handshaken) {
+    const auto info_age = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - last_node_info_at_);
+    if (info_age > std::chrono::milliseconds(kNodeInfoTimeoutMs)) {
+      result.handshaken = false;
     }
   }
   /* [AI] 2026-10-29：IMU 两帧同律新鲜度。断流后只清 valid（保留最后一次数值给诊断），

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""断言 `rak_chassis.urdf.xacro` 仍然满足 RakSystemHardware 的初始化契约。
+"""断言 `rak_chassis.urdf.xacro` 仍然满足两个 hardware 组件的初始化契约。
 
 [AI] 2026-10-15 新建，起因：把机械臂的真实几何并入整车 URDF（替换掉原来的
 零长度控制桩链）—— 那一步会大改运动学树，而 `RakSystemHardware::on_init`
@@ -89,30 +89,57 @@ def main():
     text = expand()
     root = ET.fromstring(text)
 
-    # ---- A：唯一的一个 <ros2_control>，且必须是真硬件插件 ----
-    print("A. robot / <ros2_control>")
+    # ---- A：两段 <ros2_control>（底盘板 / 机械臂板，各自独立故障域） ----
+    print("A. robot / <ros2_control>（双下位机：两段）")
     check(root.get("name") == "rak_chassis", 'robot name == "rak_chassis"')
     rcs = root.findall("ros2_control")
-    check(len(rcs) == 1, f"<ros2_control> 元素恰好 1 个（实为 {len(rcs)}）")
-    if not rcs:
+    check(len(rcs) == 2, f"<ros2_control> 元素恰好 2 个（底盘 + 臂，实为 {len(rcs)}）")
+    if len(rcs) != 2:
         return 1
-    rc = rcs[0]
-    plugin = rc.find("hardware/plugin")
-    check(plugin is not None and plugin.text == "rak_chassis/RakSystemHardware",
-          "hardware plugin == rak_chassis/RakSystemHardware")
+    rc_by_name = {rc.get("name"): rc for rc in rcs}
+    check(set(rc_by_name) == {"rak_chassis", "rak_arm"},
+          f"两段 name 必须是 rak_chassis / rak_arm（实为 {sorted(rc_by_name)}）")
+    if set(rc_by_name) != {"rak_chassis", "rak_arm"}:
+        return 1
+    expect_plugin = {
+        "rak_chassis": "rak_chassis/RakChassisHardware",
+        "rak_arm": "rak_chassis/RakArmHardware",
+    }
+    for seg, want in expect_plugin.items():
+        plugin = rc_by_name[seg].find("hardware/plugin")
+        check(plugin is not None and plugin.text == want,
+              f"{seg}: hardware plugin == {want}")
+    # 两段共享同一个 CanSession —— 总线相关参数必须逐字段一致（pool 会校验）
+    seg_params = {
+        seg: {x.get("name"): (x.text or "").strip()
+              for x in rc.findall("hardware/param")}
+        for seg, rc in rc_by_name.items()
+    }
+    for key in ("host_build_id", "allow_motion", "can_channel"):
+        check(seg_params["rak_chassis"].get(key) == seg_params["rak_arm"].get(key),
+              f"两段的 {key} 必须一致（{seg_params['rak_chassis'].get(key)!r} vs "
+              f"{seg_params['rak_arm'].get(key)!r}）")
     check("mock_components" not in text,
           "全文不含 mock_components（仿真插件不得混进真机树）")
 
-    # ---- B：11 个关节，按固定顺序 ----
+    # ---- B：关节按段归属（底盘段只有轮、臂段只有臂），合并顺序不变 ----
     print("B. <ros2_control> 关节清单与顺序")
-    rc_joints = rc.findall("joint")
+    rc_chassis = rc_by_name["rak_chassis"]
+    rc_arm = rc_by_name["rak_arm"]
     # 运动学树里的 <joint>：F 的存在性（component_parser 的 getJoint 规则）与
     # D2 的限位比对都要用，所以在这里一次建好。
     tree_joints = {j.get("name"): j for j in root.findall("joint")}
+    wheel_names = [j.get("name") for j in rc_chassis.findall("joint")]
+    arm_names = [j.get("name") for j in rc_arm.findall("joint")]
+    check(wheel_names == WHEELS, f"底盘段只声明 4 轮（实为 {wheel_names}）")
+    check(arm_names == ARM + [GRIPPER],
+          f"臂段只声明 j1..j6 + gripper（实为 {arm_names}）")
+    # 后续 C/D/E/D2/F 沿用合并视图，断言本身一条都不放松
+    rc_joints = rc_chassis.findall("joint") + rc_arm.findall("joint")
     names = [j.get("name") for j in rc_joints]
     expect = WHEELS + ARM + [GRIPPER]
     check(names == expect,
-          f"关节顺序 == 4 轮 + j1..j6 + gripper（实为 {names}）")
+          f"两段合并顺序 == 4 轮 + j1..j6 + gripper（实为 {names}）")
 
     # ---- C/D/E：每个关节的接口种类 ----
     print("C/D/E. 接口种类（轮 / 臂 / 夹爪）")
@@ -219,7 +246,7 @@ def main():
     if _fail:
         print(f"❌ {len(_fail)} 项失败")
         return 1
-    print("ALL OK: chassis URDF 满足 RakSystemHardware 初始化契约")
+    print("ALL OK: chassis URDF 满足 RakChassisHardware + RakArmHardware 初始化契约")
     return 0
 
 
