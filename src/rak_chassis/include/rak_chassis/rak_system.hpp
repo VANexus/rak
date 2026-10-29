@@ -62,7 +62,9 @@ private:
      名称与行程按 docs/arm_moveit_contract.md §1（FROZEN）：命令域是舵机指令角
      （rad，0..270°，Home=0/225/270/0/0/0），**不是** rak_arm.urdf.xacro 的 q_urdf。
      arm_command_: 控制器写入的目标；arm_sent_: 已交给 Session 的目标（事件驱动基准，
-     禁止周期重放旧目标）；arm_position_: 固件回读（舵机无编码器，非物理测量）。 */
+     禁止周期重放旧目标）。
+     arm_position_: 固件回读。A2（2026-10-28）起 J1/J2 是增量编码器电机——回读是
+     **真测量**；J3..J6 仍是舵机脉宽回声（±1°，非物理测量），夹爪无反馈。 */
   static constexpr std::size_t kArmAxes = 7U;
   static constexpr std::size_t kArmPoseJoints = 6U;  // 夹爪无反馈，不进 state
   std::array<std::string, kArmAxes> arm_names_{};
@@ -73,6 +75,12 @@ private:
      激活时舵机回读未就绪则整个生命周期都不发臂命令——避免控制器拿陈旧零位当
      "当前位"后把臂按到 0。atomic：激活线程与 CM 更新线程都会碰它。 */
   std::atomic<bool> arm_ready_{false};
+  /* [AI] 臂板（0x031/0x221）健康门：收到臂板故障（STATE 坏消息位 / MODE∈{2,3}）后
+     抑制臂命令（舵机 J3..J6 无门控，只有本层能拦住）。未收到过臂板诊断时保持 true
+     —— 不给不发 0x221 的旧固件制造假阴性。 */
+  std::atomic<bool> arm_node_ok_{true};
+  bool arm_fault_reported_{false};   // [AI] 臂板故障只在进入时报一次
+  bool arm_online_reported_{false};  // [AI] 臂板上线只在进入时报一次
   bool arm_nan_reported_{false};  // [AI] 非法臂指令只在由好变坏时报一次
   uint32_t host_build_id_{};
   bool allow_motion_{};  // [AI] 运动许可：默认 false，只有 URDF 显式配置 true 才允许 ARMED

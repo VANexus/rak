@@ -40,7 +40,10 @@ setup(
     maintainer_email="xrak@xrak.local",
     description="Pinocchio-backed IK service for MoveIt (srv_kinematics_plugin glue).",
     license="Apache-2.0",
-    tests_require=["pytest"],
+    # [AI] 现代 setuptools 已删 tests_require（会报 Unknown distribution option），
+    # 于是 colcon 的 pytest 测试步匹配不到、回落到 unittest（0 用例）。改用
+    # extras_require["test"] —— colcon 的 extract_dependencies 认这个键。
+    extras_require={"test": ["pytest"]},
     entry_points={
         "console_scripts": [
             "ik_service_node = rak_arm_pinocchio_ik.ik_service_node:main",

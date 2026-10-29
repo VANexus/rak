@@ -1,0 +1,31 @@
+# MoveIt 侧：轨迹往哪儿发。
+#
+# 发到 arm_controller（joint_trajectory_controller）的标准
+# FollowJointTrajectory action —— 由 rak_arm_ros2_control.yaml 里的 JTC 提供服务，
+# 底层是 mock_components/GenericSystem（纯软件仿真）。
+#
+# ⚠️ 关节名与 rosparam 里的 arm_controller.joints 必须逐字一致，否则 JTC 拒收。
+#    （之前这里是空控制器列表 —— 能规划但 Execute 没落点。）
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+# MoveIt 在执行前会校验"轨迹起点 vs 当前状态"（默认容差 0.01 rad）。
+# 默认值对本机偏紧：规划与执行之间隔了几秒，或你点的是**上一次的旧轨迹**时，
+# 会报 "Invalid Trajectory: start point deviates from current robot state"。
+# 0.05 rad ≈ 2.9°，够宽容又不会放过明显错的轨迹。
+trajectory_execution:
+  allowed_start_tolerance: 0.05
+
+moveit_simple_controller_manager:
+  controller_names:
+    - arm_controller
+  arm_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - j1_base
+      - j2_shoulder
+      - j3_elbow
+      - j4_forearm
+      - j5_wrist_pitch
+      - j6_wrist_roll

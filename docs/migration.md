@@ -186,3 +186,55 @@ CTest 21 项、任务/机械臂 pytest 4 项、UART pytest 13 项以及两组 br
 | `brain/config.toml` | `src/rak_agent/config.toml` |
 
 切换后首次构建需删除旧构建树：`rm -rf build/architecture install/architecture`。
+
+---
+
+## 2026-10-15：六轴臂的关节命名与角度域统一
+
+**背景**：同一个臂在仓库里有**两套互不兼容**的定义 —— MoveIt 侧规划出的轨迹**发不到真机**
+（名字对不上就拒收；名字若对上而角度域不同，真机会照单全收地执行**错角度**，更危险）。
+
+### 关节名（MoveIt 侧 → 真机契约）
+
+| 旧（MoveIt 侧，已废弃） | 新（= `docs/arm_moveit_contract.md` §1，**FROZEN**） |
+| --- | --- |
+| `base_yaw_joint` | `j1_base` |
+| `shoulder_pitch_joint` | `j2_shoulder` |
+| `elbow_pitch_joint` | `j3_elbow` |
+| `forearm_roll_joint` | `j4_forearm` |
+| `wrist_yaw_joint`（**仅**仿真夹具用的别称） | `j4_forearm` |
+| `wrist_pitch_joint` | `j5_wrist_pitch` |
+| `wrist_roll_joint` | `j6_wrist_roll` |
+
+### 角度域
+
+| | 旧 | 新 |
+| --- | --- | --- |
+| `rak_arm.urdf.xacro` 的关节值 | `q_urdf`（相对零位；J2 为 −135..120°） | **指令角**（绝对 0..270°，J2 0..255°） |
+| 零位偏移 | 由各使用方自行换算 | **烘进 joint origin 的 `rpy`**（只有 J2/J3 非零） |
+
+### 改了哪些
+
+- `src/rak_description/urdf/rak_arm.urdf.xacro`（真源）+ `properties_arm.xacro`
+  （限位改指令角、新增 `zero_jN`、J2/J3 的 origin 补零位偏移）
+- `src/rak_moveit_config/`：`rak_arm.srdf` + `rak_arm_{joint_limits,controllers,ros2_control}.yaml`
+  + `validate_rak_arm.py`
+- `src/rak_arm_pinocchio_ik/`、`src/rak_wbc/`、`src/rak_arm_simulation/`
+- 仿真夹具 `six_axis_sim.*` 一并统一（J4 由 `wrist_yaw_joint` 改为 `j4_forearm`）
+
+### **未改（有意保留）**
+
+- `src/rak_description/urdf/rak.urdf.xacro`、`src/rak_moveit_config/config/joint_limits.yaml`、
+  `src/rak_moveit_config/config/fake_controllers.yaml`、`src/rak_description/test/validate_macros.py`
+  —— 这 4 个是**五轴 legacy demo**，且其中 4 个关节名与六轴臂**同名**
+  （`shoulder_pitch_joint`/`elbow_pitch_joint`/`wrist_pitch_joint`/`wrist_roll_joint`）。
+  **全局替换会把 demo 一起改坏**，故按文件白名单改。
+- `docs/adr/0008`、`docs/superpowers/specs/2026-10-0{7,8}-*.md` 里的旧关节名：
+  ADR 不可改、设计稿是历史记录 —— 以本表为准。
+
+### 验证证据（2026-10-15）
+
+- **几何等价**：对 3 组物理姿态做改前/改后正运动学对比，`tool0` 位姿差 **~1e-6**
+- `validate_rak_arm.py` / `validate_six_axis_sim.py` / `validate_yamls.py` 全过
+- `rak_wbc` 桌面测试 3 passed / 15 skipped（跳过项需 pinocchio/OSQP）
+- 仿真链路（MoveIt → JTC → `mock_components`）实测照常：拖 → Plan & Execute → 臂动

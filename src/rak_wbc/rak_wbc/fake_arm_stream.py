@@ -20,18 +20,20 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
 DEFAULT_JOINT_NAMES = [
-    "base_yaw_joint",
-    "shoulder_pitch_joint",
-    "elbow_pitch_joint",
-    "forearm_roll_joint",
-    "wrist_pitch_joint",
-    "wrist_roll_joint",
+    "j1_base",
+    "j2_shoulder",
+    "j3_elbow",
+    "j4_forearm",
+    "j5_wrist_pitch",
+    "j6_wrist_roll",
 ]
 PARAM_DEFAULTS = {
     "arm_setpoints_topic": "/wbc/arm_setpoints",
     "joint_states_topic": "/joint_states",
     "joint_names": DEFAULT_JOINT_NAMES,
-    "init_positions": [0.0, 1.5707963267948966, 1.5707963267948966, 0.0, 0.0, 0.0],
+    # [AI] 2026-10-16：**指令角域**（= 固件 Home 0/225/270/0/0/0°）。
+    # 原来是 q_urdf 域的 [0,90°,90°,0,0,0]，统一角度域后那个值已不等于 Home。
+    "init_positions": [0.0, 3.9269908169872414, 4.71238898038469, 0.0, 0.0, 0.0],
     "publish_rate_hz": 50.0,
     "setpoint_timeout": 0.5,
 }

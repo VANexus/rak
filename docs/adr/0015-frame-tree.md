@@ -98,8 +98,14 @@
    `imu_x/z`、`arm_x/z`（臂安装面高）——装车标定后填回 `rak_chassis.urdf.xacro`。
 2. **`world → map` 全局锚点未实现**：现为静态恒等占位；户外 ECEF/UTM 或多地图注册模块待设计。
 3. **相机外参未标定**：`base_link→camera_link` 按 ADR-0014 实测；深度/彩色光学帧由驱动发布。
-4. **机械臂六轴链未接入 RSP**：关节接口未 commissioned（ADR-0007/0011），`arm_base_link` 目前
-   是叶子帧；接上后由 RSP + `joint_states` 补齐 `arm_base_link→…→tool0`。
+4. ~~**机械臂六轴链未接入 RSP**~~ ✅ **已闭合（2026-10-15）**：`rak_chassis.urdf.xacro`
+   里的臂从"零长度控制桩链"换成了**真实运动链**——几何单点定义在
+   `src/rak_description/urdf/macros/arm_chain.xacro`，由本文件与
+   `rak_arm.urdf.xacro` **共用同一个宏**（此前是两份互不相干的东西：一份真实几何、
+   一份空壳）。RSP 现在会发 `arm_base_link→shoulder_link→…→tool0`。
+   本机实测 `tf2` 查 `arm_base_link→tool0` = **(0.10, 0, 0.33)**（Home 位）✅。
+   `RakSystemHardware::on_init` 的 11 关节/顺序/接口契约不变，由
+   `src/rak_chassis/test/validate_chassis_urdf.py` 钉住（已入 `colcon test`）。
 5. **`wbc_base.urdf.xacro` 的 `arm_mount_joint` 为镜像**：值与 `rak_chassis.urdf.xacro` 的
    `arm_mount_joint` 必须同步（ADR-0011 待闭合 #2/#3）。
 6. **REP-120 迁移需上车复测**：`odom→base_footprint` 改动后，EKF 收敛、rf2o 里程、Nav2 跟踪

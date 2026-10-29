@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Orientation
 
 Layered embodied-robot workspace for Jetson Orin Nano / ROS 2 Jazzy: perception + decision on
-the Orin, real-time control on **one** STM32F407 leaf node (see the topology change below).
+the Orin, real-time control on **two** STM32F407 leaf nodes (chassis + arm; see the topology
+changes below — the "one F407" phase is history again).
 Read these before changing behavior — they record decisions the code does not show:
 
 - `README.md` — engineering entry point (Chinese): layout, build, launch entries, hardware.
@@ -28,16 +29,23 @@ Read these before changing behavior — they record decisions the code does not 
 - `AGENTS.md` — parallel agent-instruction file. It overlaps this one but is **not** identical;
   keep both in sync when you change repository-wide guidance.
 
-**Trust hierarchy when docs disagree.** The 2026-10-04 docs (`README.md`, `docs/architecture.md`,
-`docs/project_status.md`) describe the code as it stood then (pre-ADR-0016 link, two-MCU CAN
-topology). The 2026-10-05 docs (`TODO.md`, `docs/CONSTRUCTION.md`, `docs/adr/0007`) describe the
-**accepted target** after the hardware changed. Neither is wrong, but the target is not yet
-implemented. Do not treat a 2026-10-04 status statement as current, and do not implement the
-2026-10-05 target as if the code already supports it.
+**Trust hierarchy when docs disagree.** `AGENTS.md` is the current lead on topology (updated
+2026-10-28/29); the sections below keep the historical reasoning. The 2026-10-04 docs
+(`README.md`, `docs/architecture.md`, `docs/project_status.md`) describe the code as it stood
+then; the 2026-10-05 docs (`TODO.md`, `docs/CONSTRUCTION.md`, `docs/adr/0007`) describe the
+**accepted target** after the first hardware change. Do not treat an old status line as current.
 
-## The 2026-10-05 topology change (most important context)
+## Topology changes (most important context)
 
-The arm board burned out. What changed:
+**2026-10-28 — two boards again (current).** The arm board was replaced/restored, so the
+2026-10-05 "one F407" phase is over. Now: **chassis board** (`vehical_rak_motion`, fw `R64`)
+= 4 wheels + IMU; **arm board** (`vehical_rak_edge_ai`, fw `A2`) = **J1/J2 encoder motors**
+(AT8236 + TIM6 25 kHz position loop, software zeroing) + J3..J6 servos. The Jetson wire
+contract is unchanged (only the board that answers `0x110/0x111`/`0x210/0x211` moved); the
+arm board adds additive `0x031`/`0x221` frames, which `rak_chassis` now subscribes to.
+Protocol stays v4. `R64`/`A2` have never been flashed; J1/J2 polarity/gains are `[AI]`.
+
+**2026-10-05 — the "one F407" phase (now superseded, kept for reasoning):**
 
 | | Before (ADR-0001, 2026-10-04) | Now (ADR-0007, 2026-10-05) |
 |---|---|---|
@@ -59,10 +67,15 @@ spawns `arm_controller` (JointTrajectoryController) + `gripper_controller` from
 (feedback sync, controllers active, action path + `arm_tui` end-to-end) and then with
 `allow_motion:=true` for a real j1 jog + Home round-trip (frame-level verified on can0:
 event-driven `ARM_CMD` ramps at 0.1° quantization, no faults); J2–J6 motion, limits and
-estop-under-motion remain unverified. The 7 arm joints ride on a zero-length control stub chain inside
-`rak_chassis.urdf.xacro` (Jazzy requires every `<ros2_control>` joint in the kinematic tree);
-real geometry stays in `rak_arm.urdf.xacro`, and the gripper has no physical feedback
-channel. Its transport seam is the `Session` abstraction:
+estop-under-motion remain unverified. The 7 arm joints' **real geometry** is defined **once** in
+`src/rak_description/urdf/macros/arm_chain.xacro` (a single `<xacro:rak_arm_chain/>` macro,
+2026-10-16) and shared by **both** `rak_arm.urdf.xacro` (MoveIt side) and
+`rak_chassis.urdf.xacro` (the real robot's `robot_state_publisher` — this is what makes
+`shoulder_link…tool0` TF exist at all; the former "zero-length control stub chain" is gone).
+The gripper has no geometry and no physical feedback channel; a bare `gripper_link` frame
+after `tool0` exists only because Jazzy requires every `<ros2_control>` joint to be in the
+kinematic tree. `src/rak_chassis/test/validate_chassis_urdf.py` pins that 11-joint contract
+under `colcon test`. Its transport seam is the `Session` abstraction:
 `CanSession` (SocketCAN CAN v4) is the **only** implementation — ADR-0016 (2026-10-14)
 deleted the USB v2 link, its `SerialSession`, `rak_base_driver` and `rak_serial_link`, the
 direct-connect commissioning TUIs, the serial scripts and `docs/protocol/` (snapshot: git
@@ -91,8 +104,10 @@ Two facts that are easy to get wrong:
 ## Layout
 
 `colcon build` runs from the repo root and picks up `src/` (ADR-0013: everything buildable
-lives there; the 2026-10-09 regroup maps 23 packages → 18 buildable + 2 archived, see
-`docs/migration.md` for the full dated table).
+lives there; the 2026-10-09 regroup mapped 23 packages → 18 buildable + 2 archived, see
+`docs/migration.md` for the full dated table). As of 2026-10-29 `check_workspace.py`'s
+`EXPECTED` holds **22** owned packages (v3 `rak_can_driver` removed; `rak_harness` and
+`rak_tool_executor` added upstream since the regroup).
 
 | Package | Contents |
 |---|---|

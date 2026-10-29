@@ -5,6 +5,18 @@ joint_state_broadcaster、mecanum_drive_controller、arm_controller(JTC) 与
 gripper_controller。上层工具（chassis_tui / arm_tui 等）只经 ROS 接口对话，
 不直连 CAN（ADR-0016 决策 2）。
 
+臂运动写者二选一（arm_motion_writer，ADR-0011 D1：底盘/臂各有多个候选写者，
+但同一批 position 命令接口同一时刻只能有一个 active 控制器）：
+  - jtc（默认）：arm_controller = JointTrajectoryController —— MoveIt / arm_tui 的
+    FollowJointTrajectory 入口（轨迹语义，与 MoveIt 生态一致）。
+  - wbc：arm_position_controller = ForwardCommandController，话题重映射到
+    /wbc/arm_setpoints —— rak_wbc(HQP) 的位置流入口（速度级 WBC，ADR-0011）。
+  - none：只起底盘，臂接口不激活（纯导航联调 / 臂未接线时）。
+
+⚠️ MoveIt 真机档（rak_moveit_config/launch/rak_arm.launch.py 的 hardware 模式）
+**依赖 jtc**：它不起 controller_manager，直接对接同名的 `arm_controller`。
+选 wbc/none 时该真机档找不到 arm_controller，会起不来（这是预期，不是 bug）。
+
 安全:
 - allow_motion 默认 false —— 硬件永远只发 DISARMED 零目标，臂指令在 Session 层被抑制。
 - allow_motion:=true 是显式运动许可，前提: 车轮架空 + 电池可控 + 有急停手段，
@@ -14,6 +26,7 @@ gripper_controller。上层工具（chassis_tui / arm_tui 等）只经 ROS 接�
 用法:
   ros2 launch rak_bringup chassis_bringup.launch.py
   ros2 launch rak_bringup chassis_bringup.launch.py allow_motion:=true
+  ros2 launch rak_bringup chassis_bringup.launch.py arm_motion_writer:=wbc   # WBC 接管臂
 """
 
 from ament_index_python.packages import get_package_share_directory
@@ -28,6 +41,7 @@ def _launch_setup(context, *args, **kwargs):
     host_build_id = LaunchConfiguration("host_build_id").perform(context)
     allow_motion = LaunchConfiguration("allow_motion").perform(context)
     can_channel = LaunchConfiguration("can_channel").perform(context)
+    arm_writer = LaunchConfiguration("arm_motion_writer").perform(context)
     # [AI] 值含空格，必须整体加引号：Command 走 shlex.split，不加会被拆成 4 个参数
     wheel_sign = LaunchConfiguration("wheel_sign").perform(context)
 
@@ -44,7 +58,7 @@ def _launch_setup(context, *args, **kwargs):
         value_type=str,
     )
 
-    return [
+    nodes = [
         Node(
             package="robot_state_publisher",
             executable="robot_state_publisher",
@@ -78,16 +92,41 @@ def _launch_setup(context, *args, **kwargs):
                        "--param-file", controllers_file],
             output="screen",
         ),
-        # [AI] ADR-0012 待闭合项 #1：臂 + 夹爪控制器。只占 position 接口，
-        # allow_motion=false 时命令在 Session 层被抑制（不会动）。
-        Node(
-            package="controller_manager",
-            executable="spawner",
-            arguments=["arm_controller",
-                       "--controller-manager", "/controller_manager",
-                       "--param-file", controllers_file],
-            output="screen",
-        ),
+    ]
+
+    # [AI] ADR-0012 待闭合项 #1 / ADR-0011 D1：臂运动写者二选一。只占 position
+    # 接口，allow_motion=false 时命令在 Session 层被抑制（不会动）。
+    if arm_writer == "jtc":
+        nodes.append(
+            Node(
+                package="controller_manager",
+                executable="spawner",
+                arguments=["arm_controller",
+                           "--controller-manager", "/controller_manager",
+                           "--param-file", controllers_file],
+                output="screen",
+            )
+        )
+    elif arm_writer == "wbc":
+        # [AI] ForwardCommandController 的入话题固定是 ~/commands，重映射到
+        # /wbc/arm_setpoints（rak_wbc 的臂位置流出口）。--controller-ros-args 传
+        # 一条完整的 ros-args（含 -r）。
+        nodes.append(
+            Node(
+                package="controller_manager",
+                executable="spawner",
+                arguments=["arm_position_controller",
+                           "--controller-manager", "/controller_manager",
+                           "--param-file", controllers_file,
+                           "--controller-ros-args", "-r ~/commands:=/wbc/arm_setpoints"],
+                output="screen",
+            )
+        )
+    elif arm_writer != "none":
+        raise RuntimeError(
+            f"arm_motion_writer must be one of jtc|wbc|none, got {arm_writer!r}")
+
+    nodes.append(
         Node(
             package="controller_manager",
             executable="spawner",
@@ -95,8 +134,9 @@ def _launch_setup(context, *args, **kwargs):
                        "--controller-manager", "/controller_manager",
                        "--param-file", controllers_file],
             output="screen",
-        ),
-    ]
+        )
+    )
+    return nodes
 
 
 def generate_launch_description():
@@ -110,6 +150,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "can_channel", default_value="can0",
             description="SocketCAN 接口名"),
+        # [AI] 臂运动写者：jtc(JTC，MoveIt/arm_tui) | wbc(HQP 位置流) | none
+        DeclareLaunchArgument(
+            "arm_motion_writer", default_value="jtc",
+            description="臂控制器二选一：jtc=JointTrajectoryController(默认) / "
+                        "wbc=arm_position_controller 收 /wbc/arm_setpoints / none"),
         # [AI] 每轮极性（装配事实）：2026-10-14 实车标定左侧 FL/RL 反接，
         # 默认 -1 1 -1 1。命令与反馈按此成对取反，回环自洽。
         DeclareLaunchArgument(

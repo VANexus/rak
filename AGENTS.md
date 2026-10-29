@@ -6,15 +6,39 @@ changing behavior; it records decisions that are not obvious from the code. `CLA
 is the parallel instruction file (Claude Code) and goes deeper on architecture; keep
 repository-wide guidance in sync between the two.
 
-## Topology changed on 2026-10-05, again on 2026-10-09 — read this first
+## Topology: dual-board again since 2026-10-28 — read this first
 
-The arm board burned out. There is now **one** F407 driving 4 wheels + 7 servos.
-**2026-10-09 (ADR-0012): CAN v4 is back as the only primary link** (SN65HVD230 transceiver,
-protocol v4 in the leaf repo); USB v2 is the frozen backup, selectable via `transport:=usb|can`
-behind the `Session` abstraction in `src/rak_chassis`. Upper layers never see which transport
-is active. **2026-10-09 (ADR-0013): the workspace was regrouped by subsystem** — 23 → 18
-buildable packages, `brain/` moved to `src/rak_agent`, CAN v3 stack retired (local `attic/`
-archive deleted 2026-10-10 — the code lives only in git history).
+**2026-10-28 — the second board is back.** The earlier "arm board burned out / one F407
+driving 4 wheels + 7 servos" topology (2026-10-05 … 2026-10-27) is **superseded**. There are
+now **two** C30D F407 boards on one CAN bus with the Jetson (three nodes total):
+
+- **chassis board** (`vehical_rak_motion`, firmware `R64`): 4 wheels + onboard IMU.
+- **arm board** (`vehical_rak_edge_ai`, git dir name `vehical_rak_arm`, firmware `A2`):
+  **J1/J2 = MG513P30 incremental-encoder motors** (AT8236 + TIM6 25 kHz position loop,
+  software zeroing) + **J3..J6 = servos**. A2 (2026-10-28) motorized J1/J2; A1 was pure-servo.
+
+**Jetson sees no wire change from this**: the `ARM_CMD` (0x110/0x111) and `SERVO_STATE`
+(0x210/0x211) frame IDs and byte layouts are unchanged — only the *board* that answers them
+moved. The arm board adds two *additive* uplink frames, `0x031 ARM_NODE_INFO` (1 Hz) and
+`0x221 ARM_DIAG` (10 Hz); `rak_chassis` subscribes to both as of 2026-10-29. CAN protocol
+version stays **v4** (`NODE_INFO.PROTO==4`). `servo_valid_mask` now means: bit0/bit1 =
+J1/J2 **true encoder measurement**; bit2..5 = J3..J6 **servo-pulse echo** (not physical);
+bit6 grip = no feedback.
+
+**Still unverified on hardware**: `R64` and `A2` have never been flashed/run. J1/J2
+encoder polarity, gains and limits are `[AI]` placeholders — see
+`vehical_rak_edge_ai/README.md` §6 before sending any `ARM_CMD`.
+
+**2026-10-09 (ADR-0012): CAN v4 is the primary link** (SN65HVD230 transceiver, protocol v4 in
+the leaf repo). **ADR-0016 (2026-10-14) then deleted the USB v2 transport entirely**: CAN v4
+is now the *only* transport, and `Session` (`src/rak_chassis`) has a single implementation,
+`CanSession`. Upper layers never see the link. **2026-10-09 (ADR-0013): the workspace was
+regrouped by subsystem** — `brain/` moved to `src/rak_agent`, CAN v3 stack retired (local
+`attic/` archive deleted 2026-10-10 — the code lives only in git history). On 2026-10-29 the
+two remaining v3 leftovers were also removed: the `rak_can_driver` package (deleted) and the
+never-committed `rak_base_driver` dir. `scripts/check_workspace.py`'s `EXPECTED` is now **22**
+owned packages (v3 `rak_can_driver` gone; upstream meanwhile added `rak_harness` and
+`rak_tool_executor`).
 
 - `docs/adr/*` are immutable (append/supersede only), indexed by `docs/adr/README.md`.
   **ADR-0007 supersedes ADR-0001**; the valid set is 0002 + 0003 (v4 layer) + 0004–0015.
@@ -46,17 +70,21 @@ archive deleted 2026-10-10 — the code lives only in git history).
   jog**: j1 +5° and Home both SUCCEEDED, the wire carried 35 `ARM_CMD_A` frames ramping
   0.1°→5.0°→0.0° at 0.1° quantization (event-driven, no periodic replay), readback followed,
   no faults. Still unverified: J2–J6 physical motion, limit/estop behavior under motion,
-  and the gripper (no hardware channel — readback is always 0). The 7 arm joints are backed
-  by a documented zero-length control stub chain in `rak_chassis.urdf.xacro` (Jazzy requires
-  every `<ros2_control>` joint to exist in the kinematic tree); real geometry stays in
-  `rak_arm.urdf.xacro`.
+  and the gripper (no hardware channel — readback is always 0). The 7 arm joints' real
+  geometry is defined **once** in `src/rak_description/urdf/macros/arm_chain.xacro`
+  (`<xacro:rak_arm_chain/>`, 2026-10-16) and shared by `rak_arm.urdf.xacro` and
+  `rak_chassis.urdf.xacro`; the former zero-length control stub chain is gone. The gripper
+  has no geometry — a bare `gripper_link` frame after `tool0` only keeps Jazzy's
+  "every `<ros2_control>` joint must exist in the kinematic tree" satisfied.
+  `src/rak_chassis/test/validate_chassis_urdf.py` pins that contract under `colcon test`.
   `src/rak_moveit_config/test/validate_six_axis_sim.py:36` still asserts the
   six-axis **sim fixture** URDF contains no `<ros2_control>` tag — that fixture is not the
   real arm.
 - The **CAN v3 host stack** (`rak_can_driver`, `rak_serial_link`) is retired (ADR-0012/0013);
-  the local `attic/` archive was **deleted on 2026-10-10** — the code lives only in git
-  history (retrievable at commit `4f34795` and earlier). The live CAN path is the
-  `CanSession` backend inside `src/rak_chassis`.
+  the local `attic/` archive was **deleted on 2026-10-10**, and the last straggler package
+  `src/rak_can_driver` was **deleted on 2026-10-29** — the code lives only in git history
+  (retrievable at commit `4f34795` and earlier). The live CAN path is the `CanSession`
+  backend inside `src/rak_chassis`.
 - Docs disagree by date, not correctness. The 2026-10-04 set (`README.md`,
   `docs/architecture.md`, `docs/project_status.md`) describes the code as it stands;
   `TODO.md`, `docs/CONSTRUCTION.md` and `docs/adr/0007` describe the accepted target.

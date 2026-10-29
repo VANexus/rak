@@ -24,7 +24,8 @@ setup(
     maintainer_email="xrak@todo.todo",
     description="Single owner for text navigation tasks and Nav2 interruption lifecycle.",
     license="Apache-2.0",
-    tests_require=["pytest"],
+    # [AI] tests_require 在现代 setuptools 失效；用 extras_require["test"] 让 colcon 走 pytest。
+    extras_require={"test": ["pytest"]},
     entry_points={
         "console_scripts": [
             "task_executor = rak_task_executor.node:main",

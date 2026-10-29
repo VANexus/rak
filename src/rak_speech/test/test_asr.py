@@ -161,14 +161,20 @@ def test_find_model_searches_the_repo_data_models(tmp_path):
     expected = tmp_path / "data" / "models" / "vosk-model-small-cn-0.22"
     expected.mkdir(parents=True)
     start = tmp_path / "src" / "rak_speech"  # not created; the walk only goes up
-    found = SpeechAsr._find_model(SpeechAsr.__new__(SpeechAsr), starts=(start,))
+    # [AI] _find_model 现在按 self._engine 分支（zipformer vs vosk）；__new__ 绕过 __init__
+    # 不会设该属性，这里显式给 vosk 分支（此处要验的正是 vosk 的 data/models 走查）。
+    asr = SpeechAsr.__new__(SpeechAsr)
+    asr._engine = "vosk"
+    found = SpeechAsr._find_model(asr, starts=(start,))
     assert found == str(expected)
 
 
 def test_find_model_says_empty_when_no_model_exists(tmp_path):
     start = tmp_path / "nowhere"
     start.mkdir()
-    found = SpeechAsr._find_model(SpeechAsr.__new__(SpeechAsr), starts=(start,))
+    asr = SpeechAsr.__new__(SpeechAsr)
+    asr._engine = "vosk"
+    found = SpeechAsr._find_model(asr, starts=(start,))
     assert found == "", "an absent model must be empty, not a guess"
 
 

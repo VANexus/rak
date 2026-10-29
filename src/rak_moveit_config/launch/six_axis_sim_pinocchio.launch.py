@@ -90,12 +90,12 @@ def generate_launch_description():
             parameters=[{
                 "urdf_path": urdf,
                 "joint_names": [
-                    "base_yaw_joint",
-                    "shoulder_pitch_joint",
-                    "elbow_pitch_joint",
-                    "wrist_yaw_joint",
-                    "wrist_pitch_joint",
-                    "wrist_roll_joint",
+                    "j1_base",
+                    "j2_shoulder",
+                    "j3_elbow",
+                    "j4_forearm",
+                    "j5_wrist_pitch",
+                    "j6_wrist_roll",
                 ],
                 "tip_frame": "tool0",
                 "group_name": "arm",

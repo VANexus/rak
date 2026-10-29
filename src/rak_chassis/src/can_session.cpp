@@ -5,6 +5,8 @@
 //   本类只做编解码与节拍；SocketCAN 收发不占用户态 CPU（用户要求的最丝滑路径）。
 #include "rak_chassis/can_session.hpp"
 
+#include "rak_chassis/can_decode.hpp"
+
 #include <net/if.h>
 
 #include <linux/can.h>
@@ -33,17 +35,17 @@ constexpr uint32_t kIdWheelSpd = 0x202U;
 constexpr uint32_t kIdServoA = 0x210U;       // [AI] 冻结版补齐：J1-J4 实际角遥测
 constexpr uint32_t kIdServoB = 0x211U;       // [AI] J5,J6,夹爪 实际角遥测
 constexpr uint32_t kIdDiag = 0x220U;
+/* [AI] 机械臂板上行（双板架构 2026-10-28）。底盘板与臂板各自一套 NODE_INFO/DIAG，
+ * 同总线 ID 全局唯一，故臂板另起 0x031/0x221，避免与 0x030/0x220 撞车。 */
+constexpr uint32_t kIdArmNodeInfo = 0x031U;  // ARM_NODE_INFO: PROTO/HWREV/BUILD/FAULT/STATE
+constexpr uint32_t kIdArmDiag = 0x221U;      // ARM_DIAG: FAULT/STATE/MODE/SERVO_ERRCNT/RSVD
 constexpr uint8_t kDidSafety = 0x01U;
-/* [AI] STATE 位图里"坏消息"的位掩码（协议真源 PROTOCOL.md §5，v4 冻结）：
- * bit0 estop_latched / bit2 fault_active / bit3 cmd_stale / bit4 bat_uv /
- * bit5 can_recovering。
- * 不进掩码的两段都必须排除，否则 ros2_control 会把健康态当故障：
- *   bit1 remote_running —— ARM(START) 后必然为 1；
- *   bit6-10 驱动门自诊断（dg_remote/dg_cal/dg_imu/dg_snapshot/dg_stab）
- *     —— 1 = 放行链正常，固件一收到 DRIVE_CMD 流就会点亮（实测 0x0180）。 */
-constexpr uint16_t kStateFaultMask = 0x003DU;
+/* [AI] kStateFaultMask 与 LE 读取器统一搬到 can_decode.hpp（单点定义 + 可单测）。 */
 
 constexpr int kDriveHz = 100;                     // [AI] DRIVE_CMD 周期（v4 §3）
+/* [AI] 臂板上行新鲜度窗口：ARM_NODE_INFO @1 Hz + ARM_DIAG @10 Hz，取 1.5 s
+ * （覆盖 1 Hz NODE_INFO 抖动；两帧都断流才判 arm_online=false）。 */
+constexpr int kArmInfoTimeoutMs = 1500;
 constexpr int kArmHz = 50;                        // [AI] ARM_CMD 上限节拍（v4 §3，实际事件驱动）
 constexpr double kDriveLsbRadS = 0.01;            // [AI] DRIVE_CMD 量化 0.01 rad/s
 constexpr double kSpdLsbRadS = 0.01;              // [AI] WHEEL_SPD 量化
@@ -86,24 +88,6 @@ uint16_t to_servo_lsb(double rad)
   return static_cast<uint16_t>(v);
 }
 
-int32_t read_i32(const std::array<uint8_t, 8> &d, size_t off)
-{
-  return static_cast<int32_t>(
-    static_cast<uint32_t>(d[off]) | (static_cast<uint32_t>(d[off + 1]) << 8U) |
-    (static_cast<uint32_t>(d[off + 2]) << 16U) | (static_cast<uint32_t>(d[off + 3]) << 24U));
-}
-
-int16_t read_i16(const std::array<uint8_t, 8> &d, size_t off)
-{
-  return static_cast<int16_t>(
-    static_cast<uint16_t>(d[off]) | (static_cast<uint16_t>(d[off + 1]) << 8U));
-}
-
-uint16_t read_u16(const std::array<uint8_t, 8> &d, size_t off)
-{
-  return static_cast<uint16_t>(static_cast<uint16_t>(d[off]) |
-    (static_cast<uint16_t>(d[off + 1]) << 8U));
-}
 }  // namespace
 
 CanSession::CanSession(
@@ -146,10 +130,10 @@ bool CanSession::try_open()
       addr.can_family = AF_CAN;
       addr.can_ifindex = ifr.ifr_ifindex;
       // [AI] 只收这些 ID，减少内核→用户态拷贝（过滤器在内核态生效）
-      can_filter filters[9];
-      const uint32_t ids[9] = {kIdSafety, kIdNodeInfo, kIdDriveCmd, kIdWheelPosA,
-        kIdWheelPosB, kIdWheelSpd, kIdServoA, kIdServoB, kIdDiag};
-      for (size_t i = 0U; i < 9U; ++i) {
+    can_filter filters[11];
+    const uint32_t ids[11] = {kIdSafety, kIdNodeInfo, kIdArmNodeInfo, kIdDriveCmd,
+      kIdWheelPosA, kIdWheelPosB, kIdWheelSpd, kIdServoA, kIdServoB, kIdDiag, kIdArmDiag};
+    for (size_t i = 0U; i < 11U; ++i) {
         filters[i].can_id = ids[i];
         filters[i].can_mask = CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_SFF_MASK;
       }
@@ -245,6 +229,15 @@ SessionSnapshot CanSession::snapshot() const
       result.servo_valid_mask = 0U;
     }
   }
+  /* [AI] 臂板新鲜度：只有收到过 0x031/0x221 才计算；断流超窗 -> arm_online=false
+   * （arm_state/arm_fault 保留最后一次快照供诊断；消费端以 arm_online 判定在用性）。 */
+  if (result.arm_online) {
+    result.arm_feedback_age = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - last_arm_info_at_);
+    if (result.arm_feedback_age > std::chrono::milliseconds(kArmInfoTimeoutMs)) {
+      result.arm_online = false;
+    }
+  }
   return result;
 }
 
@@ -285,13 +278,45 @@ void CanSession::process_rx(const std::array<uint8_t, 8> &d, uint32_t can_id)
   std::lock_guard<std::mutex> lock(snapshot_mutex_);
   switch (can_id) {
     case kIdNodeInfo:
+    {
+      const NodeInfoFrame info = decode_node_info(d);
       // [AI] PROTO=4 才认（v4 §10.4：旧固件拒绝发指令）
-      if (d[0] == 4U) {
+      if (info.proto_ok) {
         snapshot_.handshaken = true;
         last_node_info_at_ = now;
       }
-      snapshot_.fault_bitmap = read_u16(d, 4U);
+      /* [AI] 2026-10-28：0x030.FAULT_u16 走独立字段，不再覆盖 0x220 的 fault_bitmap
+       * （两者语义不同、周期不同，过去互相冲刷造成 1 Hz vs 10 Hz 竞态）。 */
+      snapshot_.chassis_fault_code = info.fault;
+    }
       break;
+  case kIdArmNodeInfo:
+    {
+      const ArmNodeInfoFrame info = decode_node_info(d);
+      // [AI] 臂板握手：PROTO=4 才认作"机械臂板在线"（v4 加法帧，旧底盘固件不发）
+      if (info.proto_ok) {
+        snapshot_.arm_online = true;
+        last_arm_info_at_ = now;
+      }
+      snapshot_.arm_hw_rev = info.hw_rev;
+      snapshot_.arm_build_tag = info.build_tag;   // build_tag[0],[1] LE：'A','2' -> 0x3241
+      snapshot_.arm_fault = info.fault;
+      snapshot_.arm_state = info.state;
+    }
+    break;
+  case kIdArmDiag:
+    /* [AI] 臂板诊断（decode_arm_diag：FAULT/STATE/MODE/SERVO_ERRCNT）。臂板无电池
+     * 通道，FAULT_u16 当前恒 0；J1/J2 位置环故障经 STATE.bit2（fault_active）上报。 */
+    {
+      const ArmDiagFrame diag = decode_arm_diag(d);
+      snapshot_.arm_fault = diag.fault;
+      snapshot_.arm_state = diag.state;
+      snapshot_.arm_mode = diag.mode;
+      snapshot_.arm_servo_errcnt = diag.servo_errcnt;
+      snapshot_.arm_faulted = diag.faulted;
+      last_arm_info_at_ = now;   // 臂板仍在上行（不据此置 arm_online，见 0x031）
+    }
+    break;
     case kIdWheelPosA:
       // [AI] W1/W2 原始 counts → rad（名义 CPR，见 kWheelCprNominal 注释）
       snapshot_.wheel_position[0] =
@@ -320,8 +345,9 @@ void CanSession::process_rx(const std::array<uint8_t, 8> &d, uint32_t can_id)
       }
       break;
     case kIdServoA:
-      // [AI] 冻结版补齐：J1-J4 实际角（0.1° u16 → rad）。舵机遥测由固件
-      // servo_get_pulse 回读，视为始终有效；夹爪无反馈通道（见 kIdServoB）。
+    /* [AI] J1-J4 实际角（0.1° u16 -> rad）。A2（2026-10-28）起 J1/J2 是增量编码器
+     * 电机：bit0/bit1 为**真测量**（0.0059°/count）；J3/J4 仍是舵机脉宽回声
+     * （servo_get_pulse，±1°，非物理测量）。夹爪无反馈通道（见 kIdServoB）。 */
       for (size_t i = 0U; i < 4U; ++i) {
         snapshot_.joint_position[i] =
           static_cast<double>(read_u16(d, i * 2U)) * kServoLsbRad;
@@ -340,13 +366,12 @@ void CanSession::process_rx(const std::array<uint8_t, 8> &d, uint32_t can_id)
       // [AI] STATE 位图只把坏消息位写进 fault_bitmap（见 kStateFaultMask 注释）；
       // MODE: 2=ESTOP 3=FAULT
       {
-        const uint16_t state = read_u16(d, 4U);
-        const uint8_t mode = d[6];
+      const DiagFrame diag = decode_diag(d);
         const bool fault =
-          (state & 0x0005U) != 0U || mode == 2U || mode == 3U;
+        (diag.state & 0x0005U) != 0U || diag.mode == 2U || diag.mode == 3U;
         fault_latched_.store(fault);
         snapshot_.faulted = fault;
-        snapshot_.fault_bitmap = static_cast<uint16_t>(state & kStateFaultMask);
+      snapshot_.fault_bitmap = static_cast<uint16_t>(diag.state & kStateFaultMask);
         snapshot_.encoder_epoch = 0U;   // [AI] CAN v4 无 epoch 概念，恒 0
         snapshot_.sample_time_us =
           static_cast<uint64_t>(
