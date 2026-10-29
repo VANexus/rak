@@ -1,0 +1,106 @@
+# CANopen v5 —— Jetson 侧通信契约（ADR-0022）
+#
+# 这份文件存在的唯一理由：**避免重犯 v4 的原罪**。ADR-0021 记录 v4 的帧表在三处复制
+# （YAML / 两端 C++ / C），历史上出过量化因子错 10 倍（R62/R63）与双板同 ID 双发。
+# 所以这里刻意**不重复帧布局**：布局只来自同仓的 `config/<node>.json`（SSOT 副本，
+# 下面 pin 了哈希），本文件只补充 JSON 里**没有**的两类信息：
+#
+#   1) 通信参数（节点号、SYNC、心跳、消费者超时、命令活性窗）—— 出处全部标注；
+#   2) 每个对象的单位与量化因子 —— SSOT 里没有，出处是设计件 §对象表。
+#
+# `contract.py` 会校验：本文件提到的每个对象名都必须存在于 JSON；多一个、少一个、
+# 名字打错都直接失败。这样"第四份帧表"根本不可能出现。
+#
+# 出处缩写：
+#   [V5]   docs/CANOPEN-V5.md（伞形仓规范件）
+#   [SPEC] docs/superpowers/specs/2026-10-29-can-v5-canopen-design.md
+#   [A21]  rak/docs/adr/0021-can-v5-canopen-on-mcus.md
+
+byte_order: little        # STM32 小端 + CANopenNode 按 OD 内存序打包。TODO(实测)：明日首帧核对
+sync_cob_id: 0x080        # [V5] §3 / [SPEC] 端口表：Jetson 产生 SYNC
+nmt_cob_id: 0x000         # [SPEC] Jetson 发，两板收
+
+nodes:
+  chassis:
+    json: chassis.json
+    node_id: 1            # [SPEC] §拓扑「节点 ID | 底盘 1，机械臂 2，Jetson 127」
+    sync_period_ms: 2.0   # [SPEC]「SYNC 周期 2 ms（500 Hz），Jetson 产生；PDO 同步发送」
+    heartbeat_produce_ms: 1000    # [V5] §3「Heartbeat 1000 ms 生产者」
+    consume_timeout_ms: 500       # [SPEC]「消费者（Jetson）超时 500 ms」
+    # 命令活性 = deadman：[V5] §5「cmd_seq 在 100 ms 内必须变化，且 cmd_flags.bit0=1，
+    # 且节点处于 Operational，否则底盘 enable=0」
+    liveness: {seq_objects: [cmd_seq], enable_bit: 0, window_ms: 100}
+    identity_sdo:
+      build_tag: 0x2F00   # [V5] §5「0x2F00 tag_packed（build_tag 前 4 字符小端打包，实测 52 37 33="R73"）」
+      reset_cause: 0x2F01 # [V5] §5 'S'/'I'/'P'/'B'
+      device_name: 0x1008 # [SPEC] 必保对象清单
+      hw_version: 0x1009
+      sw_version: 0x100A
+      # JSON 里的 identity.sw_version 是**编译期常量**，只用于对照 SDO 实读结果；
+      # 真机判定运行版本必须读 SDO（AGENTS §5「用 build_tag 判别实际运行版本」）。
+      manifest_sw_version: R73
+
+  arm:
+    json: arm.json
+    node_id: 2            # [SPEC]
+    sync_period_ms: 2.0
+    heartbeat_produce_ms: 1000
+    consume_timeout_ms: 500
+    liveness: {seq_objects: [cmd_seq], enable_bit: 0, window_ms: 100}
+    identity_sdo:
+      build_tag: 0x2F00   # [V5] §5 同款；臂板 A14
+      reset_cause: 0x2F01
+      manifest_sw_version: A14   # arm.json 没有 identity 段，这里只留文档值对照，不做门禁
+
+# 单位与量化因子。JSON 里只有 index/name/type/access/pdo，没有这些 —— 全部逐条给出处。
+# 范围/饱和值是**算出来的**（见 contract.py），不是抄的：因子 × 类型位宽。
+semantics:
+  # ---- 底盘 node 1 ----
+  w1spd:   {unit: rad/s, factor: 0.01, source: "[SPEC] 0x2000 WheelSpeedCmd ARRAY[4] INT16，0.01 rad/s"}
+  w2spd:   {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
+  w3spd:   {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
+  w4spd:   {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
+  w1spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 0x2001 WheelSpeedFb ARRAY[4] INT16，0.01 rad/s"}
+  w2spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
+  w3spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
+  w4spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
+  w1pos:   {unit: counts, factor: 1.0, source: "[SPEC] 0x2002 WheelPosA ARRAY[2] INT32，counts"}
+  w2pos:   {unit: counts, factor: 1.0, source: "[SPEC] 同上"}
+  w3pos:   {unit: counts, factor: 1.0, source: "[SPEC] 0x2003 WheelPosB ARRAY[2] INT32，counts"}
+  w4pos:   {unit: counts, factor: 1.0, source: "[SPEC] 同上"}
+  imu_dyaw:  {unit: rad,  factor: 0.001, source: "[SPEC] 0x2004 ChassisImu dYaw INT16 mrad"}
+  imu_pitch: {unit: deg,  factor: 0.01,  source: "[SPEC] 0x2004 pitch INT16 0.01°"}
+  imu_roll:  {unit: deg,  factor: 0.01,  source: "[SPEC] 0x2004 roll INT16 0.01°"}
+  imu_evt:   {unit: event, factor: 1.0,  source: "[SPEC] 0x2004 evt UINT8；事件编码见明日实测回填", todo: "枚举值未在规范件里定义"}
+  imu_age:   {unit: ms,   factor: 1.0,   source: "[SPEC] 0x2004 age UINT8 ms"}
+  cmd_seq:   {unit: count, factor: 1.0,  source: "[V5] §5 命令序号，100 ms 内必须变化"}
+  cmd_flags: {unit: bitmap, factor: 1.0, source: "[V5] §5 bit0 = 使能"}
+  # ---- 机械臂 node 2 ----
+  j1cmd: {unit: deg, factor: 0.1, source: "[SPEC] 0x2100 ArmCmdA ARRAY[4] UINT16，0.1°（J1-J4）"}
+  j2cmd: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  j3cmd: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  j4cmd: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  j5cmd: {unit: deg, factor: 0.1, source: "[SPEC] 0x2101 ArmCmdB ARRAY[4] UINT16，0.1°（J5,J6,GRIP,保留）"}
+  j6cmd: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  gripcmd: {unit: deg, factor: 0.1, source: "[SPEC] 同上（夹爪同域）"}
+  j8cmd:   {unit: deg, factor: 0.1, source: "[SPEC] 同上（保留位）", todo: "名字是 j8cmd，规范件写的是「保留」——明日核对语义"}
+  j1state: {unit: deg, factor: 0.1, source: "[SPEC] 0x2102 ServoStateA ARRAY[4] UINT16，0.1°"}
+  j2state: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  j3state: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  j4state: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  j5state: {unit: deg, factor: 0.1, source: "[SPEC] 0x2103 ServoStateB ARRAY[4] UINT16，0.1°"}
+  j6state: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  gripstate: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  j8state:   {unit: deg, factor: 0.1, source: "[SPEC] 同上", todo: "同 j8cmd"}
+  imu_gz:   {unit: deg/s, factor: 0.01, source: "[SPEC] 0x2104 ArmImu gz INT16 0.01°/s"}
+  imu_amag: {unit: mg,    factor: 1.0,  source: "[SPEC] 0x2104 amag UINT16 mg"}
+  imu_rsvd: {unit: raw,   factor: 1.0,  source: "[SPEC] 0x2104 reserved UINT16"}
+  state:  {unit: raw, factor: 1.0, source: "[SPEC] 0x2105 ArmStatus state UINT16", todo: "位定义见明日实测/规范件补充"}
+  fault:  {unit: bitmap, factor: 1.0, source: "[SPEC] 0x2105 fault UINT16", todo: "位定义未定义"}
+  mode:   {unit: raw, factor: 1.0, source: "[SPEC] 0x2105 mode UINT8"}
+  errcnt: {unit: count, factor: 1.0, source: "[SPEC] 0x2105 servo_errcnt UINT8"}
+
+# v4 回滚链路的 COB-ID 取自本仓代码（不再抄第三份表）：
+# contract.py 从这段路径里正则出 `constexpr uint32_t kId... = 0x...`，
+# 与派生出的 v5 COB-ID 求交集 —— 非空即"同总线混跑"，门禁直接失败。
+v4_id_source: ../rak_chassis/src/can_session.cpp

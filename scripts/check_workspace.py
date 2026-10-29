@@ -29,7 +29,7 @@ EXPECTED = {
     "rak_imu_driver",
     "rak_harness",
     "rak_intent",
-    "rak_interfaces", "rak_lifecycle", "rak_motion_stub", "rak_moveit_config",
+    "rak_canopen", "rak_interfaces", "rak_lifecycle", "rak_motion_stub", "rak_moveit_config",
     "rak_pointcloud", "rak_speech", "rak_stereo_driver",
     "rak_task_executor", "rak_tool_executor", "rak_wbc",
 }
@@ -80,6 +80,8 @@ def check_boundaries(found) -> None:
     # ADR-0020: 生命周期机制层是基础设施，谁都能用，但它不反过来依赖任何自有包；
     # 用了 ManagedNode 的包必须显式声明依赖（漏声明会在单独 clone 构建时才炸）。
     assert not found["rak_lifecycle"][1] & EXPECTED, found["rak_lifecycle"][1] & EXPECTED
+    # ADR-0022: v5 契约层同样是基础设施，不依赖任何自有包 —— 它只读 SSOT 副本。
+    assert not found["rak_canopen"][1] & EXPECTED, found["rak_canopen"][1] & EXPECTED
     for name in ("rak_task_executor", "rak_wbc"):
         assert "rak_lifecycle" in found[name][1], f"{name} 用 ManagedNode 却没声明依赖"
     assert "rak_lifecycle" in found["rak_bringup"][1]

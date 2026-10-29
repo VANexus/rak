@@ -35,6 +35,27 @@
 `rak_wbc/test/test_hqp_numerical.py` 的 `test_support_cbf_locks_com_when_margin_consumed` 与
 `test_solver_matches_true_optimum_across_objective_change` 2 项失败。
 
+## 2026-10-29 续：CANopen v5 的 Jetson 侧契约层（ADR-0022，离线可验证部分已落地）
+
+新包 `src/rak_canopen`（基础设施，不依赖任何自有包；24 包结构门禁已过）：
+
+- **不重写协议**：生产主站是 lely-core（ADR-0021 已选）。本层把下位机 SSOT
+  （`config/chassis.json` / `arm.json`，副本 + sha256 pin）派生成可执行事实：
+  COB-ID、PDO 字节布局与 8 字节上限、偏移、速率（由 `tpdo_types × SYNC 2 ms` 算出：
+  底盘 100 Hz，臂 50/100/10 Hz）、量化范围与越界行为、build_tag SDO 解码、命令活性三条件。
+- **单位/因子单独一张表且每条带出处**（SSOT 里没有这些信息——这正是 v4 量错 10 倍的土壤）；
+  语义名与 JSON 双向闭合，多/少/拼错都装载失败。
+- **"禁止同总线混跑 v4/v5" 现在是算术**：v4 的 ID 从本仓 v4 后端源码正则读出，与派生 v5 ID 求交集，
+  实测冲突 **0x201 / 0x202**（与规范件的说法对上）。
+- **EKF 第一次有显式协方差**（此前 `grep -c covariance` = 0）+ `print_diagnostics: true`；
+  协方差按 `*_config` 融合位生成并被测试钉住。过程中抓到两处真错：PyYAML 把 `1e6`/`1e+06`
+  读成**字符串**、以及 `imu0_config` 开 vyaw 而方差却写在 yaw 位。
+- 已知不自洽**未擅自改**、记录待裁定：`odom0` 位姿与速度同开 vs ADR-0002 约束 #3；
+  `i2c_imu.py:240` 用发布时刻而非采样时刻（他人在制品，本轮不动）。
+- 实测：`rak_canopen` 契约测试 **16/16**、`rak_bringup` EKF 契约 **7/7**（本机离线，
+  无需 ROS/硬件/Orin）。**字节序 `little` 仍是推断**，明日首帧必须核对；
+  实机项见 ADR-0022「明日实机门」。
+
 下一步顺序（按用户定案）：先把本层收尾合入 → 再做 P3 CANopen 主站（届时 `link` 域整段重声明，
 拥有者改为 v5 主站自带的网络管理，遵守 ADR-0020 §3 单一所有者）。
 

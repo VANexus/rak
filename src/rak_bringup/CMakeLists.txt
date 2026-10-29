@@ -14,6 +14,11 @@ if(BUILD_TESTING)
     test_system_manifest
     test/test_system_manifest.py
   )
+  # ADR-0002：EKF 配置自洽性（离线可跑，不依赖 ROS）
+  ament_add_pytest_test(
+    test_ekf_contract
+    test/test_ekf_contract.py
+  )
 endif()
 
 install(DIRECTORY launch config scripts udev DESTINATION share/${PROJECT_NAME})

@@ -60,6 +60,7 @@
 | [0017](0017-read-feedback-vs-cmd-stale.md) | `read()` 反馈否决集剔除 `cmd_stale`(STATE.bit3)：反馈存活性与命令路径状态解耦，拆掉"ERROR→停用→置位→ERROR"自锁；`kStateFaultMask`/诊断不动 | 已接受（2026-10-14） |
 | [0020](0020-managed-lifecycle-and-fault-domains.md) | 全栈受管生命周期：机制=标准 lifecycle_msgs、策略=`rak_lifecycle`+`system_manifest.yaml` 八故障域、观测=diagnostic_msgs；一个组件一个生命周期所有者；激活 ≠ 运动许可（`allow_motion` 仍是唯一许可） | 已接受（2026-10-29） |
 | [0021](0021-can-v5-canopen-on-mcus.md) | 下位机 CAN 换成 v5=CANopen（CiA 301+304，现成栈+EDS 单一来源+官方导出器）；本仓 v4 `CanSession` 对 R73/A14 板子失效，真机链路待 P3 换 lely-core 主站；禁止同总线混跑 v4/v5 | 已接受（2026-10-29）|
+| [0022](0022-jetson-canopen-contract-layer.md) | Jetson 侧 CANopen v5 架构：**契约层与协议栈分离**（生产主站=lely-core，本层只做 SSOT 派生与校验）；单位/因子单表带出处；"禁止 v4/v5 混跑"变成 COB-ID 交集断言（实测冲突 0x201/0x202）；NMT↔生命周期映射；Operational ≠ 运动许可 | 已接受（设计+契约层实现；主站实施待 P3）|
 | [0019](0019-per-board-hardware-split.md) | 双下位机按板拆成两个 `<ros2_control>`（RakChassisHardware / RakArmHardware），共享一个 CanSession；故障域隔离，一块板掉线不再拖垮另一块的控制器 | 已接受（2026-10-29） |
 | [0018](0018-tiered-realtime-voice-response.md) | 语音响应分层：即时反应层（预合成语气素材 <100ms）+ qwentts.cpp 分句流式（TTFA ≤1.5s）+ 显式响应预算；定稿 serena 音色 + instruct 情感 | 接受（2026-10-17） |
 
