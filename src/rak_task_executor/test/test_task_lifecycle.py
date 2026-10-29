@@ -58,6 +58,20 @@ class TaskProbe(Node):
         return future.result()
 
 
+def _activate(executor, node_fqn="/task_executor"):
+    """把受管执行器推到 active（ADR-0020）。
+
+    转移必须由**另一个节点**经 lifecycle 服务发起，测试里没有捷径可走 ——
+    这恰好也是转换之后最该被验证的一点：没激活的执行器根本不该有 action server。
+    """
+    from rak_lifecycle.testing import bring_up, new_driver
+
+    driver = new_driver()
+    executor.add_node(driver)
+    assert bring_up(driver, node_fqn, 15.0), f"{node_fqn} 没能进入 active"
+    return driver
+
+
 def test_pause_resume_cancel_lifecycle(tmp_path):
     rclpy.init()
     waypoint_file = tmp_path / "waypoints.yaml"
@@ -79,6 +93,7 @@ def test_pause_resume_cancel_lifecycle(tmp_path):
     executor.add_node(probe)
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
+    driver = _activate(executor)
 
     try:
         assert probe.action.wait_for_server(timeout_sec=3.0)
@@ -131,7 +146,7 @@ def test_pause_resume_cancel_lifecycle(tmp_path):
     finally:
         executor.shutdown()
         spin_thread.join(timeout=2.0)
-        for node in (probe, executor_node, fake_nav):
+        for node in (driver, probe, executor_node, fake_nav):
             executor.remove_node(node)
             node.destroy_node()
         rclpy.shutdown()
@@ -159,6 +174,7 @@ def test_navigation_success(tmp_path):
     executor.add_node(probe)
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
+    driver = _activate(executor)
 
     try:
         assert probe.action.wait_for_server(timeout_sec=3.0)
@@ -183,7 +199,7 @@ def test_navigation_success(tmp_path):
     finally:
         executor.shutdown()
         spin_thread.join(timeout=2.0)
-        for node in (probe, executor_node, fake_nav):
+        for node in (driver, probe, executor_node, fake_nav):
             executor.remove_node(node)
             node.destroy_node()
         rclpy.shutdown()
@@ -209,6 +225,7 @@ def test_action_protocol_cancel(tmp_path):
     executor.add_node(probe)
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
+    driver = _activate(executor)
 
     try:
         assert probe.action.wait_for_server(timeout_sec=3.0)
@@ -229,7 +246,7 @@ def test_action_protocol_cancel(tmp_path):
     finally:
         executor.shutdown()
         spin_thread.join(timeout=2.0)
-        for node in (probe, executor_node, fake_nav):
+        for node in (driver, probe, executor_node, fake_nav):
             executor.remove_node(node)
             node.destroy_node()
         rclpy.shutdown()
@@ -240,3 +257,38 @@ def _wait_action_future(future, timeout=5.0):
     future.add_done_callback(lambda _: done.set())
     assert done.wait(timeout), "action operation timed out"
     return future.result()
+
+
+def test_unconfigured_executor_has_no_action_server(tmp_path):
+    """ADR-0020 §5：激活之前不对外提供服务。
+
+    这是转换后新增的那条可验证性质 —— 如果哪天有人把 ActionServer 挪回 `__init__`，
+    这个测试会立刻失败，而不是留下一个"任务层随时可被叫醒"的隐式运动许可面。
+    """
+    rclpy.init()
+    waypoint_file = tmp_path / "waypoints.yaml"
+    waypoint_file.write_text(
+        "schema_version: 1\nframe_id: map\nwaypoints: {}\n", encoding="utf-8"
+    )
+    executor_node = TaskExecutor(parameter_overrides=[
+        Parameter("waypoints_file", value=str(waypoint_file)),
+    ])
+    probe = TaskProbe()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(executor_node)
+    executor.add_node(probe)
+    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
+    try:
+        assert not probe.action.wait_for_server(timeout_sec=2.0), (
+            "未配置的 TaskExecutor 暴露了 /task/execute —— 激活不该是装饰性的"
+        )
+        driver = _activate(executor)
+        assert probe.action.wait_for_server(timeout_sec=10.0)
+    finally:
+        executor.shutdown()
+        spin_thread.join(timeout=2.0)
+        for node in (driver, probe, executor_node):
+            executor.remove_node(node)
+            node.destroy_node()
+        rclpy.shutdown()
