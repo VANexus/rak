@@ -59,10 +59,13 @@
 | [0016](0016-retire-usb-transport.md) | 删除 USB v2 链路：CAN v4 唯一传输；工具只经 topic/action/service 与驱动节点对话，禁止直连硬件；`transport`/`device` 参数、`rak_base_driver`、`rak_serial_link`、直连 TUI、串口脚本与 `docs/protocol/` 全部删除 | 已接受（2026-10-14） |
 | [0017](0017-read-feedback-vs-cmd-stale.md) | `read()` 反馈否决集剔除 `cmd_stale`(STATE.bit3)：反馈存活性与命令路径状态解耦，拆掉"ERROR→停用→置位→ERROR"自锁；`kStateFaultMask`/诊断不动 | 已接受（2026-10-14） |
 | [0020](0020-managed-lifecycle-and-fault-domains.md) | 全栈受管生命周期：机制=标准 lifecycle_msgs、策略=`rak_lifecycle`+`system_manifest.yaml` 八故障域、观测=diagnostic_msgs；一个组件一个生命周期所有者；激活 ≠ 运动许可（`allow_motion` 仍是唯一许可） | 已接受（2026-10-29） |
+| [0021](0021-can-v5-canopen-on-mcus.md) | 下位机 CAN 换成 v5=CANopen（CiA 301+304，现成栈+EDS 单一来源+官方导出器）；本仓 v4 `CanSession` 对 R73/A14 板子失效，真机链路待 P3 换 lely-core 主站；禁止同总线混跑 v4/v5 | 已接受（2026-10-29）|
 | [0019](0019-per-board-hardware-split.md) | 双下位机按板拆成两个 `<ros2_control>`（RakChassisHardware / RakArmHardware），共享一个 CanSession；故障域隔离，一块板掉线不再拖垮另一块的控制器 | 已接受（2026-10-29） |
 | [0018](0018-tiered-realtime-voice-response.md) | 语音响应分层：即时反应层（预合成语气素材 <100ms）+ qwentts.cpp 分句流式（TTFA ≤1.5s）+ 显式响应预算；定稿 serena 音色 + instruct 情感 | 接受（2026-10-17） |
 
-> **当前有效架构 = ADR-0002 + 0003(v4 层) + 0004 + 0005 + 0006 + 0007(传输部分被 0012 取代) + 0008 + 0009 + 0010 + 0011 + 0012(备用链路部分被 0016 取代) + 0013 + 0014 + 0015 + 0016 + 0017 + 0018 + 0019 + 0020。**
+> **当前有效架构 = ADR-0002 + 0003(v4 层) + 0004 + 0005 + 0006 + 0007(传输部分被 0012 取代) + 0008 + 0009 + 0010 + 0011 + 0012(备用链路部分被 0016 取代) + 0013 + 0014 + 0015 + 0016 + 0017 + 0018 + 0019 + 0020 + **0021（取代 0012/0016 的协议内容部分）**。
+>
+> ⚠️ **ADR-0021 之后，本仓 `rak_chassis` 的 v4 帧与下位机不兼容**：真机联调前必须先做 P3（lely-core 主站）。
 > 0001 仅作历史记录，不要按其实施。
 > 0008 初稿曾误记末端为吸嘴，同日已更正为舵机夹爪（见该篇修订记录）。
 > 0010 只定义接口与验收，`src/rak_harness` 与 `harness_node` **尚未创建**；「呼吸感」硬件门全关。

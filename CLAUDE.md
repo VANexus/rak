@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+> **CAN 协议已于 2026-10-29 换成 v5 = CANopen（下位机已生效）** —— 见 ADR-0021 与伞形仓
+> `docs/CANOPEN-V5.md`。本仓 `src/rak_chassis` 的 `CanSession`/`can_decode` 仍说 **v4 帧**，
+> 对当前在板固件（底盘 R73 / 机械臂 A14）**完全无效**：板子停在 Pre-operational，
+> 不发 NMT Start 就没有任何 PDO。真机链路要等 P3（lely-core 主站）。
+> 现在验证下位机只能用 `tools/canopen_bringup.py`（原始 SocketCAN），**不要**用 v4 脚本
+> 或手搓 `cansend` 去判断"下位机坏了"。**禁止同一总线混跑 v4/v5**（ID 冲突）。
+
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Orientation
