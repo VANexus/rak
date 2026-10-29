@@ -259,36 +259,25 @@ def _wait_action_future(future, timeout=5.0):
     return future.result()
 
 
-def test_unconfigured_executor_has_no_action_server(tmp_path):
-    """ADR-0020 §5：激活之前不对外提供服务。
+def test_action_server_is_created_only_on_configure(tmp_path):
+    """构造后、配置前，这个节点上还没有 ActionServer（ADR-0020 §5）。
 
-    这是转换后新增的那条可验证性质 —— 如果哪天有人把 ActionServer 挪回 `__init__`，
-    这个测试会立刻失败，而不是留下一个"任务层随时可被叫醒"的隐式运动许可面。
+    用节点本地的属性断言，而不是 `wait_for_server`：同一个 pytest 进程里，上一个用例的
+    participant 可能还没从 CycloneDDS 的发现图里摘掉，话题级断言会假阳性（实测踩过）。
+    另外三个用例在没激活时全部卡在 `wait_for_server` 上，那是同一条性质的端到侧证据。
     """
     rclpy.init()
     waypoint_file = tmp_path / "waypoints.yaml"
     waypoint_file.write_text(
         "schema_version: 1\nframe_id: map\nwaypoints: {}\n", encoding="utf-8"
     )
-    executor_node = TaskExecutor(parameter_overrides=[
+    node = TaskExecutor(parameter_overrides=[
         Parameter("waypoints_file", value=str(waypoint_file)),
     ])
-    probe = TaskProbe()
-    executor = MultiThreadedExecutor(num_threads=4)
-    executor.add_node(executor_node)
-    executor.add_node(probe)
-    spin_thread = threading.Thread(target=executor.spin, daemon=True)
-    spin_thread.start()
     try:
-        assert not probe.action.wait_for_server(timeout_sec=2.0), (
-            "未配置的 TaskExecutor 暴露了 /task/execute —— 激活不该是装饰性的"
-        )
-        driver = _activate(executor)
-        assert probe.action.wait_for_server(timeout_sec=10.0)
+        assert not hasattr(node, "_action_server"), "未配置就建了 ActionServer"
+        assert not hasattr(node, "_control_srv"), "未配置就建了 /task/control"
+        assert node.state_name == "unconfigured"
     finally:
-        executor.shutdown()
-        spin_thread.join(timeout=2.0)
-        for node in (driver, probe, executor_node):
-            executor.remove_node(node)
-            node.destroy_node()
+        node.destroy_node()
         rclpy.shutdown()
