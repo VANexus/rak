@@ -1,0 +1,50 @@
+# ADR-0020 的**软件夹具**清单：域结构、所有权与判据的形状和真实清单一致，
+# 组件换成 `docs/architecture.md` §1 定义的"软件夹具"（fake navigation）。
+#
+# 为什么要有第二份清单：CAN 链路、ros2_control 硬件与真实执行器都上不了桌面回归，
+# 而"编排本身对不对"（顺序、门控、故障传导、原地重启）恰恰是最该被自动化验证的部分。
+# 这份清单让同一套 manager 在**不碰任何硬件**的前提下端到端跑通 —— 它是编排的验收台，
+# 不是机器人能力的替代品（fake telemetry 是命令运动估算，不是实测，
+# 见 docs/hardware_acceptance.md）。
+#
+# 跑法（隔离域 77，不动现场 47 的栈）：
+#   ros2 launch rak_bringup supervisor.launch.py profile:=fixture
+#   ros2 run rak_lifecycle rak_system status
+#   ros2 topic echo /rak/system_state
+#
+# 被拥有的组件是**真代码**（TaskExecutor），只有上游依赖换成夹具 —— 这样验证覆盖的
+# 是转换后的实现本身，而不是一份只为测试存在的替身。
+
+version: 1
+
+domains:
+  - name: navigation
+    requires: []
+    timeout_ms: 20000
+    components:
+      # fake Nav2 + fake 底盘遥测。observed（它是普通进程，本 manager 不拥有它），
+      # 但它的 /base/telemetry 新鲜度是 task 域的输入 —— "上游停发 → 下游降级"
+      # 就是靠这条判据验证的。
+      - node: /fake_navigation_server
+        package: rak_task_executor
+        executable: fake_navigation
+        mode: observed
+        owner: "external:supervisor.launch.py"
+        launch: supervisor.launch.py
+        provides:
+          # 夹具里 50 Hz 定时器发布（sim_nav.py 的 create_timer(0.02)）；
+          # 阈值 = 4 个周期 + 余量。basis nominal：由配置推算，未在夹具上复测。
+          - {topic: /base/telemetry, kind: age, max_age_ms: 200, basis: nominal}
+
+  - name: task
+    requires: [navigation]
+    timeout_ms: 30000
+    components:
+      - node: /task_executor
+        package: rak_task_executor
+        executable: task_executor
+        mode: managed
+        owner: system_manager            # 任务生命周期唯一所有者（ADR-0013），转移也归这里
+        launch: supervisor.launch.py
+        provides:
+          - {topic: /task/status, kind: exists}

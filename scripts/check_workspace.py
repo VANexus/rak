@@ -29,7 +29,7 @@ EXPECTED = {
     "rak_imu_driver",
     "rak_harness",
     "rak_intent",
-    "rak_interfaces", "rak_motion_stub", "rak_moveit_config",
+    "rak_interfaces", "rak_lifecycle", "rak_motion_stub", "rak_moveit_config",
     "rak_pointcloud", "rak_speech", "rak_stereo_driver",
     "rak_task_executor", "rak_tool_executor", "rak_wbc",
 }
@@ -77,6 +77,12 @@ def check_boundaries(found) -> None:
     assert not found["rak_gpu"][1] & EXPECTED
     assert not found["rak_intent"][1] & EXPECTED
     assert not found["rak_description"][1] & EXPECTED
+    # ADR-0020: 生命周期机制层是基础设施，谁都能用，但它不反过来依赖任何自有包；
+    # 用了 ManagedNode 的包必须显式声明依赖（漏声明会在单独 clone 构建时才炸）。
+    assert not found["rak_lifecycle"][1] & EXPECTED, found["rak_lifecycle"][1] & EXPECTED
+    for name in ("rak_task_executor", "rak_wbc"):
+        assert "rak_lifecycle" in found[name][1], f"{name} 用 ManagedNode 却没声明依赖"
+    assert "rak_lifecycle" in found["rak_bringup"][1]
     # The decision layer has interfaces as its only internal dependency ...
     assert "rak_interfaces" in found["rak_agent"][1]
     assert "rak_gpu" not in found["rak_agent"][1]
@@ -182,6 +188,9 @@ def check_installed(found) -> None:
         ("rak_harness.dialogue", "rak_harness"),
         ("rak_arm_simulation.controllers", "rak_arm_simulation"),
         ("rak_task_executor.node", "rak_task_executor"),
+        # ADR-0020：导入一次编排层，至少保证 manifest/manager 的 import 拼写没坏
+        ("rak_lifecycle.manifest", "rak_lifecycle"),
+        ("rak_lifecycle.system_manager", "rak_lifecycle"),
     )
     for module_name, package_name in modules:
         module = importlib.import_module(module_name)

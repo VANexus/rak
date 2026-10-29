@@ -17,14 +17,16 @@ import time
 
 import numpy as np
 import rclpy
-from rclpy.node import Node
 
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped
+from diagnostic_msgs.msg import DiagnosticStatus
+from rclpy.lifecycle import TransitionCallbackReturn
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, String
 from std_srvs.srv import SetBool
 import tf2_ros
 
+from rak_lifecycle.managed_node import ManagedNode
 from rak_wbc.hqp import HqpSolver, WbcInput, WbcParams
 from rak_wbc.model_builder import build_composite_urdf, WbcKinematics
 
@@ -111,9 +113,17 @@ def _quat_to_matrix(x: float, y: float, z: float, w: float) -> np.ndarray:
     )
 
 
-class WbcNode(Node):
+class WbcNode(ManagedNode):
     def __init__(self):
         super().__init__("wbc")
+
+    def on_configure(self, state):
+        """参数、复合 URDF、HQP 求解器与图上接口在这一装配（ADR-0020 §5）。
+
+        100 Hz timer 刻意不在这一步：configure 成功只表示"这一层可用"，
+        能不能写运动接口仍由 `enabled` + `allow_motion` 决定（§6：激活 ≠ 运动许可）。
+        """
+        super().on_configure(state)
         for name, value in PARAM_DEFAULTS.items():
             self.declare_parameter(name, value)
 
@@ -158,11 +168,16 @@ class WbcNode(Node):
                 "max_iter": param("max_iter"),
             }
         )
-        self._kinematics = WbcKinematics(
-            build_composite_urdf(self._resolve(param("urdf_wbc_base"), "rak_wbc", "urdf/wbc_base.urdf.xacro"),
-                                 self._resolve(param("urdf_arm"), "rak_description", "urdf/rak_arm.urdf.xacro"))
-        )
-        self._solver = HqpSolver(self._kinematics, self._params)
+        try:
+            self._kinematics = WbcKinematics(
+                build_composite_urdf(
+                    self._resolve(param("urdf_wbc_base"), "rak_wbc", "urdf/wbc_base.urdf.xacro"),
+                    self._resolve(param("urdf_arm"), "rak_description", "urdf/rak_arm.urdf.xacro"),
+                )
+            )
+            self._solver = HqpSolver(self._kinematics, self._params)
+        except Exception as exc:  # noqa: BLE001 - 装配失败要变成可读的转移失败，不是崩溃
+            return self.fail(f"复合 URDF / HQP 求解器装配失败：{exc!r}")
         self._arm_joint_names = [str(name) for name in param("arm_joint_names")]
 
         self._tf_buffer = tf2_ros.Buffer()
@@ -183,23 +198,50 @@ class WbcNode(Node):
         self._last_result = None
         self._tick_count = 0
 
-        self._base_pub = self.create_publisher(
+        self._base_pub = self.lifecycle_publisher(
             TwistStamped, str(param("base_reference_topic")), 10
         )
-        self._arm_pub = self.create_publisher(
+        self._arm_pub = self.lifecycle_publisher(
             Float64MultiArray, str(param("arm_setpoints_topic")), 10
         )
-        self._status_pub = self.create_publisher(String, str(param("status_topic")), 10)
+        self._status_pub = self.lifecycle_publisher(String, str(param("status_topic")), 10)
         self.create_subscription(Twist, str(param("cmd_vel_topic")), self._on_cmd_vel, 10)
         self.create_subscription(PoseStamped, str(param("ee_target_topic")), self._on_ee_target, 10)
         self.create_subscription(String, "/wbc/mode", self._on_mode, 10)
         self.create_subscription(JointState, str(param("joint_states_topic")), self._on_joint_state, 10)
         self.create_service(SetBool, "/wbc/enable", self._on_enable)
-        self.create_timer(1.0 / self._rate_hz, self._tick)
+        self.report(
+            "configure",
+            DiagnosticStatus.OK,
+            f"enabled={self._enabled} mode={self._mode} publish_arm={self._arm_stream_enabled}",
+            {"rate_hz": f"{self._rate_hz}"},
+        )
         self.get_logger().info(
-            f"rak_wbc ready: enabled={self._enabled} mode={self._mode} "
+            f"rak_wbc configured: enabled={self._enabled} mode={self._mode} "
             f"publish_arm={self._arm_stream_enabled}；默认关闭，经 /wbc/enable 开启"
         )
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state):
+        """激活 = 100 Hz 仲裁环开始跑；`enabled=False` 时它仍然一个命令都不发。"""
+        super().on_activate(state)
+        self.add_timer(1.0 / self._rate_hz, self._tick)
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_deactivate(self, state):
+        """停用 = 停环。**不在这里补发零速**：`on_deactivate` 阶段 LifecyclePublisher
+        已经拒绝发布，硬发只会被丢弃而不是生效。真正的停车来自消费侧的
+        `mecanum_drive_controller.reference_timeout` 与臂 lease —— 与 ADR-0019
+        "失联兜底在控制器超时与下位机里，不在写者的退出路径上" 一致。
+        """
+        self._enabled = False
+        super().on_deactivate(state)
+        self.report(
+            "degraded",
+            DiagnosticStatus.WARN,
+            "仲裁环已停用；底盘/臂由各自超时兜底",
+        )
+        return TransitionCallbackReturn.SUCCESS
 
     # ---- 工具 --------------------------------------------------------------
 
@@ -285,6 +327,11 @@ class WbcNode(Node):
         # [AI] 2026-10-15 车载首跑抓到: rclpy 7.1.12 (Jazzy) 的 service 分发无条件以
         # (request, response) 两参调用回调 (executors.py _take_service), 旧式单参签名
         # 直接 TypeError 打死节点——仓库其余服务回调均为两参风格, 此处对齐。
+        if not self.active:
+            # ADR-0020 §5：未激活的写者不接受"打开写通道"这种请求。
+            response.success = False
+            response.message = f"wbc 未激活（当前 {self.state_name}），忽略 enable 请求"
+            return response
         if request.data and not self._enabled:
             self._enabled = True
             self._degraded = False
@@ -397,11 +444,12 @@ def main(args=None):
     node = WbcNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

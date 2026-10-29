@@ -9,6 +9,11 @@ if(BUILD_TESTING)
     test_depth_camera_launch
     test/test_depth_camera_launch.py
   )
+  # ADR-0020：清单与 launch 的一致性门禁（需要 install 空间，故走 colcon test）
+  ament_add_pytest_test(
+    test_system_manifest
+    test/test_system_manifest.py
+  )
 endif()
 
 install(DIRECTORY launch config scripts udev DESTINATION share/${PROJECT_NAME})

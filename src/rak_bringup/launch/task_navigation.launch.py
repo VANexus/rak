@@ -6,19 +6,22 @@ chain. motion_backend picks the final /cmd_vel adapter:
   - hardware   removed (ADR-0016): the chassis is reached through
                chassis_bringup.launch.py -> mecanum_drive_controller over CAN,
                never through a second /cmd_vel adapter here.
+
+任务层本身在 `task.launch.py`（ADR-0020 之后它需要能被单独组合进 `robot.launch.py`
+的 full 档，而不是连带再起一份导航链）。
 """
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+import os
 
 
 def generate_launch_description():
     navigation_share = get_package_share_directory("rak_bringup")
+    launch_dir = os.path.join(navigation_share, "launch")
     return LaunchDescription([
         DeclareLaunchArgument(
             "motion_backend",
@@ -38,10 +41,12 @@ def generate_launch_description():
         DeclareLaunchArgument("waypoints_file", default_value=""),
         DeclareLaunchArgument("lidar_z", default_value="0.1525"),  # 2026-10-14 实测
         DeclareLaunchArgument("odom_source", default_value="rf2o", choices=["rf2o", "ekf", "none"]),
+        DeclareLaunchArgument(
+            "supervised", default_value="false",
+            description="true = 任务层由 system_manager 驱动（ADR-0020）",
+        ),
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                f"{navigation_share}/launch/nav2.launch.py"
-            ),
+            PythonLaunchDescriptionSource(os.path.join(launch_dir, "nav2.launch.py")),
             launch_arguments={
                 "motion_backend": LaunchConfiguration("motion_backend"),
                 "lidar_z": LaunchConfiguration("lidar_z"),
@@ -49,23 +54,15 @@ def generate_launch_description():
                 "use_sim_time": "false",
             }.items(),
         ),
-        Node(
-            package="rak_task_executor",
-            executable="task_executor",
-            name="task_executor",
-            output="screen",
-            parameters=[{
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(launch_dir, "task.launch.py")),
+            launch_arguments={
                 "slow_planner": LaunchConfiguration("slow_planner"),
                 "llm_config_path": LaunchConfiguration("llm_config_path"),
                 "llm_vendor": LaunchConfiguration("llm_vendor"),
+                "harness": LaunchConfiguration("harness"),
                 "waypoints_file": LaunchConfiguration("waypoints_file"),
-            }],
-        ),
-        Node(
-            package="rak_harness",
-            executable="harness_node",
-            name="harness",
-            output="screen",
-            condition=IfCondition(LaunchConfiguration("harness")),
+                "supervised": LaunchConfiguration("supervised"),
+            }.items(),
         ),
     ])

@@ -17,7 +17,8 @@ from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.node import Node
+from rclpy.lifecycle import TransitionCallbackReturn
+from rak_lifecycle.managed_node import ManagedNode
 from rak_intent.task_intent import (
     ControlCommand,
     PoseProposal,
@@ -53,26 +54,34 @@ class ActiveTask:
     control_event: threading.Event = field(default_factory=threading.Event)
 
 
-class TaskExecutor(Node):
+class TaskExecutor(ManagedNode):
     def __init__(self, *, parameter_overrides=None):
         super().__init__("task_executor", parameter_overrides=parameter_overrides)
-        self.declare_parameter("navigate_to_pose_action", "/navigate_to_pose")
-        self.declare_parameter("task_action", "/task/execute")
-        self.declare_parameter("task_control_service", "/task/control")
-        self.declare_parameter("task_status_topic", "/task/status")
-        self.declare_parameter("waypoints_file", "")
-        self.declare_parameter("slow_planner", "local")
-        self.declare_parameter("llm_config_path", "")
-        self.declare_parameter("llm_vendor", "")
-        self.declare_parameter("nav_server_timeout_sec", 5.0)
-        self.declare_parameter("cancel_timeout_sec", 5.0)
-        self.declare_parameter("task_timeout_sec", 1800.0)
-        self.declare_parameter("slow_planner_timeout_sec", 35.0)
-        self.declare_parameter("base_disarm_service", "/base/arm")
-        self.declare_parameter("base_telemetry_topic", "/base/telemetry")
-        self.declare_parameter("stop_feedback_samples", 3)
-        self.declare_parameter("stop_vxy_threshold_m_s", 0.02)
-        self.declare_parameter("stop_wz_threshold_rad_s", 0.03)
+
+    def on_configure(self, state):
+        """参数、航点表、图上接口在这一装配；转移失败一律变成可读 reason（ADR-0020 §5）。
+
+        原来这些都发生在 `__init__`：航点文件读不到就直接抛异常打死进程，编排侧只能看到
+        "进程退出了"。现在 `system_manager` 拿到的是 FAULTED + 原因，上游其他域不受影响。
+        """
+        super().on_configure(state)
+        self.declare("navigate_to_pose_action", "/navigate_to_pose")
+        self.declare("task_action", "/task/execute")
+        self.declare("task_control_service", "/task/control")
+        self.declare("task_status_topic", "/task/status")
+        self.declare("waypoints_file", "")
+        self.declare("slow_planner", "local")
+        self.declare("llm_config_path", "")
+        self.declare("llm_vendor", "")
+        self.declare("nav_server_timeout_sec", 5.0)
+        self.declare("cancel_timeout_sec", 5.0)
+        self.declare("task_timeout_sec", 1800.0)
+        self.declare("slow_planner_timeout_sec", 35.0)
+        self.declare("base_disarm_service", "/base/arm")
+        self.declare("base_telemetry_topic", "/base/telemetry")
+        self.declare("stop_feedback_samples", 3)
+        self.declare("stop_vxy_threshold_m_s", 0.02)
+        self.declare("stop_wz_threshold_rad_s", 0.03)
 
         self._lock = threading.RLock()
         self._active: ActiveTask | None = None
@@ -81,7 +90,10 @@ class TaskExecutor(Node):
         self._pending_cancel_ids: set[str] = set()
         self._seen_request_ids: set[str] = set()
         self._seen_order: deque[str] = deque()
-        self._waypoints = self._load_waypoints()
+        try:
+            self._waypoints = self._load_waypoints()
+        except Exception as exc:  # noqa: BLE001 - 配置错误要成为转移失败，不是进程崩溃
+            return self.fail(f"航点表不可用：{exc}")
         planner_name = str(self.get_parameter("slow_planner").value)
         self._slow_planner = None
         self._harness_request_pub = None
@@ -89,22 +101,25 @@ class TaskExecutor(Node):
         if planner_name == "rai":
             config_path = str(self.get_parameter("llm_config_path").value)
             if not config_path:
-                raise RuntimeError("slow_planner=rai requires llm_config_path")
-            self._slow_planner = RaiWaypointPlanner(
-                config_path=config_path,
-                vendor=str(self.get_parameter("llm_vendor").value) or None,
-            )
+                return self.fail("slow_planner=rai 需要 llm_config_path")
+            try:
+                self._slow_planner = RaiWaypointPlanner(
+                    config_path=config_path,
+                    vendor=str(self.get_parameter("llm_vendor").value) or None,
+                )
+            except Exception as exc:  # noqa: BLE001 - 同上：失败进 reason，不打死进程
+                return self.fail(f"RAI 慢规划器初始化失败：{exc!r}")
         elif planner_name == "harness":
             # ADR-0010 D2: proposals arrive on a topic; validation here mirrors
             # rak_harness.contract without importing the seam package.
-            self._harness_request_pub = self.create_publisher(
+            self._harness_request_pub = self.lifecycle_publisher(
                 HarnessRequest, "/harness/request", 10
             )
             self._harness_proposal_sub = self.create_subscription(
                 HarnessProposal, "/harness/proposal", self._on_harness_proposal, 10
             )
         elif planner_name != "local":
-            raise RuntimeError("slow_planner must be 'local', 'rai' or 'harness'")
+            return self.fail("slow_planner 必须是 'local'、'rai' 或 'harness'")
         self._stop_samples = 0
         self._last_telemetry_time = 0.0
         self._telemetry_event = threading.Event()
@@ -117,7 +132,7 @@ class TaskExecutor(Node):
             SetBool, str(self.get_parameter("base_disarm_service").value),
             callback_group=self._group,
         )
-        self._status_pub = self.create_publisher(
+        self._status_pub = self.lifecycle_publisher(
             TaskStatus, str(self.get_parameter("task_status_topic").value), 10
         )
         self._base_telemetry_sub = self.create_subscription(
@@ -141,10 +156,25 @@ class TaskExecutor(Node):
             cancel_callback=self._cancel_request,
             callback_group=self._group,
         )
-        self._publish_idle()
         self.get_logger().info(
-            "task executor ready; one task at a time, task restart does not resume old goals"
+            "task executor configured; one task at a time, task restart does not resume old goals"
         )
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state):
+        """激活 = 开始接受任务，并先广播一次 IDLE，让订阅者立刻拿到当前状态。"""
+        super().on_activate(state)
+        self._publish_idle()
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_deactivate(self, state):
+        """停用 = 不再接受新任务（在飞目标由 cancel 路径收敛），也不再广播状态。
+
+        刻意不在这里伪造一个终态：任务是被 Nav2 的取消路径带走的，`/task/status`
+        只报道**确实发生过的**转换（AGENTS/architecture §4 的"明确反馈而不是模型猜测"）。
+        """
+        super().on_deactivate(state)
+        return TransitionCallbackReturn.SUCCESS
 
     def _load_waypoints(self):
         path = str(self.get_parameter("waypoints_file").value)
@@ -179,6 +209,10 @@ class TaskExecutor(Node):
         return waypoints
 
     def _goal_request(self, request):
+        if not self.active:
+            # ADR-0020 §5：未激活的执行器不接受目标。任务权威仍然只有这一个，
+            # 但"现在是否在位"由生命周期状态回答，不再靠 pkill。
+            return GoalResponse.REJECT
         request_id = request.request_id.strip()
         text_set = bool(request.text.strip())
         pose_set = bool(request.has_pose)
@@ -743,9 +777,10 @@ def main(args=None):
     executor.add_node(node)
     try:
         executor.spin()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
         executor.shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

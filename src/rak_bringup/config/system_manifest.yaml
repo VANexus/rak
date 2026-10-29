@@ -1,0 +1,338 @@
+# ADR-0020 的真实硬件清单（不是夹具）：全栈故障域、组件所有权与存活性判据。
+#
+# 这份文件是编排的唯一数据源：`rak_lifecycle/system_manager` 按它驱动生命周期转移，
+# `rak_lifecycle` 的测试按它校验不变量，操作员用 `rak_system status` 看它的运行时投影。
+#
+# 事实分级（AGENTS.md §4 的规矩）：
+#   basis: measured   —— 2026-10-29 在本机现场 `ros2 topic hz` 实测（数值见行内注释）
+#   basis: nominal    —— 型号/配置的标称频率，未在本机复测；只告警，不触发降级
+#   basis: placeholder—— 纯占位，不得当作事实
+# 判据 kind：age = 订阅测新鲜度（只在轻负载话题上用）；exists = 只查发现图。
+#
+# 节点名出处：`ros2 node list`（现场那套 sensors.launch.py 在跑时抓取）与各 launch 的
+# name= 逐条核对；camera 域的驱动节点名未核实，所以用 presence: topic 而不是猜一个名字。
+#
+# 未闭合（不要当已验证）：link 域里控制器级节点的转移服务名待现场复核 —— 本轮没有
+# 上板启动 controller_manager（现场另有栈在跑），见 ADR-0020 待闭合项 #3。
+
+version: 1
+
+domains:
+  # ---------------- L0/L1：机体 TF 与硬件链路 ----------------
+  - name: body
+    requires: []
+    timeout_ms: 20000
+    components:
+      # 三选一：chassis_bringup / slam / sensors 里只有一个会起它
+      # （robot.launch.py 用 publish_robot_tf 参数保证这一点，本行把它变成可校验数据）。
+      - node: /robot_state_publisher
+        package: robot_state_publisher
+        executable: robot_state_publisher
+        mode: observed
+        owner: "external:chassis_bringup.launch.py|slam.launch.py|sensors.launch.py"
+        launch: chassis_bringup.launch.py
+        role: body_tf_publisher          # ADR-0015：机体树唯一发布者
+        provides:
+          - {topic: /tf, kind: exists}
+          - {topic: /tf_static, kind: exists}
+
+  - name: link
+    requires: [body]
+    timeout_ms: 45000
+    components:
+      - node: /controller_manager
+        package: controller_manager
+        executable: ros2_control_node
+        mode: observed
+        owner: "external:chassis_bringup.launch.py"
+        launch: chassis_bringup.launch.py
+      - node: /joint_state_broadcaster
+        package: joint_state_broadcaster
+        executable: joint_state_broadcaster
+        mode: managed
+        owner: "external:controller_manager_spawner"   # 转移归 spawner，本 manager 只观测
+        launch: chassis_bringup.launch.py
+        provides:
+          - {topic: /joint_states, kind: exists}
+      - node: /mecanum_drive_controller
+        package: mecanum_drive_controller
+        executable: mecanum_drive_controller
+        mode: managed
+        owner: "external:controller_manager_spawner"
+        launch: chassis_bringup.launch.py
+        role: motion_writer
+        interface: base_twist            # ADR-0011 D1：base 唯一运动写者
+        provides:
+          - {topic: /mecanum_drive_controller/odom, kind: exists}
+      - node: /arm_controller
+        package: joint_trajectory_controller
+        executable: arm_controller
+        mode: managed
+        owner: "external:controller_manager_spawner"
+        launch: chassis_bringup.launch.py
+        role: motion_writer
+        interface: arm_position          # 与 /arm_position_controller 互斥（arm_motion_writer:=jtc）
+        provides:
+          - {topic: /arm_controller/follow_joint_trajectory, kind: exists}
+      - node: /arm_position_controller
+        package: forward_command_controller
+        executable: arm_position_controller
+        mode: managed
+        owner: "external:controller_manager_spawner"
+        launch: chassis_bringup.launch.py
+        role: motion_writer
+        interface: arm_position
+        enabled: false                   # 只在 arm_motion_writer:=wbc 时启用
+      - node: /gripper_controller
+        package: forward_command_controller
+        executable: gripper_controller
+        mode: managed
+        owner: "external:controller_manager_spawner"
+        launch: chassis_bringup.launch.py
+
+  # ---------------- L2：感知 ----------------
+  - name: lidar
+    requires: [body]
+    components:
+      - node: /lslidar_driver_node
+        package: lslidar_driver
+        executable: lslidar_driver_node
+        mode: observed
+        owner: "external:lidar.launch.py"
+        launch: lidar.launch.py
+        provides:
+          - {topic: /scan_raw, kind: exists}
+      # N10_P 分支发的是双层 2*count_num，karto 不吃；这一级把它归一成 /scan。
+      - node: /scan_to_scan_filter_chain
+        package: laser_filters
+        executable: scan_to_scan_filter_chain
+        mode: observed
+        owner: "external:lidar.launch.py"
+        launch: lidar.launch.py
+        provides:
+          - {topic: /scan, kind: age, max_age_ms: 250, basis: nominal}  # 10 Hz 标称，本机未复测
+
+  - name: imu
+    requires: [body]
+    components:
+      - node: /i2c_imu
+        package: rak_imu_driver
+        executable: i2c_imu
+        mode: observed                   # 现场 WIP 文件，第二阶段再收敛成 managed（ADR-0020 待闭合 #1）
+        owner: "external:sensors.launch.py"
+        launch: sensors.launch.py
+        provides:
+          # 2026-10-29 现场实测 average 903.6 Hz、帧间隔 1–2 ms（ros2 topic hz -w 100）
+          - {topic: /imu/data_raw, kind: age, max_age_ms: 100, basis: measured}
+
+  - name: camera
+    requires: []
+    components:
+      # Orbbec 包装配自己的节点名（camera_name 是命名空间），未经现场核对不写死，
+      # 所以这里用 presence: topic —— 认话题，不认名字。
+      - node: /camera_driver
+        package: orbbec_camera
+        executable: gemini_330_series
+        mode: observed
+        presence: topic
+        owner: "external:gemini335l.launch.py"
+        launch: gemini335l.launch.py
+        provides:
+          - {topic: /camera/depth/image_raw, kind: exists}   # 重负载，只做存在性
+          - {topic: /camera/depth/camera_info, kind: exists}
+      - node: /depth_point_cloud
+        package: depth_image_proc
+        executable: point_cloud_xyz_node
+        mode: observed
+        owner: "external:sensors.launch.py"
+        launch: sensors.launch.py
+        provides:
+          - {topic: /camera/depth/points, kind: exists}
+
+  - name: mic
+    requires: []
+    components:
+      - node: /audio_capture
+        package: audio_capture
+        executable: audio_capture_node
+        mode: observed
+        owner: "external:speech.launch.py"
+        launch: speech.launch.py
+        provides:
+          - {topic: /audio, kind: exists}
+      - node: /speech_asr
+        package: rak_speech
+        executable: asr_node
+        mode: observed                   # 模型加载在 worker 线程，managed 化要配就绪话题（待闭合 #1）
+        owner: "external:speech.launch.py"
+        launch: speech.launch.py
+        provides:
+          - {topic: /speech/transcript, kind: exists}
+      - node: /speech_vtn
+        package: rak_speech
+        executable: vtn_node
+        mode: observed
+        owner: "external:speech.launch.py"
+        launch: speech.launch.py
+      - node: /wake_doa_viz
+        package: rak_speech
+        executable: wake_doa_viz
+        mode: observed
+        owner: "external:sensors.launch.py"
+        launch: sensors.launch.py
+
+  # ---------------- L3：定位与导航 ----------------
+  - name: localization
+    requires: [body, lidar]
+    timeout_ms: 60000
+    components:
+      - node: /world_map_tf
+        package: tf2_ros
+        executable: static_transform_publisher
+        mode: observed
+        owner: "external:slam.launch.py"
+        launch: slam.launch.py
+      - node: /rf2o_laser_odometry
+        package: rf2o_laser_odometry
+        executable: rf2o_laser_odometry_node
+        mode: observed
+        owner: "external:slam.launch.py"
+        launch: slam.launch.py
+        provides:
+          - {topic: /odom, kind: exists}
+      - node: /ekf_filter_node
+        package: robot_localization
+        executable: ekf_node
+        mode: observed
+        owner: "external:slam.launch.py"
+        launch: slam.launch.py
+        enabled: false                   # odom_source:=ekf 档才起（launch 默认 rf2o）
+        provides:
+          # 2026-10-29 现场实测 average 30.0 Hz（ros2 topic hz -w 10）
+          - {topic: /odometry/filtered, kind: age, max_age_ms: 150, basis: measured}
+      - node: /slam_toolbox
+        package: slam_toolbox
+        executable: async_slam_toolbox_node
+        mode: managed
+        owner: "external:slam.launch.py"  # configure→activate 由 launch 事件驱动，本 manager 只观测
+        launch: slam.launch.py
+        provides:
+          - {topic: /map, kind: exists}
+
+  - name: navigation
+    requires: [localization, link]
+    timeout_ms: 60000
+    components:
+      # 六个 server 的转移归 nav2_lifecycle_manager（ADR-0020 §3 单一所有者）；
+      # 本 manager 只等它们进 active，不下发 change_state。
+      - node: /controller_server
+        package: nav2_controller
+        executable: controller_server
+        mode: managed
+        owner: "external:nav2_lifecycle_manager"
+        launch: nav2.launch.py
+      - node: /planner_server
+        package: nav2_planner
+        executable: planner_server
+        mode: managed
+        owner: "external:nav2_lifecycle_manager"
+        launch: nav2.launch.py
+      - node: /behavior_server
+        package: nav2_behaviors
+        executable: behavior_server
+        mode: managed
+        owner: "external:nav2_lifecycle_manager"
+        launch: nav2.launch.py
+      - node: /bt_navigator
+        package: nav2_bt_navigator
+        executable: bt_navigator
+        mode: managed
+        owner: "external:nav2_lifecycle_manager"
+        launch: nav2.launch.py
+      - node: /velocity_smoother
+        package: nav2_velocity_smoother
+        executable: velocity_smoother
+        mode: managed
+        owner: "external:nav2_lifecycle_manager"
+        launch: nav2.launch.py
+        provides:
+          # 2026-10-14 修过的自环：smoother 的输入必须是 cmd_vel_nav，不是 /cmd_vel
+          - {topic: /cmd_vel_nav, kind: exists}
+      - node: /collision_monitor
+        package: nav2_collision_monitor
+        executable: collision_monitor
+        mode: managed
+        owner: "external:nav2_lifecycle_manager"
+        launch: nav2.launch.py
+        provides:
+          - {topic: /cmd_vel, kind: exists}
+
+  # ---------------- L4：运动仲裁（ADR-0011，硬件门未闭合）----------------
+  - name: arbitration
+    requires: [link]
+    components:
+      - node: /wbc
+        package: rak_wbc
+        executable: wbc_node
+        mode: managed
+        owner: system_manager
+        launch: wbc.launch.py
+        role: motion_writer
+        interface: base_twist
+        enabled: false                   # ADR-0011 待闭合项未过；打开时要把 /mecanum_drive_controller
+                                         # 那一条改成 enabled: false，否则清单校验直接拒绝双写者
+        provides:
+          - {topic: /wbc/status, kind: exists}
+
+  # ---------------- L5：任务与决策 ----------------
+  - name: task
+    requires: [link, navigation]
+    components:
+      - node: /task_executor
+        package: rak_task_executor
+        executable: task_executor
+        mode: managed
+        owner: system_manager            # 任务生命周期唯一所有者（ADR-0013），转移也归这里
+        launch: task.launch.py
+        provides:
+          - {topic: /task/status, kind: exists}
+          - {topic: /task/execute/goal, kind: exists}
+      - node: /tool_executor
+        package: rak_tool_executor
+        executable: tool_executor
+        mode: observed
+        owner: "external:task.launch.py|harness_agent.launch.py"
+        launch: task.launch.py
+        provides:
+          - {topic: /tool_results, kind: exists}
+      - node: /harness
+        package: rak_harness
+        executable: harness_node
+        mode: observed                   # 现场 WIP；managed 化时它的云端 worker 必须可被 deactivate 打断
+        owner: "external:task.launch.py|harness_agent.launch.py"
+        launch: task.launch.py
+      - node: /brain
+        package: rak_agent
+        executable: agent_node
+        mode: observed                   # TensorRT 引擎加载搬到 on_configure 后才值得 managed
+        owner: "external:agent.launch.py"
+        launch: agent.launch.py
+        provides:
+          - {topic: /brain/decision, kind: exists}
+
+  # ---------------- L5：表达 ----------------
+  - name: expression
+    requires: [task]
+    components:
+      - node: /speech_tts
+        package: rak_speech
+        executable: tts_node
+        mode: observed
+        owner: "external:speech.launch.py"
+        launch: speech.launch.py
+      - node: /audio_play
+        package: audio_play
+        executable: audio_play_node
+        mode: observed
+        owner: "external:speech.launch.py"
+        launch: speech.launch.py
