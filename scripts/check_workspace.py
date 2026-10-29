@@ -140,8 +140,30 @@ def check_launch_references(found) -> None:
     assert "$(find boot)" not in urdf
 
 
-def check_installed(found) -> None:
+def check_installed(found, skip_absent=False) -> None:
     from ament_index_python.packages import get_package_share_directory
+
+    # 桌面开发档（本机 = 上层逻辑 + RViz 仿真，Jetson 才跑硬件节点）里，
+    # GPU/JetPack 专属包（rak_gpu/rak_astra_driver/rak_stereo_driver/rak_pointcloud）
+    # 与 vendor 雷达栈**不可能**存在。原来 --installed 无条件遍历所有包，
+    # 于是这条结构门禁在开发机上永远跑不了 —— 那不是严格，是没法用。
+    # 跳过必须显式开启且逐项打印，杜绝它悄悄把真问题藏起来。
+    if skip_absent:
+        def present(name: str) -> bool:
+            # 不用 get_available_packages()：它在部分版本里不存在（本机 lyrical 实测
+            # ImportError）。用 prefix 探测，版本无关。
+            from ament_index_python.packages import get_package_prefix
+
+            try:
+                get_package_prefix(name)
+                return True
+            except Exception:  # noqa: BLE001 - 不存在就是不存在
+                return False
+
+        absent = sorted(name for name in found if not present(name))
+        print(f"SKIP absent ({len(absent)}): {', '.join(absent)}")
+        found = {k: v for k, v in found.items() if k not in absent}
+        absent = set(absent)
 
     for name, (source, _) in found.items():
         share = Path(get_package_share_directory(name))
@@ -157,6 +179,12 @@ def check_installed(found) -> None:
                 ["ros2", "launch", name, launch.name, "--show-args"],
                 text=True, capture_output=True, timeout=60,
             )
+            if result.returncode != 0 and skip_absent and _only_missing_package(
+                result.stderr, absent
+            ):
+                # 这台机器没有那个包 —— 记为跳过；**语法错误仍然红**。
+                print(f"SKIP launch (缺包): {name}/{launch.name} -> {_only_missing_package(result.stderr, absent)}")
+                continue
             assert result.returncode == 0, f"{name}/{launch.name}\n{result.stdout}\n{result.stderr}"
             print(f"OK launch: {name}/{launch.name}")
 
@@ -224,9 +252,26 @@ def check_installed(found) -> None:
     print("OK installed interfaces, Python relay and ROS agent entry point")
 
 
+
+def _only_missing_package(stderr: str, absent) -> str | None:
+    """失败原因是否**仅仅**是"引用了本机不存在的包"。是则返回包名，否则 None。
+
+    不用正则：这条判据一旦写复杂就会被引号转义咬到（本仓今天真踩过），
+    子串匹配足够且可读。
+    """
+    if "PackageNotFoundError" not in stderr:
+        return None
+    for package in sorted(absent):
+        if f"package '{package}' not found" in stderr:
+            return package
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installed", action="store_true")
+    parser.add_argument("--skip-absent", action="store_true",
+                        help="桌面开发档：跳过本机不存在的硬件/GPU 包（会逐项打印）")
     args = parser.parse_args()
     found = packages()
     check_boundaries(found)
@@ -234,7 +279,7 @@ def main() -> None:
     if args.installed:
         with tempfile.TemporaryDirectory(prefix="rak-workspace-check-") as logs:
             with patch.dict(os.environ, {"ROS_LOG_DIR": logs, "PYTHONDONTWRITEBYTECODE": "1"}):
-                check_installed(found)
+                check_installed(found, skip_absent=args.skip_absent)
     print(f"OK: {len(found)} owned packages, dependency graph and launch references")
 
 

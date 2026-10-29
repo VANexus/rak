@@ -281,7 +281,7 @@ domains:
         executable: wbc_node
         mode: managed
         owner: system_manager
-        launch: wbc.launch.py
+        launch: rak_wbc/wbc.launch.py
         role: motion_writer
         interface: base_twist
         enabled: false                   # ADR-0011 待闭合项未过；打开时要把 /mecanum_drive_controller

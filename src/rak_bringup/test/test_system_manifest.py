@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 from ament_index_python.packages import get_package_share_directory
 import pytest
@@ -24,16 +25,31 @@ import yaml
 from rak_lifecycle.manifest import from_dict, load
 
 SHARE = Path(get_package_share_directory("rak_bringup"))
+#: CMake 是 install(DIRECTORY launch config ...)，所以清单在 share/<pkg>/config/ 下，
+#: 不在 share 根 —— 这条路径今天被本地桌面档测试抓出来（Orin 上也会一样失败）。
+RES = SHARE / "config"
 MANIFESTS = ("system_manifest.yaml", "system_manifest_fixture.yaml")
 
 
 def _manifests():
-    return [load(SHARE / name) for name in MANIFESTS]
+    return [load(RES / name) for name in MANIFESTS]
+
+
+def launch_path(component):
+    """`launch:` 允许写 `pkg/name.launch.py`；不带前缀时归属 rak_bringup。
+
+    今天被本地跑出来才发现：`wbc.launch.py` 属于 rak_wbc，按"都在 bringup"去解析
+    会把一个合法声明判成缺失。归属信息属于清单，不该由测试猜。
+    """
+    spec = component.launch.split("|")[0]
+    pkg, _, name = spec.rpartition("/")
+    pkg = pkg or "rak_bringup"
+    return Path(get_package_share_directory(pkg)) / "launch" / name
 
 
 @pytest.mark.parametrize("name", MANIFESTS)
 def test_manifest_loads_and_validates(name):
-    manifest = load(SHARE / name)
+    manifest = load(RES / name)
     assert manifest.order, f"{name} 里没有任何可编排的域"
     # 域依赖的传递闭包不能把自己包含进去（那意味着环，from_dict 已拒绝，这里再确认形状）
     for domain in manifest.order:
@@ -44,7 +60,7 @@ def test_component_launch_file_exists_and_declares_the_node():
     for manifest in _manifests():
         for domain in manifest.domains:
             for component in domain.components:
-                launch = SHARE / "launch" / component.launch.split("|")[0]
+                launch = launch_path(component)
                 assert launch.is_file(), f"{component.node} 声明的 launch 不存在: {launch}"
                 text = launch.read_text()
                 assert component.executable in text, (
@@ -59,16 +75,13 @@ def test_system_managed_components_are_launched_as_lifecycle_nodes():
             for component in domain.components:
                 if not component.system_managed:
                     continue
-                for launch_name in component.launch.split("|"):
-                    launch = SHARE / "launch" / launch_name
-                    kinds = _node_actions(launch)
-                    entry = kinds.get(component.executable)
-                    assert entry is not None, (
-                        f"{launch_name} 没有启动 {component.executable}"
-                    )
-                    assert entry == "LifecycleNode", (
+                for spec in component.launch.split("|"):
+                    launch = launch_path(SimpleNamespace(launch=spec))
+                    kind = _node_actions(launch).get(component.executable)
+                    assert kind is not None, f"{launch} 没有启动 {component.executable}"
+                    assert kind == "LifecycleNode", (
                         f"{component.node} 在清单里是 owner=system_manager 的受管组件，"
-                        f"但 {launch_name} 用 {entry} 起它 —— 会停在 unconfigured 静默空转"
+                        f"但 {launch.name} 用 {kind} 起它 —— 会停在 unconfigured 静默空转"
                     )
 
 
@@ -118,7 +131,7 @@ def test_manifest_raw_dicts_are_the_same_shape_as_the_loaded_model(tmp_path):
     known_probe_keys = {"topic", "kind", "max_age_ms", "basis"}
     known_domain_keys = {"name", "requires", "components", "timeout_ms", "enabled"}
     for name in MANIFESTS:
-        raw = yaml.safe_load((SHARE / name).read_text())
+        raw = yaml.safe_load((RES / name).read_text())
         for domain in raw["domains"]:
             assert set(domain) <= known_domain_keys, (
                 f"{name}: 未知域键 {set(domain) - known_domain_keys}"
