@@ -64,7 +64,7 @@ def command_status(argv: list[str]) -> int:
             return 2
         worst = "OK"
         print(f"{'DOMAIN':<13} {'STATE':<12} MESSAGE")
-        for status in sorted(array.statuses, key=lambda s: s.name):
+        for status in sorted(array.status, key=lambda s: s.name):
             domain = status.name.rsplit("/", 1)[-1]
             state = _values(status).get("state", "?")
             print(f"{domain:<13} {state:<12} {status.message}")

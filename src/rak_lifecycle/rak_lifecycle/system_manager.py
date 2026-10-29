@@ -537,7 +537,7 @@ class SystemManager(Node):
                     values=values,
                 )
             )
-        self._state_pub.publish(diagnostic_msgs.msg.DiagnosticArray(statuses=statuses))
+        self._state_pub.publish(diagnostic_msgs.msg.DiagnosticArray(status=statuses))
 
     def shutdown(self) -> None:
         self._stop.set()

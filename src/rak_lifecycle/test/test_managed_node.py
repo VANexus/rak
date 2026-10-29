@@ -171,7 +171,7 @@ def test_failed_configure_reports_a_readable_reason(rig):
         assert _wait_for(lambda: any(
             status.level == DiagnosticStatus.ERROR and "模拟设备打不开" in status.message
             for array in watcher.diagnostics
-            for status in array.statuses
+            for status in array.status
         )), "转移失败必须在 /diagnostics 里留下可读原因"
     finally:
         executor.shutdown()

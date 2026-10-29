@@ -86,7 +86,7 @@ class _StateReader:
         self.domains: dict[str, str] = {}
 
     def on_message(self, message: DiagnosticArray) -> None:
-        for status in message.statuses:
+        for status in message.status:
             name = status.name.rsplit("/", 1)[-1]
             values = {pair.key: pair.value for pair in status.values}
             self.domains[name] = values.get("state", "?")

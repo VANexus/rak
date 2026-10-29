@@ -149,7 +149,7 @@ class ManagedNode(LifecycleNode):
                 ],
             )
         )
-        self._health_pub.publish(DiagnosticArray(statuses=statuses))
+        self._health_pub.publish(DiagnosticArray(status=statuses))
 
     # -------------------------------------------------------------- 生命周期
     def on_configure(self, state: Any) -> TransitionCallbackReturn:
