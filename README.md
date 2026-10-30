@@ -5,7 +5,8 @@
 通过 Nav2、MoveIt2 和 F407 控制底盘与机械臂，而不是让模型直接控制电机。
 
 设计入口：[项目总体状态](docs/project_status.md) · [整体架构](docs/architecture.md) ·
-[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md)。
+[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md) ·
+**当前施工单：[2026-10-30 明天继续](docs/NEXT-2026-10-30.md)**。
 包重命名不代表硬件已工程化；下面明确区分现有功能和后续规划。
 
 点云抓取开发入口：[离线 GraspNet、RViz 与隔离仿真](docs/grasp_perception.md) ·

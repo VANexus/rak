@@ -63,10 +63,20 @@
 | [0022](0022-jetson-canopen-contract-layer.md) | Jetson 侧 CANopen v5 架构：**契约层与协议栈分离**（生产主站=lely-core，本层只做 SSOT 派生与校验）；单位/因子单表带出处；"禁止 v4/v5 混跑"变成 COB-ID 交集断言（实测冲突 0x201/0x202）；NMT↔生命周期映射；Operational ≠ 运动许可 | 已接受（设计+契约层实现；主站实施待 P3）|
 | [0019](0019-per-board-hardware-split.md) | 双下位机按板拆成两个 `<ros2_control>`（RakChassisHardware / RakArmHardware），共享一个 CanSession；故障域隔离，一块板掉线不再拖垮另一块的控制器 | 已接受（2026-10-29） |
 | [0018](0018-tiered-realtime-voice-response.md) | 语音响应分层：即时反应层（预合成语气素材 <100ms）+ qwentts.cpp 分句流式（TTFA ≤1.5s）+ 显式响应预算；定稿 serena 音色 + instruct 情感 | 接受（2026-10-17） |
+| [0019](0019-per-board-hardware-split.md) | 按板拆故障域：底盘板 / 机械臂板各自独立降级 | 已接受 |
+| [0020](0020-managed-lifecycle-and-fault-domains.md) | 全栈受管生命周期：故障域编排、单一所有者、存活性判据；2026-10-29(d) 记全部自有节点转 managed | 已接受 |
+| [0021](0021-can-v5-canopen-on-mcus.md) | 下位机 CAN 换 CANopen v5（CiA 301 + 304），v4 保留回滚分支 | 已接受 |
+| [0022](0022-jetson-canopen-contract-layer.md) | Jetson 侧 CANopen 是**契约派生层**，不是第二套协议栈 | 已接受 |
+| [0023](0023-time-base-and-alignment.md) | 时间基准统一：采样时刻打戳、单一时钟域、协方差必须带出处 | 已接受（数值待实测） |
+| [0024](0024-canopen-master-on-jetson.md) | Jetson 侧 v5 主站走 ros2_canopen（Jazzy），lely-core 降为备选 | 已接受（**未编译/未实机验证**） |
+| [0025](0025-behavior-layer-bt-and-smacc2.md) | 行为层两级：BT.CPP 做技能、SMACC2 做任务；分阶段落地 | 已接受（**阶段 1 未实现**） |
+| [0026](0026-assembly-layer-split-and-build-profiles.md) | 组装层拆成 `rak_orchestration`（契约，纯 x86 可建）+ `rak_bringup`（硬件全栈）；构建档位变成数据 | 已接受 |
 
-> **当前有效架构 = ADR-0002 + 0003(v4 层) + 0004 + 0005 + 0006 + 0007(传输部分被 0012 取代) + 0008 + 0009 + 0010 + 0011 + 0012(备用链路部分被 0016 取代) + 0013 + 0014 + 0015 + 0016 + 0017 + 0018 + 0019 + 0020 + **0021（取代 0012/0016 的协议内容部分）**。
+> **当前有效架构 = ADR-0002 + 0003(v4 层) + 0004 + 0005 + 0006 + 0007(传输部分被 0012 取代) + 0008 + 0009 + 0010 + 0011 + 0012(备用链路部分被 0016 取代) + 0013 + 0014 + 0015 + 0016 + 0017 + 0018 + 0019 + 0020 + **0021（取代 0012/0016 的协议内容部分）** + 0022 + 0023 + 0024 + 0025 + 0026。
 >
-> ⚠️ **ADR-0021 之后，本仓 `rak_chassis` 的 v4 帧与下位机不兼容**：真机联调前必须先做 P3（lely-core 主站）。
+> ⚠️ **ADR-0021/0024 之后，本仓 `rak_chassis` 的 v4 帧与 v5 板子不兼容**：真机联调走
+> `transport:=canopen`（ros2_canopen 主站，ADR-0024）或台架脚本 `tools/canopen_bringup.py`；
+> v4 仍可用 `transport:=can_v4` 回滚。
 > 0001 仅作历史记录，不要按其实施。
 > 0008 初稿曾误记末端为吸嘴，同日已更正为舵机夹爪（见该篇修订记录）。
 > 0010 只定义接口与验收，`src/rak_harness` 与 `harness_node` **尚未创建**；「呼吸感」硬件门全关。

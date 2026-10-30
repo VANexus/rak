@@ -187,3 +187,29 @@
    最后补 `/harness/proposal` 的陈旧/过期/预算竞态测试。
 
 在这些门槛完成前，推荐使用 task simulation 和 CAN 链路冒烟（`scripts/can_link_smoke.py`）做软件演示；不要执行真实底盘或机械臂动作。
+
+## 2026-10-30 工程化阶段收口（第二轮）
+
+本轮（2026-10-29/30）把四条结构问题收敛成正式档，全部有 ADR 与门禁背书：
+
+- **组装层拆分**（ADR-0026）：`rak_orchestration`（契约，纯 x86 可建）+ `rak_bringup`（硬件全栈）。
+  档位是数据（`build_profiles.yaml` + `launch_contracts.yaml`），
+  `python3 scripts/build_workspace.py --profile desktop|jetson` 一条命令。
+- **生命周期全覆盖**（ADR-0020 修订 d）：自有节点全部 managed（25/36 组件），
+  三个驱动初始化顺序缺陷同批修掉；launch 统一走 `managed()` 助手，`supervised` 全链贯通。
+- **时间基准**（ADR-0023）：IMU 采样时刻打戳（含自校验 `max_sample_age_ms`）；
+  测量工具 `scripts/calibrate_imu.py`、占位值门禁 `scripts/timebase_gate.py`。
+- **观测**（ADR-0020 §9 的观测半边）：新包 `rak_metrics`（p50/p95/p99/丢帧 + `/rak/metrics` + HTTP）
+  与 rosbag 录制白名单 `scripts/record_session.py`。
+- **CANopen v5 主站选型**（ADR-0024）：ros2_canopen（Jazzy），配置/launch/首帧核对工具已就位；
+  **未编译未实机验证**——这是下一步的第一优先级。
+- **行为层**（ADR-0025）：只出两级架构与迁移路径（BT.CPP 技能层 / SMACC2 任务层），代码未交付。
+- **下位机能力规格**：`docs/firmware-capability-spec.md`——四路里程计的职责边界、
+  EKF/Nav2 的八条隐性需求、固件补齐清单（F1–F10，含电池上报/EMCY 分类/参数持久化）。
+
+**未验证清单（下次上机照 `docs/NEXT-2026-10-30.md` 逐条证伪）**：
+C++ lifecycle 改造未编译；ros2_canopen 未安装；managed 全栈未真机激活；字节序待首帧；
+EKF 协方差待 Allan/直行实测。
+
+**环境事实**：桌面 Windows 机无 ROS/Tailscale，无法直达 Orin；本轮所有验证限于
+纯 Python 门禁（清单↔launch 一致性、档位契约、家目录扫描——全部绿）。

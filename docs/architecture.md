@@ -78,7 +78,9 @@ MoveIt 文档页面跟随主线；实际 API 仍以本机 Jazzy 安装版本验�
 | `rak_motion_stub` | 明确标注的测试转发/运动估算 | 硬件驱动、安全保证 |
 | `rak_agent` | 当前 S1/S2 认知原型 | 电机驱动、同步等待云端后控制 |
 | `rak_harness`（**待创建**，ADR-0010） | Harness 慢路径：任务上下文、工具白名单、预算/超时/事件摘要/失败恢复；独立 `anthropic` 客户端 | 速度/关节命令、第二生命周期所有者、实时安全裁决 |
-| `rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent）、参数、udev、Cyclone DDS（运行 domain 47）、操作入口（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） | 通用算法或传感器 SDK |
+| `rak_orchestration` | **组装契约层**（ADR-0026）：系统清单（故障域/所有权/判据）、构建档位（desktop/jetson）、launch 归属契约、编排入口 `supervisor.launch.py`、`managed()` launch 助手 | 硬件驱动、GPU、任何 `rak_gpu`/厂商包；算法 |
+| `rak_metrics` | 命令年龄/反馈年龄/各流 `now-stamp` 的 p50/p95/p99/丢帧估计，发 `/rak/metrics`（`diagnostic_msgs`）+ 轻 HTTP；rosbag 录制白名单 | 运动控制、任务决策、新增消息契约 |
+| `rak_bringup` | 硬件全栈组合层：全部硬件 launch（雷达/相机/slam/nav2/chassis_bringup/canopen_bringup/agent/speech）、参数、udev、Cyclone DDS、操作入口 | 组装契约（在 rak_orchestration）、通用算法或传感器 SDK |
 
 退役 CAN v3 host 栈（`rak_can_driver`、`rak_serial_link`，ADR-0012/0013）的本地 `attic/`
 归档已于 2026-10-10 删除，代码仅存 git 历史。USB v2 传输链路及其包、直连 TUI、
@@ -96,8 +98,9 @@ rak_commissioning ----> 标准 ROS 消息（Twist；经驱动节点对话，不�
 rak_arm_simulation --> standard trajectory/gripper actions
 rak_moveit_config ----> rak_description / rak_arm_simulation (simulation only)
 rak_wbc -------------> rak_description（臂 URDF 合并） / mecanum reference / 臂位置控制器（待建）
-rak_chassis ----------> CAN v4（SocketCAN，唯一传输） — Session 抽象之后上层无感
-rak_bringup ----------> 各能力的启动入口（含 rak_agent，唯一被允许的决策层依赖者）
+rak_chassis ----------> CAN v4（SocketCAN） — Session 抽象之后上层无感；v5 走 ros2_canopen（ADR-0024）
+rak_orchestration ----> 清单 / 档位 / 编排入口（不依赖任何硬件包）
+rak_bringup ----------> rak_orchestration + 各能力启动入口（含 rak_agent，唯一被允许的决策层依赖者）
 ```
 
 所有可构建包位于 `src/`（ADR-0013），ROS 包名 `rak_agent`、Python 模块名 `rak_agent`。

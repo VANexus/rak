@@ -4,6 +4,10 @@
 - **状态**: 规划中（未开始实施）
 - **配套**: 决策理由见 [`docs/adr/`](docs/adr/README.md) · 装配顺序见 [`docs/CONSTRUCTION.md`](docs/CONSTRUCTION.md) ·
   系统结构见 [`docs/architecture.md`](docs/architecture.md) · 上车门槛见 [`docs/hardware_acceptance.md`](docs/hardware_acceptance.md)
+- **⚠️ 本文是 2026-10-05 的路线图，已被 2026-10-29 的一轮工程化部分覆盖。**
+  **当前正在执行的施工单是 [`docs/NEXT-2026-10-30.md`](docs/NEXT-2026-10-30.md)**
+  （组装层拆分 / 生命周期 / 时间基准 / 观测 / CANopen v5 / 行为层），
+  两者冲突时以 ADR（0020/0023/0024/0025/0026）与施工单为准。
 
 ---
 
