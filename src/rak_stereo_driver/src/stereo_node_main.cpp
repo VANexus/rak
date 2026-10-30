@@ -4,6 +4,7 @@
 // 而 CaptureNode 现在是 LifecycleNode（ADR-0020），没人发 configure/activate 时
 // 进程起来却永远不开流 —— 正是"进程在但不干活"的静默故障。
 // 「单独跑一个可执行」等价于 supervised:=false，应当自己走到 active。
+#include <lifecycle_msgs/msg/state.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <memory>
