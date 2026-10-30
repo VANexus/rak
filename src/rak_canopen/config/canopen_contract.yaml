@@ -90,8 +90,11 @@ semantics:
   j6cmd: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
   gripcmd: {unit: deg, factor: 0.1, source: "[SPEC] 同上（夹爪同域）"}
   j8cmd:   {unit: deg, factor: 0.1, source: "[SPEC] 同上（保留位）", todo: "名字是 j8cmd，规范件写的是「保留」——明日核对语义"}
-  j1state: {unit: deg, factor: 0.1, source: "[SPEC] 0x2102 ServoStateA ARRAY[4] UINT16，0.1°"}
-  j2state: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
+  # [AI] A31（2026-10-31）：0x2110/0x2111 改 INT16 有符号——之前负角度在固件侧
+  # 被钳成 0（arm_axis_deg10 无符号），J1/J2 越过零点后上位机看到的全是 0，
+  # 两端边界测量无法诊断。J3..J6 舵机角域 0..360° 维持 UINT16。
+  j1state: {unit: deg, factor: 0.1, source: "[A31] 0x2110 j1state INT16，0.1°（原 [SPEC] ServoStateA UINT16，2026-10-31 有符号化）"}
+  j2state: {unit: deg, factor: 0.1, source: "[A31] 0x2111 j2state INT16，0.1°（同上）"}
   j3state: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
   j4state: {unit: deg, factor: 0.1, source: "[SPEC] 同上"}
   j5state: {unit: deg, factor: 0.1, source: "[SPEC] 0x2103 ServoStateB ARRAY[4] UINT16，0.1°"}
