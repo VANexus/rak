@@ -24,5 +24,5 @@
 
 ## 规则 / 签字
 
-- [ ] AGENTS §3 ISR 口径改稿（35% → 不丢拍+双统计）—— `docs/CAN-BRINGUP-2026-10-30.md` §6.1
+- [x] AGENTS §3 ISR 口径改稿（35% → 不丢拍+双统计）—— 已定稿入 AGENTS.md（2026-10-30 签字）
 - [ ] 控制升级 C1–C5 按序推进 —— `docs/chassis-control-design.md`
