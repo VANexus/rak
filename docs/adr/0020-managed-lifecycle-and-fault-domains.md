@@ -243,3 +243,45 @@
   `TransitionDescription`、age 判据订阅不上时静默永久失效、
   **`ManagedNode` 未转发 `super()` 导致 `LifecyclePublisher` 永不启用且不报错**）
   已逐条修入提交历史；最后一条是本模式最危险的失败形态，已写进 `CLAUDE.md` Gotchas。
+
+### 2026-10-29(d)：第二轮收敛 —— 全部自有节点转 managed（本表是唯一进度来源）
+
+§4 的 `observed → managed` 是路线。本轮一次性把**所有自有节点**转完，覆盖率从 2/25 提到
+25/36（其余 11 个是第三方或自带 manager 的组件）。表里的"拥有者"决定谁发转移：
+`system_manager` = 本仓编排层驱动；`external:*` = 上游/launch 驱动，本层只观测。
+
+| 域 | 组件 | 原模式 | 现模式 | 拥有者 | launch（必须同批改） | 资源在哪打开 / I/O 在哪开始 |
+| --- | --- | --- | --- | --- | --- | --- |
+| imu | `/i2c_imu` | observed | **managed** | system_manager | `sensors.launch.py` | 设备+寄存器 configure；1 kHz timer activate |
+| imu | `/spi_imu`（未在清单，备份路径） | plain | **managed** | 同左（`ros2 run` 自启） | 无（`ros2 run`） | 同上 |
+| mic | `/speech_asr` | observed | **managed** | system_manager | `speech.launch.py` | Vosk/Zipformer 模型 configure；识别线程 activate |
+| mic | `/speech_vtn` | observed | **managed** | system_manager | `speech.launch.py` | 链路对象 configure；worker activate |
+| mic | `/wake_doa_viz` | observed | **managed** | system_manager | `sensors.launch.py` | 发布器 configure；计数 activate |
+| expression | `/speech_tts` | observed | **managed** | system_manager | `speech.launch.py` | **TTS 引擎 configure**；合成线程 activate（deactivate 不卸载模型） |
+| task | `/tool_executor` | observed | **managed** | system_manager | `task.launch.py`、`harness_agent.launch.py` | 审计/客户端 configure；worker activate；非 active 拒收提案 |
+| task | `/harness` | observed | **managed** | system_manager | `task.launch.py`、`harness_agent.launch.py` | 对话引擎/云客户端 configure；**Agent 子进程 activate**（可被杀） |
+| task | `/brain` | observed | **managed** | system_manager | `agent.launch.py` | **TensorRT 引擎 configure**；决策 timer activate |
+| camera | `/astra_bridge_node` | plain | **managed** | system_manager | `astra.launch.py` | `getDevice()`+profile configure；`pipe_.start()` activate |
+| camera | `/eye_capture`（双目） | plain | **managed** | system_manager | `stereo.launch.py` | `init_cuda()` **先于** cudaMalloc，V4L2 configure；采集线程 activate |
+| camera | `/gpu_pointcloud` | plain | **managed** | system_manager | `rak_pointcloud/gpu_pointcloud.launch.py` | `init_cuda()` configure（**先于**订阅）；发布 activate |
+
+**同时修掉的三个初始化顺序缺陷**（不是"风格问题"，是已存在的缺陷）：
+
+1. `rak_astra_driver`：`pipe_.getDevice()` 与 `pipe_.start()` 都在构造函数里 →
+   相机被占用时进程直接抛异常退出，编排层只看到"进程没了"。
+2. `rak_pointcloud`：先 `create_subscription` 后 `init_cuda()` → 第一帧可能在 CUDA
+   上下文就绪前进入回调。
+3. `rak_stereo_driver`：`cudaMalloc`（`DeviceBuffer`/`PinnedBuffer`）在 `init_cuda()` **之前**。
+
+**launch 侧的规矩**：所有受管节点统一走 `rak_orchestration.launch_helpers.managed(...)`，
+它一次给出 `LifecycleNode` + `configure→activate` 两个事件处理器，并遵守
+`supervised:=true` 时不自启。`robot.launch.py` 已把 `supervised` 传给
+`sensors/speech/agent/task` 四个 include（此前只传了 task，其余三个会自启 + 被 manager
+同时驱动，等于两个权威源）。
+
+**仍未 managed 的（第三方/上游，不是欠账）**：`robot_state_publisher`、`lslidar_driver`、
+`scan_to_scan_filter_chain`、`orbbec_camera`、`depth_image_proc`、`audio_capture`、
+`audio_play`、`rf2o`、Nav2 六服务与 `slam_toolbox`（后两者由各自的 manager 拥有）。
+
+**待闭合**：`speech_asr` 的模型加载在 configure，若模型目录损坏会表现为该域 FAULTED ——
+这是期望行为，但需要一次真机演练确认"改回可用目录后能原地 recover"（本 ADR 待闭合 #3）。
