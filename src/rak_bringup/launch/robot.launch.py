@@ -46,9 +46,13 @@ STAGE_DOMAINS = {
 SENSOR_DOMAINS = (("lidar", "lidar"), ("camera_on", "camera"), ("imu", "imu"), ("mic", "mic"))
 
 
-def _include(name, arguments):
-    """按名字 include 同包 launch；arguments 里放 LaunchConfiguration/substitution。"""
-    share = get_package_share_directory("rak_bringup")
+def _include(name, arguments, package="rak_bringup"):
+    """按名字 include 同包 launch；arguments 里放 LaunchConfiguration/substitution。
+
+    `package` 默认本包；编排入口在 rak_orchestration（ADR-0026 拆分），
+    顶层只 include 它一次，避免出现第二个生命周期权威源。
+    """
+    share = get_package_share_directory(package)
     return IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(share, "launch", name)),
         launch_arguments=arguments.items(),
@@ -70,6 +74,7 @@ def _launch_setup(context, *args, **kwargs):
     rviz = LaunchConfiguration("rviz")
     motion_backend = LaunchConfiguration("motion_backend")
     supervise = config("supervise")
+    transport = config("transport")
 
     chassis_args = {
         "allow_motion": allow_motion,
@@ -82,7 +87,14 @@ def _launch_setup(context, *args, **kwargs):
     actions = []
 
     if stage in ("teleop", "nav", "full"):
-        actions.append(_include("chassis_bringup.launch.py", chassis_args))
+        # 传输二选一（ADR-0024）：两个主站**不得同时起**，同一总线双主站会把
+        # 从站踢出 Operational —— 台架跑 tools/canopen_master.py 时不要同时 launch 本文件。
+        if transport == "canopen":
+            actions.append(_include("canopen_bringup.launch.py", {
+                "allow_motion": allow_motion,
+            }))
+        else:
+            actions.append(_include("chassis_bringup.launch.py", chassis_args))
 
     if stage in ("sensors", "nav", "full"):
         actions.append(_include("sensors.launch.py", {
@@ -97,6 +109,7 @@ def _launch_setup(context, *args, **kwargs):
             "mic": LaunchConfiguration("mic"),
             # slam/nav2 由本文件负责，sensors 里那份 slam include 关掉避免双起
             "slam": "false",
+            "supervised": supervise,
         }))
 
     if stage in ("nav", "full"):
@@ -110,8 +123,10 @@ def _launch_setup(context, *args, **kwargs):
         }))
 
     if stage == "full":
-        actions.append(_include("agent.launch.py", {}))
-        actions.append(_include("speech.launch.py", {}))
+        # supervised 必须一路传下去：漏传就会"节点自启 + manager 也想驱动"，
+        # 出现两个生命周期权威源（ADR-0020 §3）。今天只有 task 传了，其余三个是漏的。
+        actions.append(_include("agent.launch.py", {"supervised": supervise}))
+        actions.append(_include("speech.launch.py", {"supervised": supervise}))
         actions.append(_include("task.launch.py", {"supervised": supervise}))
 
     if stage == "teleop":
@@ -124,6 +139,7 @@ def _launch_setup(context, *args, **kwargs):
             "mic": "false",
             "chassis": "false",
             "rviz": rviz,
+            "supervised": supervise,
         }))
 
     if supervise == "true":
@@ -134,7 +150,7 @@ def _launch_setup(context, *args, **kwargs):
         ]
         actions.append(_include("supervisor.launch.py", {
             "domains": ",".join(sorted(set(domains))),
-        }))
+        }, package="rak_orchestration"))
 
     return actions
 
@@ -151,6 +167,12 @@ def generate_launch_description():
             "arm_motion_writer", default_value="jtc",
             description="臂控制器二选一：jtc / wbc / none"),
         DeclareLaunchArgument("can_channel", default_value="can0"),
+        # 传输（ADR-0024 + 2026-10-30 修订）：下位机 v4 已整体下线（R75/A16，
+        # 无回滚分支），CanSession 对真板**无效**，只剩软件夹具用途。
+        # 台架/联调的实际主链路 = 伞形仓 tools/canopen_master.py（Orin 上运行）。
+        DeclareLaunchArgument(
+            "transport", default_value="canopen", choices=["can_v4", "canopen"],
+            description="底盘控制链：canopen（真机唯一）| can_v4（仅软件夹具；真板无效）"),
         DeclareLaunchArgument(
             "camera", default_value="gemini335l",
             description="深度相机后端：gemini335l | astra（透传给 sensors）"),

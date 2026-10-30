@@ -1,0 +1,100 @@
+# launch 档位契约（ADR-0026）—— 每个 launch 归哪一档、为什么。
+#
+# 规矩：
+#   1. 引用了 `skip_packages` 的 launch **必须**在这里声明，且 profiles 不含 desktop。
+#      漏声明 = 桌面档门禁直接红（不是"启动失败后再猜原因"）。
+#   2. `requires` 里的包名要与 build_profiles.yaml 的 skip/tolerate 对得上，
+#      否则这条契约就是一句没有依据的"我起不来"。
+#   3. 未声明的 launch 视为两档都可用；它若在桌面档起不来，门禁会真的失败 ——
+#      这是刻意的：默认严格，豁免必须写出来。
+#
+# 只登记**有硬件前置**的 launch。纯上层（task/agent/supervisor）不登记，
+# 它们必须在两档都能 `--show-args` 通过。
+
+launches:
+  - package: rak_bringup
+    name: astra.launch.py
+    profiles: [jetson]
+    requires: [rak_astra_driver]
+    reason: 直接拉起 Orbbec Astra SDK 驱动（需要 libobsensor 与 USB 相机）
+
+  - package: rak_bringup
+    name: stereo.launch.py
+    profiles: [jetson]
+    requires: [rak_stereo_driver]
+    reason: V4L2 + nvJPEG 双目采集，只在 Jetson 的硬件编码器上成立
+
+  - package: rak_bringup
+    name: gemini335l.launch.py
+    profiles: [jetson]
+    requires: [orbbec_camera]
+    reason: 厂商 orbbec_camera 包 + 相机固件
+
+  - package: rak_bringup
+    name: depth_camera.launch.py
+    profiles: [jetson]
+    requires: [orbbec_camera, rak_astra_driver]
+    reason: 后端选择器，两个后端都是硬件驱动
+
+  - package: rak_bringup
+    name: lidar.launch.py
+    profiles: [jetson]
+    requires: [lslidar_driver]
+    reason: 厂商雷达驱动（源码 vendor，不在 apt）
+
+  - package: rak_bringup
+    name: grasp_camera.launch.py
+    profiles: [jetson]
+    requires: [rak_pointcloud, rak_grasp_perception]
+    reason: GPU 点云 + 抓取快照，依赖 CUDA 与 TensorRT 环境
+
+  - package: rak_bringup
+    name: sensors.launch.py
+    profiles: [jetson]
+    requires: [orbbec_camera, lslidar_driver, depth_image_proc]
+    reason: 传感器总装（相机 + 雷达 + 点云），桌面档没有这些设备与包
+
+  - package: rak_bringup
+    name: robot.launch.py
+    profiles: [jetson]
+    requires: [orbbec_camera, lslidar_driver]
+    reason: 整车顶层组合，按 stage 一定会在 nav/full 拉起传感器总装
+
+  # 下面这些两档都能解析，但可能因为 apt 可选件缺失而在本机起不来 ——
+  # 属于 tolerate_absent，门禁会打印后跳过，不算失败。
+  - package: rak_bringup
+    name: speech.launch.py
+    profiles: [desktop, jetson]
+    requires: [audio_capture, audio_play]
+    reason: 语音链需要 audio_common（apt 可选）
+
+  - package: rak_bringup
+    name: harness_agent.launch.py
+    profiles: [desktop, jetson]
+    requires: [audio_capture, audio_play]
+    reason: 全链语音，同样依赖 audio_common
+
+  - package: rak_bringup
+    name: slam.launch.py
+    profiles: [desktop, jetson]
+    requires: [rf2o_laser_odometry, slam_toolbox]
+    reason: rf2o 与 slam_toolbox 在桌面机上常为源码/可选安装
+
+  - package: rak_bringup
+    name: nav2.launch.py
+    profiles: [desktop, jetson]
+    requires: [rf2o_laser_odometry, nav2_bringup]
+    reason: 同 slam 档；nav2 全套在桌面机上是可选安装
+
+  # rak_pointcloud 自己的 launch：GPU 点云与感知容器，桌面档没有 CUDA。
+  - package: rak_pointcloud
+    name: gpu_pointcloud.launch.py
+    profiles: [jetson]
+    requires: [rak_pointcloud]
+    reason: 节点本体就在 CUDA 包里，桌面档不构建
+
+  - package: rak_pointcloud
+    name: perception_container.launch.py
+    profiles: [jetson]
+    requires: [rak_pointcloud, rak_astra_driver, rak_stereo_driver]
+    reason: 合成感知容器（相机 + 点云），三个组件全是 Jetson/GPU 专属

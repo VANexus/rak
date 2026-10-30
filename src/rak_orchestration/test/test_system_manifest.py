@@ -8,8 +8,11 @@
    这是本仓库已经 documented 过的最坑故障形态，不能靠人记住；
 3. 清单引用的 launch 文件与包都真实存在（安装空间里查得到）。
 
-跑法：`colcon test --packages-select rak_bringup` 或
-`ROS_DOMAIN_ID=77 python3 -m pytest src/rak_bringup/test/test_system_manifest.py`。
+跑法：`colcon test --packages-select rak_orchestration` 或
+`ROS_DOMAIN_ID=77 python3 -m pytest src/rak_orchestration/test/test_system_manifest.py`。
+
+本文件随清单迁到 rak_orchestration（ADR-0026）：清单是组装契约，不是硬件组合，
+所以桌面档也必须能跑这条门禁。
 """
 
 from __future__ import annotations
@@ -24,7 +27,10 @@ import yaml
 
 from rak_lifecycle.manifest import from_dict, load
 
-SHARE = Path(get_package_share_directory("rak_bringup"))
+SHARE = Path(get_package_share_directory("rak_orchestration"))
+#: 源码树里的全部 launch（rak/src）。清单迁到本包之后，不能再只看本包的 share，
+#: 否则"被改成 LifecycleNode 却没进清单"这类漂移就看不见了。
+SRC = Path(__file__).resolve().parents[2]
 #: CMake 是 install(DIRECTORY launch config ...)，所以清单在 share/<pkg>/config/ 下，
 #: 不在 share 根 —— 这条路径今天被本地桌面档测试抓出来（Orin 上也会一样失败）。
 RES = SHARE / "config"
@@ -94,7 +100,7 @@ def test_observed_components_are_not_claimed_as_lifecycle_nodes():
             for component in domain.components
             if component.mode == "managed"
         }
-        for launch in (SHARE / "launch").glob("*.launch.py"):
+        for launch in sorted(SRC.glob("*/launch/*.launch.py")):
             for executable, kind in _node_actions(launch).items():
                 if kind == "LifecycleNode" and executable in managed_executables:
                     continue
@@ -149,13 +155,20 @@ def test_manifest_raw_dicts_are_the_same_shape_as_the_loaded_model(tmp_path):
 
 
 def _node_actions(launch: Path) -> dict[str, str]:
-    """从 launch 源码里取 executable → 动作类名（Node / LifecycleNode / ComposableNode）。"""
+    """从 launch 源码里取 executable → 动作类名（Node / LifecycleNode / ComposableNode）。
+
+    `managed(...)` 是 rak_orchestration.launch_helpers 的受管节点助手（它内部一定是
+    LifecycleNode + configure→activate 事件），所以按 LifecycleNode 计。助手名一改，
+    这里会红 —— 这正是我们要的耦合。
+    """
     tree = ast.parse(launch.read_text(), filename=str(launch))
     found: dict[str, str] = {}
     for call in ast.walk(tree):
         if not isinstance(call, ast.Call) or not call.keywords:
             continue
         action = _action_name(call.func)
+        if action == "managed":
+            action = "LifecycleNode"
         if action not in {"Node", "LifecycleNode", "ComposableNode"}:
             continue
         executable = _keyword(call, "executable")

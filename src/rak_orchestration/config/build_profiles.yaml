@@ -1,0 +1,52 @@
+# 构建档位（ADR-0026）—— 这份文件是"哪台机器能建什么"的唯一来源。
+#
+# 为什么不是命令行：`colcon build --packages-ignore rak_astra_driver … rf2o_laser_odometry`
+# 是一条**不可复现**的事实。换个人、换台机器、换一天都会漏一两个包，而漏掉的表现是
+# "launch 起不来"，不是"依赖没装"。档位写进文件后，`scripts/build_workspace.py` 与
+# `scripts/check_workspace.py` 用同一份事实，CI 与人都跑同一条命令。
+#
+# 两类缺口，语义不同，不能混：
+#   skip_packages    —— 这一档**不构建也不需要**（GPU / 厂商 SDK / 仅 Jetson 可用）。
+#                       引用它们的 launch 必须声明 desktop 不可用（launch_contracts.yaml）。
+#   tolerate_absent  —— 可能装了也可能没装（apt 可选件、源码构建件）。门禁允许它在
+#                       本档缺失，但**必须逐项打印**，不许静默。
+
+profiles:
+  desktop:
+    description: >-
+      x86 开发机：上层逻辑、编排、夹具与 RViz。没有 GPU、没有 Astra/雷达/双目、
+      没有 JetPack，也不假定装了 audio_common。这是"本机写上层逻辑、Jetson 起硬件节点"
+      分工的正式档位。
+    skip_packages:
+      # GPU / CUDA 专属
+      - rak_gpu
+      - rak_pointcloud
+      # 需要相机/雷达厂商 SDK 或内核节点
+      - rak_astra_driver
+      - rak_stereo_driver
+      - orbbec_camera
+      - lslidar_driver
+      - lslidar_msgs
+    tolerate_absent:
+      # 源码构建件：Jetson 上有，桌面机常常没有
+      - rf2o_laser_odometry
+      # image_pipeline / 音频 / 诊断的 apt 可选件
+      - depth_image_proc
+      - laser_filters
+      - audio_capture
+      - audio_play
+      - diagnostic_aggregator
+      - rviz_imu_plugin
+      - nav2_mppi_controller
+      - slam_toolbox
+      - robot_localization
+      - nav2_bringup
+
+  jetson:
+    description: >-
+      Orin 真机：全量构建（含 GPU/CUDA、厂商相机与雷达、smacc2 可选件）。
+      真实硬件门禁只在这一档成立。
+    skip_packages: []
+    tolerate_absent:
+      # 装了才起的三方案件（ADR-0025），缺省降级到行为树任务层
+      - smacc2

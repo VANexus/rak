@@ -9,11 +9,8 @@ if(BUILD_TESTING)
     test_depth_camera_launch
     test/test_depth_camera_launch.py
   )
-  # ADR-0020：清单与 launch 的一致性门禁（需要 install 空间，故走 colcon test）
-  ament_add_pytest_test(
-    test_system_manifest
-    test/test_system_manifest.py
-  )
+  # ADR-0020：清单与 launch 的一致性门禁已随清单迁到 rak_orchestration
+  # （那是纯 x86 可建的契约层，桌面档也要能跑这条门禁）。
   # ADR-0002：EKF 配置自洽性（离线可跑，不依赖 ROS）
   ament_add_pytest_test(
     test_ekf_contract

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rak_orchestration</name>
+  <version>0.1.0</version>
+  <description>Assembly *contract* layer: system manifest (fault domains, owners, liveness probes), launch contracts and the supervisor entry point. Buildable and testable on a plain x86 desktop with no hardware, GPU or vendor sensor packages installed.</description>
+  <maintainer email="xrak@example.com">xrak</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>rak_lifecycle</exec_depend>
+  <!-- 夹具档直接起真 TaskExecutor，验证的是真代码而不是替身 -->
+  <exec_depend>rak_task_executor</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

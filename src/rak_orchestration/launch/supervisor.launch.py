@@ -1,8 +1,13 @@
-"""生命周期编排入口（ADR-0020）：起 `rak_lifecycle/system_manager`，按 manifest 驱动全栈。
+"""生命周期编排入口（ADR-0020 / ADR-0026）：起 `rak_lifecycle/system_manager`，按 manifest 驱动全栈。
 
-    ros2 launch rak_bringup supervisor.launch.py                       # 真机清单，全部域
-    ros2 launch rak_bringup supervisor.launch.py domains:=task,link    # 只管这两个域
-    ros2 launch rak_bringup supervisor.launch.py profile:=fixture      # 软件夹具，不碰硬件
+本文件属于 **rak_orchestration**（组装契约层），不属于 rak_bringup（硬件全栈）。
+理由：它是纯上层逻辑，不 import 任何硬件/GPU/厂商包，因此在桌面机上
+`ros2 launch rak_orchestration supervisor.launch.py profile:=fixture` 必须能跑通。
+硬件组合留在 `rak_bringup`，两边通过 `robot.launch.py` 的一次 include 相接。
+
+    ros2 launch rak_orchestration supervisor.launch.py                       # 真机清单，全部域
+    ros2 launch rak_orchestration supervisor.launch.py domains:=task,link    # 只管这两个域
+    ros2 launch rak_orchestration supervisor.launch.py profile:=fixture      # 软件夹具，不碰硬件
 
 为什么需要一个单独的入口，而不是把转移写在各个 launch 里：
     `slam.launch.py` 里那套 `EmitEvent(ChangeState(...))` + `OnStateTransition` 只能在
@@ -74,7 +79,7 @@ def _launch_setup(context, *args, **kwargs):
     manifest = LaunchConfiguration("manifest").perform(context)
     if not manifest:
         manifest = os.path.join(
-            get_package_share_directory("rak_bringup"), "config", PROFILES[profile]
+            get_package_share_directory("rak_orchestration"), "config", PROFILES[profile]
         )
 
     actions = [
@@ -106,7 +111,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "manifest", default_value="",
-            description="覆盖清单路径；留空按 profile 取 rak_bringup/config 里的那份",
+            description="覆盖清单路径；留空按 profile 取 rak_orchestration/config 里的那份",
         ),
         DeclareLaunchArgument(
             "domains", default_value="",

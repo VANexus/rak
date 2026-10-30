@@ -30,7 +30,7 @@ domains:
         executable: fake_navigation
         mode: observed
         owner: "external:supervisor.launch.py"
-        launch: supervisor.launch.py
+        launch: rak_orchestration/supervisor.launch.py
         provides:
           # 夹具里 50 Hz 定时器发布（sim_nav.py 的 create_timer(0.02)）；
           # 阈值 = 4 个周期 + 余量。basis nominal：由配置推算，未在夹具上复测。
@@ -45,6 +45,6 @@ domains:
         executable: task_executor
         mode: managed
         owner: system_manager            # 任务生命周期唯一所有者（ADR-0013），转移也归这里
-        launch: supervisor.launch.py
+        launch: rak_orchestration/supervisor.launch.py
         provides:
           - {topic: /task/status, kind: exists}

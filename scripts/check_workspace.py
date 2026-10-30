@@ -30,6 +30,7 @@ EXPECTED = {
     "rak_harness",
     "rak_intent",
     "rak_canopen", "rak_interfaces", "rak_lifecycle", "rak_motion_stub", "rak_moveit_config",
+    "rak_metrics", "rak_orchestration",
     "rak_pointcloud", "rak_speech", "rak_stereo_driver",
     "rak_task_executor", "rak_tool_executor", "rak_wbc",
 }
@@ -82,7 +83,12 @@ def check_boundaries(found) -> None:
     assert not found["rak_lifecycle"][1] & EXPECTED, found["rak_lifecycle"][1] & EXPECTED
     # ADR-0022: v5 契约层同样是基础设施，不依赖任何自有包 —— 它只读 SSOT 副本。
     assert not found["rak_canopen"][1] & EXPECTED, found["rak_canopen"][1] & EXPECTED
-    for name in ("rak_task_executor", "rak_wbc"):
+    # 2026-10-29 第二轮收敛后，这些包的自有节点全部是 ManagedNode（ADR-0020 §4）。
+    # 漏声明在单仓库构建时看不出来，单独 clone 一个包才炸 —— 所以在这里钉死。
+    for name in (
+        "rak_task_executor", "rak_wbc", "rak_imu_driver", "rak_speech",
+        "rak_harness", "rak_tool_executor", "rak_agent",
+    ):
         assert "rak_lifecycle" in found[name][1], f"{name} 用 ManagedNode 却没声明依赖"
     assert "rak_lifecycle" in found["rak_bringup"][1]
     # The decision layer has interfaces as its only internal dependency ...
@@ -140,31 +146,49 @@ def check_launch_references(found) -> None:
     assert "$(find boot)" not in urdf
 
 
-def check_installed(found, skip_absent=False) -> None:
-    from ament_index_python.packages import get_package_share_directory
+def check_assembly_layers(found, hardware: set[str]) -> None:
+    """ADR-0026：契约层与硬件组合层分开之后，两边都不许越界。
 
-    # 桌面开发档（本机 = 上层逻辑 + RViz 仿真，Jetson 才跑硬件节点）里，
-    # GPU/JetPack 专属包（rak_gpu/rak_astra_driver/rak_stereo_driver/rak_pointcloud）
-    # 与 vendor 雷达栈**不可能**存在。原来 --installed 无条件遍历所有包，
-    # 于是这条结构门禁在开发机上永远跑不了 —— 那不是严格，是没法用。
-    # 跳过必须显式开启且逐项打印，杜绝它悄悄把真问题藏起来。
-    if skip_absent:
-        def present(name: str) -> bool:
-            # 不用 get_available_packages()：它在部分版本里不存在（本机 lyrical 实测
-            # ImportError）。用 prefix 探测，版本无关。
-            from ament_index_python.packages import get_package_prefix
+    - `rak_orchestration` 是清单/契约/编排入口，**不得**依赖任何硬件或 GPU 包 ——
+      否则"桌面机一条命令建起来"立刻退回今天的补丁状态；
+    - `rak_bringup` 是唯一硬件组合层，必须依赖契约层（它 include 编排入口）；
+    - `rak_bringup` 里不得再出现清单与编排测试（那是契约层的职责）。
+    """
+    leaked = found["rak_orchestration"][1] & hardware
+    assert not leaked, f"rak_orchestration 依赖了硬件包: {sorted(leaked)}"
+    assert "rak_orchestration" in found["rak_bringup"][1], (
+        "rak_bringup 必须依赖 rak_orchestration（robot.launch.py include 编排入口）"
+    )
+    bringup = found["rak_bringup"][0]
+    assert not (bringup / "config/system_manifest.yaml").exists(), (
+        "system_manifest.yaml 属于 rak_orchestration（ADR-0026）"
+    )
+    assert not (bringup / "launch/supervisor.launch.py").exists(), (
+        "supervisor.launch.py 属于 rak_orchestration（ADR-0026）"
+    )
 
+
+def check_installed(found, profile=None) -> None:
+    from ament_index_python.packages import get_package_share_directory, get_package_prefix
+
+    # 桌面档的缺口是**声明**出来的（build_profiles.yaml），不是从环境里嗅出来的。
+    # 旧行为（--skip-absent）在失败后按报错字符串猜包名；现在先查表，再执行，
+    # 语义从"猜它为什么失败"变成"它本来就不该在这台机器上跑"。
+    absent: set[str] = set()
+    tolerable: set[str] = set()
+    if profile is not None:
+        for name in profile.skip_packages:
+            absent.add(name)
+        for name in profile.tolerate_absent:
             try:
                 get_package_prefix(name)
-                return True
             except Exception:  # noqa: BLE001 - 不存在就是不存在
-                return False
+                tolerable.add(name)
+        absent |= tolerable
+        print(f"[{profile.name}] 声明跳过 {len(profile.skip_packages)} 个包；"
+              f"本机缺失的可选件 {len(tolerable)} 个: {', '.join(sorted(tolerable)) or '-'}")
 
-        absent = sorted(name for name in found if not present(name))
-        print(f"SKIP absent ({len(absent)}): {', '.join(absent)}")
-        found = {k: v for k, v in found.items() if k not in absent}
-        absent = set(absent)
-
+    skipped_launches: list[str] = []
     for name, (source, _) in found.items():
         share = Path(get_package_share_directory(name))
         assert ET.parse(share / "package.xml").getroot().findtext("name") == name
@@ -175,18 +199,28 @@ def check_installed(found, skip_absent=False) -> None:
                     assert installed.is_file(), installed
                     assert installed.read_bytes() == resource.read_bytes(), f"stale install: {installed}"
         for launch in sorted((share / "launch").glob("*.launch.py")):
+            key = f"{name}/{launch.name}"
+            contract = profile.launch_contracts.get(key) if profile is not None else None
+            if contract is not None and not contract.desktop and profile.name == "desktop":
+                # 档位已声明本档不可用 —— 不去执行它，也不让它的失败污染结论。
+                skipped_launches.append(f"{key}（{contract.reason or '硬件前置'}）")
+                print(f"SKIP launch (档位声明): {key} -> {contract.reason or '硬件前置'}")
+                continue
             result = subprocess.run(
                 ["ros2", "launch", name, launch.name, "--show-args"],
                 text=True, capture_output=True, timeout=60,
             )
-            if result.returncode != 0 and skip_absent and _only_missing_package(
-                result.stderr, absent
-            ):
-                # 这台机器没有那个包 —— 记为跳过；**语法错误仍然红**。
-                print(f"SKIP launch (缺包): {name}/{launch.name} -> {_only_missing_package(result.stderr, absent)}")
-                continue
+            if result.returncode != 0 and absent:
+                missing = _only_missing_package(result.stderr, absent)
+                if missing:
+                    # 语法错误仍然红：只有"仅仅缺包"才允许跳过。
+                    skipped_launches.append(f"{key}（缺 {missing}）")
+                    print(f"SKIP launch (缺包): {key} -> {missing}")
+                    continue
             assert result.returncode == 0, f"{name}/{launch.name}\n{result.stdout}\n{result.stderr}"
             print(f"OK launch: {name}/{launch.name}")
+    if skipped_launches:
+        print(f"SKIP 汇总: {len(skipped_launches)} 个 launch 未在本档验证")
 
     msgs = importlib.import_module("rak_interfaces.msg")
     from rclpy.serialization import deserialize_message, serialize_message
@@ -270,17 +304,35 @@ def _only_missing_package(stderr: str, absent) -> str | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installed", action="store_true")
-    parser.add_argument("--skip-absent", action="store_true",
-                        help="桌面开发档：跳过本机不存在的硬件/GPU 包（会逐项打印）")
+    parser.add_argument(
+        "--profile", default="",
+        help="构建档位（desktop / jetson）；按档位声明跳过硬件/GPU 包与对应 launch",
+    )
+    parser.add_argument(
+        "--skip-absent", action="store_true",
+        help="[已弃用] 等价于 --profile desktop；仅为兼容旧命令行保留",
+    )
     args = parser.parse_args()
+    sys.path.insert(0, str(ROOT / "src" / "rak_orchestration"))
+    from rak_orchestration import profiles as profile_mod
+
+    name = args.profile or ("desktop" if args.skip_absent else "")
+    profile = profile_mod.load(name) if name else None
+    if profile is not None:
+        problems = profile_mod.validate(profile)
+        assert not problems, problems
+
     found = packages()
     check_boundaries(found)
     check_launch_references(found)
+    if profile is not None:
+        check_assembly_layers(found, set(profile.skip_packages))
     if args.installed:
         with tempfile.TemporaryDirectory(prefix="rak-workspace-check-") as logs:
             with patch.dict(os.environ, {"ROS_LOG_DIR": logs, "PYTHONDONTWRITEBYTECODE": "1"}):
-                check_installed(found, skip_absent=args.skip_absent)
-    print(f"OK: {len(found)} owned packages, dependency graph and launch references")
+                check_installed(found, profile=profile)
+    suffix = f"，档位 {profile.name}" if profile is not None else ""
+    print(f"OK: {len(found)} owned packages, dependency graph and launch references{suffix}")
 
 
 if __name__ == "__main__":

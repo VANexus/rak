@@ -15,6 +15,11 @@
 # 未闭合（不要当已验证）：link 域里控制器级节点的转移服务名待现场复核 —— 本轮没有
 # 上板启动 controller_manager（现场另有栈在跑），见 ADR-0020 待闭合项 #3。
 #
+# 2026-10-29 第二轮收敛：上表里所有**自有节点**已从 observed 转 managed
+# （imu / speech×4 / task×4 / camera 的 C++ 驱动）。仍为 observed 的只剩第三方节点
+# （orbbec / lslidar / depth_image_proc / audio_capture / audio_play / robot_state_publisher）
+# 与 Nav2/slam 那些自带 manager 的组件 —— 它们的转移归上游，本 manager 只观测。
+#
 # ⚠️ 本文件的 `link` 域是 **v4 形态**（CanSession + 四个 ros2_control 控制器）。
 # 下位机已按 ADR-0021 切到 v5=CANopen，`rak` 侧 v4 主站对 R73/A14 板子无效；
 # P3（lely-core NMT 主站，Jetson=node 127 / 底盘=1 / 臂=2）落地时必须整段重声明 link 域，
@@ -123,8 +128,8 @@ domains:
       - node: /i2c_imu
         package: rak_imu_driver
         executable: i2c_imu
-        mode: observed                   # 现场 WIP 文件，第二阶段再收敛成 managed（ADR-0020 待闭合 #1）
-        owner: "external:sensors.launch.py"
+        mode: managed
+        owner: "system_manager"
         launch: sensors.launch.py
         provides:
           # 2026-10-29 现场实测 average 903.6 Hz、帧间隔 1–2 ms（ros2 topic hz -w 100）
@@ -154,6 +159,36 @@ domains:
         provides:
           - {topic: /camera/depth/points, kind: exists}
 
+      # ---- 以下三个是 C++ 驱动，2026-10-29 已转 rclcpp_lifecycle（ADR-0020 §4）----
+      # 在此之前它们的资源获取全在构造函数里：astra 的 getDevice()+start()、
+      # pointcloud 的 init_cuda() 在订阅之后、stereo 的 cudaMalloc 在 init_cuda 之前。
+      # 现在 configure = 资源、activate = I/O，且失败返回可读 reason 而不是进程消失。
+      - node: /astra_bridge_node
+        package: rak_astra_driver
+        executable: astra_node
+        mode: managed
+        owner: system_manager
+        launch: astra.launch.py
+        enabled: false                     # 与 orbbec 后端互斥（robot.launch.py camera:=）
+        provides:
+          - {topic: /camera/depth/image_raw, kind: exists}
+      - node: /eye_capture
+        package: rak_stereo_driver
+        executable: stereo_node
+        mode: managed
+        owner: system_manager
+        launch: stereo.launch.py
+        enabled: false                     # 双目为可选件；未接时不进期望集
+      - node: /gpu_pointcloud
+        package: rak_pointcloud
+        executable: gpu_pointcloud_node
+        mode: managed
+        owner: system_manager
+        launch: rak_pointcloud/gpu_pointcloud.launch.py
+        enabled: false                     # 与相机 SDK 自带点云二选一
+        provides:
+          - {topic: /camera/depth/points_gpu, kind: exists}
+
   - name: mic
     requires: []
     components:
@@ -168,22 +203,22 @@ domains:
       - node: /speech_asr
         package: rak_speech
         executable: asr_node
-        mode: observed                   # 模型加载在 worker 线程，managed 化要配就绪话题（待闭合 #1）
-        owner: "external:speech.launch.py"
+        mode: managed
+        owner: "system_manager"
         launch: speech.launch.py
         provides:
           - {topic: /speech/transcript, kind: exists}
       - node: /speech_vtn
         package: rak_speech
         executable: vtn_node
-        mode: observed
-        owner: "external:speech.launch.py"
+        mode: managed
+        owner: "system_manager"
         launch: speech.launch.py
       - node: /wake_doa_viz
         package: rak_speech
         executable: wake_doa_viz
-        mode: observed
-        owner: "external:sensors.launch.py"
+        mode: managed
+        owner: "system_manager"
         launch: sensors.launch.py
 
   # ---------------- L3：定位与导航 ----------------
@@ -305,25 +340,39 @@ domains:
       - node: /tool_executor
         package: rak_tool_executor
         executable: tool_executor
-        mode: observed
-        owner: "external:task.launch.py|harness_agent.launch.py"
+        mode: managed
+        owner: "system_manager"
         launch: task.launch.py
         provides:
           - {topic: /tool_results, kind: exists}
       - node: /harness
         package: rak_harness
         executable: harness_node
-        mode: observed                   # 现场 WIP；managed 化时它的云端 worker 必须可被 deactivate 打断
-        owner: "external:task.launch.py|harness_agent.launch.py"
+        mode: managed
+        owner: "system_manager"
         launch: task.launch.py
       - node: /brain
         package: rak_agent
         executable: agent_node
-        mode: observed                   # TensorRT 引擎加载搬到 on_configure 后才值得 managed
-        owner: "external:agent.launch.py"
+        mode: managed
+        owner: "system_manager"
         launch: agent.launch.py
         provides:
           - {topic: /brain/decision, kind: exists}
+
+  # ---------------- 观测：指标聚合（ADR-0020 §9 的观测半边）----------------
+  - name: observability
+    requires: []
+    components:
+      - node: /rak_metrics
+        package: rak_metrics
+        executable: rak_metrics
+        mode: managed
+        owner: system_manager
+        launch: rak_metrics/rak_metrics.launch.py
+        enabled: false                   # 默认不随整车起；排障/调参时单独 launch 或打开本行
+        provides:
+          - {topic: /rak/metrics, kind: exists}
 
   # ---------------- L5：表达 ----------------
   - name: expression
@@ -332,8 +381,8 @@ domains:
       - node: /speech_tts
         package: rak_speech
         executable: tts_node
-        mode: observed
-        owner: "external:speech.launch.py"
+        mode: managed
+        owner: "system_manager"
         launch: speech.launch.py
       - node: /audio_play
         package: audio_play
