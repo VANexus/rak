@@ -36,9 +36,7 @@ cat /proc/asound/card2/stream0
                                                         -> /speech/intent
 阵列板 vtn.sock --adb forward--> vtn_node --> /speech/wake(WakeEvent)
                                         --> /speech/vtn_ready(latched Bool)
-/speech/say(Say 服务) --> tts_node --/audio_out--> audio_play --> USB 喇叭
-/speech/quick(String=素材key) --> tts_node  即时层:预合成 wav 直出(无推理)
-                                            内容层:qwentts.cpp 流式(backend:=qwentts)
+/speech/say(Say 服务) --> tts_node(sherpa-onnx) --/audio_out--> audio_play --> USB 喇叭
 ```
 
 - `audio_capture` 参数:`src=alsasrc dst=appsink format=wave device=hw:CARD=XFMDPV0018`
@@ -103,35 +101,50 @@ cat /proc/asound/card2/stream0
 - 板端 `user_cfg.ini` 的 `debug` 必须是 `0`(= 不录音);板时钟不准(Jan 1 起步),
   `WakeEvent.header.stamp` 一律用主机时刻。
 
-## TTS 与喇叭(2026-10-11 初测 / 2026-10-17 换 `qwentts`)
+## 声纹识别(2026-10-17,在线聚类版)
+
+```
+/audio(16k 单声道) --silero VAD--> 3D-Speaker CAM++(sherpa-onnx,CPU 单线程)
+    --> 在线聚类(余弦阈值,会话内质心) --> /speech/speaker(JSON:
+        {"speaker":"S1","score":0.83,"new_cluster":false})
+```
+
+- **不要档案,实时识别**:不做预注册、不落盘。每段语音的嵌入与内存中的簇质心
+  比对——相似(≥`threshold`)就投给该簇并更新质心,否则开新簇;标签 S1/S2/…
+  在节点生命周期内稳定,重启归零。`max_speakers`(默认 8)封顶,超限时弱匹配
+  折进最近簇,标签不膨胀。
+- 模型(不进 git,`acoustic/models/speaker/`):
+  `3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx`(~28MB)+
+  `silero_vad.onnx`(~2MB)。搜索**优先 `speaker/` 子目录**,并排除 cosyvoice 等
+  模型包内自带的同名 `campplus.onnx`(无 sherpa 元数据,会让加载报
+  "Unknown model type")。
+- 开销:模型 ~28MB、常驻 RSS ~78MB、单核 <5%、每窗 20–60ms;身份在开口 ~1s 后
+  出现,持续说话中每 0.8s 刷新,停嘴即过期。参数:`threshold`(默认 0.5)、
+  `max_speakers`、`eval_every_sec`、`window_sec`。
+- 准确率边界:远场+阵列降噪后的单声道;2–5 人效果最好;同一个人换距离/嗓音
+  可能分叉成两个簇(重启节点即重置)。这是"这几次说话是不是同一个人"的在线
+  归纳,不是公安级声纹库比对。
+- 一键启动:`speech.launch.py` 的 `speaker:=true`(默认),需要 `capture:=true`
+  才有 `/audio`。rviz 里身份由 `wake_doa_viz` 合并进扇形状态文本
+  (`S1 135 deg wake`)。
+
+## TTS 与喇叭(2026-10-11 实测)
 
 - **喇叭 = USB C-Media 声卡**(`0d8c:0012`,插在 Jetson 上),不是阵列的模拟
   喇叭端子;阵列 UAC 是 capture only(上文),板端 audiocodec 只服务板内 AIUI。
   播放设备写 `plughw:CARD=Device`(按 id,`plughw` 让 ALSA 负责重采样/声道转换)。
   mixer `PCM` 默认 38%(-23 dB)开,音量用 `amixer -c 0 cset` 调。
-- `tts_node`(`/speech/say`,`rak_interfaces/Say`)分三层(ADR-0018):
-  即时层播预合成 wav、内容层 `qwentts.cpp` 流式合成、单句超预算降级。
-  回调只入队(合成在工作线程);即时层例外——它要立刻出声,并从回调线程直接
-  播、打断正在流出的内容句。
-- **内容层默认 `backend:=qwentts`**(2026-10-17 定稿):
-  `tools/qwentts.cpp` 的 `tts-server`(OpenAI 兼容本地服务)常驻,GGUF 是
-  `models/qwen-talker-0.6b-customvoice-Q4_K_M.gguf` + `qwen-tokenizer-12hz-Q8_0.gguf`,
-  音色 `serena`,输出 24 kHz。实测(CPU,10 W 模式):首帧出声(TTFB)
-  ~0.5–1.0 s,整句 RTF ~3.5–5.6。KV cache 用 `qwentts_max_seq`(=本地补丁的
-  `QT_MAX_SEQ`,默认 2048≈448MB)压住内存,4096 会吃 896MB。
-  GPU 路径被上游 sm87 bug 堵着(qwentts.cpp#40),`--device CUDA0` 暂不可用。
-- 备选后端仍在:`backend:=sherpa` 是 sherpa-onnx(kokoro-multi-lang-v1_1
-  24 kHz/103 声库/中英双语,加载 ~4 s,合成约 0.75× 实时,3 线程;
-  vits-zh-aishell3 8 kHz、约 3.2× 实时,切换时同步改 `tts_sample_rate:=8000`),
-  `backend:=cosyvoice` 是 GPU CosyVoice3(已证内存不可行,见 ADR-0018 背景)。
-- 即时层素材在 `acoustic/models/quick/<key>.wav`(不进 git),由
-  `python3 scripts/make_quick_phrases.py` 用 serena 预合成,清单是
-  `src/rak_speech/config/quick_phrases.toml`(key 对齐人格卡模板);wav 缺失时
-  即时层静默关闭,内容层照常。打 `/speech/quick`(String=素材 key,如 `ack_wake`)
-  可单独验证素材。
+- `tts_node`(`/speech/say`,`rak_interfaces/Say`):sherpa-onnx 离线合成,回调只
+  入队(合成在工作线程),`/audio_out` 发布裸 PCM(`AudioData`);`audio_play`
+  (audio_common,`format=wave`)接 `alsasink`。实测:kokoro-multi-lang-v1_1
+  24 kHz/103 声库/中英双语,加载 ~4 s,**合成约 0.75× 实时**(4 线程);
+  vits-zh-aishell3 备选 8 kHz、约 3.2× 实时(`-p model_dir:=` 切换,
+  同时把 launch 的 `tts_sample_rate` 改成 8000)。
+- TTS 模型在 `acoustic/models/`(不进 git),来自
+  `github.com/k2-fsa/sherpa-onnx/releases/tags/tts-models`;sherpa-onnx 为 pip
+  安装(无 rosdep 键),缺失时 `tts_node` 降级(服务拒答,进程不崩)。
 - 实测服务链:`ros2 service call /speech/say ... "{text: 你好}"` → accepted →
   `/audio_out` 收到 24 kHz 裸 PCM → C-Media `Status: Running`。
-  即时层命中时返回 `message: instant`(此时内容层模型可以还没加载完)。
 
 
 ```bash
@@ -143,6 +156,7 @@ ros2 topic echo /speech/transcript                # 对着阵列说话
 ros2 topic echo /speech/vtn_ready --qos-durability transient_local --once
 ros2 topic echo /speech/wake                      # 说「hei rui ke」→ WakeEvent(带角度)
 ros2 topic hz /wake_doa                           # 唤醒过一次后 ~10 Hz(连续重绘)
+ros2 topic echo /speech/speaker                   # 声纹:{"speaker","score","new_cluster"}
 ros2 service call /speech/say rak_interfaces/srv/Say "{text: 你好}"   # 喇叭出声
 ```
 

@@ -24,6 +24,7 @@ sorry = "用抱歉、诚恳的语气说"
 curious = "用好奇、探询的语气说"
 
 [persona.templates]
+ack_wake = "我在。"
 ack_navigate = "好嘞，去{dest}，走了。"
 ack_pause = "好，停一下。"
 ack_resume = "继续走。"

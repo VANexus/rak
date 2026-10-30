@@ -20,6 +20,8 @@
   <!-- wake_doa_viz: WakeEvent.angle -> RViz arrow (visualization layer, sensors.launch). -->
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
+  <!-- speaker_node: /audio -> /speech/speaker (3D-Speaker CAM++, 在线聚类,
+       无注册档案; sherpa-onnx pip 包无 rosdep 键;模型在 acoustic/models/ 不进 git)。 -->
   <!-- tts_node: float32 PCM → S16 转换。sherpa-onnx 为 pip 安装,无 rosdep 键,
        缺失时 tts_node 降级(见 docs/microphone_array.md)。 -->
   <exec_depend>python3-numpy</exec_depend>

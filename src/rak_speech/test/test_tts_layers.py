@@ -15,7 +15,13 @@ import pytest
 
 from rak_speech import qwentts_backend
 from rak_speech.qwentts_backend import QwenttsSynthesizer, QwenttsUnavailable
-from rak_speech.tts_layers import QuickAssets, normalize_phrase, read_wav_s16, split_sentences
+from rak_speech.tts_layers import (
+    QuickAssets,
+    normalize_phrase,
+    read_wav_s16,
+    split_sentences,
+    trim_silence_s16,
+)
 
 # -- 层2:分句 ------------------------------------------------------------------
 
@@ -207,3 +213,47 @@ def test_node_resolves_repo_paths():
     acoustic = SpeechTts._resolve_repo_path("acoustic")
     assert acoustic is not None and acoustic.name == "acoustic"
     assert SpeechTts._resolve_repo_path("no/such/thing") is None
+
+
+# -- 层1 素材:首尾静音裁剪(2026-10-17 实测 ack_wake 首 388ms/尾 548ms) -------
+def _tone_pcm(sr: int, ms: int, amp: int = 10000) -> bytes:
+    import math
+
+    out = bytearray()
+    for i in range(sr * ms // 1000):
+        v = int(amp * math.sin(2 * math.pi * 200 * i / sr))
+        out += v.to_bytes(2, "little", signed=True)
+    return bytes(out)
+
+
+def test_trim_silence_keeps_lead_and_tail_margins():
+    sr = 16000
+    silence = b"\x00\x00" * (sr // 2)  # 每侧 500ms 静音
+    pcm = silence + _tone_pcm(sr, 400) + silence
+    out = trim_silence_s16(pcm, sr, lead_ms=30, tail_ms=80)
+    ms = len(out) // 2 * 1000 // sr
+    assert abs(ms - 510) <= 6  # 400ms 语音 + 30ms 预备 + 80ms 收尾
+    assert len(out) < len(pcm)
+
+
+def test_trim_silence_all_silent_returned_as_is():
+    sr = 16000
+    pcm = b"\x00\x00" * sr
+    assert trim_silence_s16(pcm, sr) == pcm  # 全静音不制造空缓冲区
+
+
+def test_quick_assets_load_applies_trim(tmp_path):
+    """加载即裁剪:文件里 1.3s、命中后应 ~410ms,播放路径零预处理。"""
+    sr = 16000
+    wav = tmp_path / "ack_wake.wav"
+    with wave.open(str(wav), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(b"\x00\x00" * (sr // 2) + _tone_pcm(sr, 300) + b"\x00\x00" * (sr // 2))
+    spec = tmp_path / "quick.toml"
+    spec.write_text('[phrases.ack_wake]\ntext = "我在。"\n', encoding="utf-8")
+    assets = QuickAssets.load(spec, tmp_path)
+    pcm = assets.pcm_for_text("我在。")
+    assert pcm is not None
+    assert len(pcm) // 2 * 1000 // sr < 520  # 从原始 1.3s 显著缩短

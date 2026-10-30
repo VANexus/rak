@@ -96,6 +96,11 @@ class VtnLink:
         self._connect = connect
         self._ensure_forward = ensure_forward
         self._push_keywords = push_keywords
+        # 唤醒词配置**每进程只推一次**(不是每条连接):板固件收到 wakeup_keywords
+        # 会重启一次本机 socket(实测踢线);旧实现 pushed 是 _serve 的局部变量,
+        # 重连即重置 → 推一次踢一次、无限循环,链路永远立不住。置为实例属性后,
+        # 板子重启一次、链路重连后不再重推,配置(阈值)得以真正生效。
+        self._pushed = False
         self._on_state = on_state or (lambda up: None)
         self._on_ivw = on_ivw or (lambda fields: None)
         self._on_other = on_other or (lambda t, d: None)
@@ -140,7 +145,6 @@ class VtnLink:
         parser = FrameParser()
         out_id = 0
         up = False
-        pushed = False
         while not self._stop.is_set():
             try:
                 chunk = sock.recv(4096)
@@ -155,10 +159,10 @@ class VtnLink:
                         up = True
                         self._on_state(True)
                         self._log("与降噪板握手成功")
-                    if self._push_keywords and not pushed:
+                    if self._push_keywords and not self._pushed:
                         out_id = (out_id + 1) & 0xFFFF
                         sock.sendall(make_control(self._push_keywords, out_id))
-                        pushed = True
+                        self._pushed = True
                         self._log(f"已下发唤醒词配置: {self._push_keywords}")
                 elif frame.type == MSG_DEVICE:
                     ivw = parse_ivw_event(frame.data)

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import array
 import re
 import tomllib
 import wave
@@ -99,6 +100,38 @@ def read_wav_s16(path: Path) -> tuple[int, bytes]:
         return wf.getframerate(), wf.readframes(wf.getnframes())
 
 
+def trim_silence_s16(
+    pcm: bytes,
+    sample_rate: int,
+    lead_ms: int = 30,
+    tail_ms: int = 80,
+    threshold_ratio: float = 0.05,
+) -> bytes:
+    """裁掉首尾静音,保留 lead/tail 毫秒余量(S16LE 单声道)。
+
+    即时层素材是离线合成的,首尾天然带几百毫秒静音——实测 ack_wake 开头
+    388ms、结尾 548ms。ALSA 在唤醒后 5ms 就开始"播",但那 388ms 是空白,
+    听感上就是"喊完先愣半拍才开口"。加载时裁一次(缓存在内存),播放端零成本。
+    阈值按峰值比例取,全静音(peak=0)原样返回,不制造空缓冲区。
+    """
+    if len(pcm) < 4:
+        return pcm
+    samples = array.array("h")
+    samples.frombytes(pcm)
+    peak = max(max(samples), -min(samples))
+    if peak == 0:
+        return pcm
+    threshold = max(1, int(peak * threshold_ratio))
+    n = len(samples)
+    first = next((i for i, v in enumerate(samples) if abs(v) > threshold), n)
+    last = next((i for i in range(n - 1, -1, -1) if abs(samples[i]) > threshold), 0)
+    lead = sample_rate * lead_ms // 1000
+    tail = sample_rate * tail_ms // 1000
+    start = max(0, first - lead)
+    end = min(n, last + 1 + tail)
+    return samples[start:end].tobytes()
+
+
 class QuickAssets:
     """即时反应层素材集:key → (文案, PCM 字节)。
 
@@ -165,5 +198,7 @@ class QuickAssets:
             except (ValueError, wave.Error) as exc:
                 missing.append(f"{key}({exc})")
                 continue
-            entries[key] = (text, sr, pcm)
+            # 首尾静音在这里一次性裁掉(见 trim_silence_s16):素材重新生成后
+            # 自动继承,播放路径不再需要任何预处理。
+            entries[key] = (text, sr, trim_silence_s16(pcm, sr))
         return cls(entries, missing)

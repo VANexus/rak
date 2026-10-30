@@ -126,6 +126,11 @@ class HarnessNode(ManagedNode):
             return ret
         try:
             self._attention_sec = float(self.declare("attention_sec", 12.0))
+            # 唤醒应答的两道闸（只压应答，不压注意力窗口/方位箭头）：
+            # 板阈值 500 贴地，环境语音会擦线误触发；分数闸按实测缝调
+            # （误触发 501-546、真唤醒 589+），去抖压连环触发。
+            self._ack_min_score = float(self.declare("ack_min_score", 650.0))
+            self._ack_cooldown_sec = float(self.declare("ack_cooldown_sec", 4.0))
             persona_file = str(self.declare("persona_file", "")) or self._default_persona()
             self._ttl = float(self.declare("proposal_ttl_sec", 20.0))
             cloud_model = str(self.declare("cloud_model", "deepseek-chat"))
@@ -138,7 +143,11 @@ class HarnessNode(ManagedNode):
             self._allow_motion_tools = bool(self.declare("agent_allow_motion_tools", False))
 
             self._persona = load_persona(persona_file)
-            self._engine = DialogueEngine(attention_sec=self._attention_sec)
+            self._engine = DialogueEngine(
+                attention_sec=self._attention_sec,
+                ack_min_score=self._ack_min_score,
+                ack_cooldown_sec=self._ack_cooldown_sec,
+            )
             self._cloud = HarnessCloud(model=cloud_model, max_calls_per_task=cloud_calls)
 
             # 未激活不发布：LifecyclePublisher 在 on_activate 之前丢弃 publish()
@@ -337,9 +346,12 @@ class HarnessNode(ManagedNode):
         with self._lock:
             self._snapshot.wake_angle = float(msg.angle)
             self._snapshot.wake_beam = int(msg.beam)
-            self._engine.on_wake(now=time.time())
+            out = self._engine.on_wake(now=time.time(), score=float(msg.score))
         self.get_logger().info(
             f"attentive: '{msg.keyword}' angle={msg.angle:.0f}° beam={msg.beam}")
+        # 引擎在唤醒时会带应答指令（ack_wake，带分数闸与去抖）；
+        # 不执行的话，听到名字却不吭声（Orin 2026-10-29 现场行为）。
+        self._execute_commands(out)
 
     def _on_intent(self, msg: String) -> None:
         if self._agent_active:

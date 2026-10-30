@@ -213,6 +213,17 @@ class I2cImuNode(ManagedNode):
             self.axis_map = parse_axis_map(self.declare('axis_map', '-z,-x,y'))
         except ValueError as exc:
             return self.fail(f'axis_map 非法: {exc}')
+        # [AI] 2026-10-29 Orin 实测：陀螺零偏补偿（rad/s，作用于发布坐标系 =
+        # axis_map 之后，直接减）。不补的后果：Z 轴 -0.27°/s → 10 min 漂 -163°，
+        # EKF 的 vyaw 直接吃这个误差（robot_localization 不会自己估零偏）。
+        # 重测：python3 debug/bias_measure.py 60（车必须完全静止）。
+        bias_raw = str(self.declare('gyro_bias', '0,0,0'))
+        try:
+            self.gyro_bias = tuple(float(v) for v in bias_raw.split(','))
+        except ValueError as exc:
+            return self.fail(f'gyro_bias 非法: {exc}')
+        if len(self.gyro_bias) != 3:
+            return self.fail(f'gyro_bias 需要 3 个数: {bias_raw!r}')
 
         self.declare('startup_timeout_s', 5.0)
 
@@ -303,6 +314,7 @@ class I2cImuNode(ManagedNode):
 
         gx, gy, gz, ax, ay, az = struct.unpack_from('<6h', buf)
         gyro = map_vec((gx * GYRO_SCALE, gy * GYRO_SCALE, gz * GYRO_SCALE), self.axis_map)
+        gyro = tuple(v - b for v, b in zip(gyro, self.gyro_bias))
         accel = map_vec((ax * ACCEL_SCALE, ay * ACCEL_SCALE, az * ACCEL_SCALE), self.axis_map)
         m = Imu()
         m.header.stamp = Time(nanoseconds=stamp_ns).to_msg()

@@ -52,6 +52,11 @@
   <!-- [AI] 雷达扫描平面 base_link→laser_link 高度。2026-10-14 实测扫描平面离地
        0.18（确认为出光面，非壳顶）− base_height 0.0275 = 0.1525 -->
   <xacro:arg name="lidar_z" default="0.1525"/>
+  <!-- [AI] 雷达安装偏航。2026-10-17 重新斜放：雷达正方向相对车头往左≈30°
+       （REP-103：+z 朝上，向左 = +yaw）。同日用 RANSAC 实测校准：两面主墙相对
+       雷达 35.8°（互相垂直），要墙与车体轴对齐需 yaw = 90−35.8 = 54.2°
+       （0.9460 rad）；显示还歪就再调这一个数。 -->
+  <xacro:arg name="lidar_yaw" default="0.9460"/>
 
   <!-- ===== 车体几何（2026-10-11 实测）===== -->
   <xacro:property name="wheelbase" value="0.245"/>  <!-- 轴距：前后轮最外点 30 − 轮径 5.5（2026-10-14） -->
@@ -124,12 +129,12 @@
   <xacro:mecanum_wheel prefix="rear_right"  x="${-hw}" y="${-ht}"/>
 
   <!-- ===== 传感器安装帧（fixed；几何单一来源，勿在 launch 里重复发布）===== -->
-  <!-- 雷达：前·中轴。scan 的 frame_id=laser_link（驱动默认，勿改） -->
+  <!-- 雷达：前·中轴，2026-10-17 起带 lidar_yaw 偏航补偿。scan 的 frame_id=laser_link（驱动默认，勿改） -->
   <link name="laser_link"/>
   <joint name="laser_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="laser_link"/>
-    <origin xyz="${laser_x} 0 $(arg lidar_z)" rpy="0 0 0"/>
+    <origin xyz="${laser_x} 0 $(arg lidar_z)" rpy="0 0 $(arg lidar_yaw)"/>
   </joint>
 
   <!-- 6 阵列麦克风：雷达正上方（vtn_node 桥接，本身不发 TF）。x 实测 0.11 与雷达同 x，借 laser_x -->
@@ -149,15 +154,17 @@
     <origin xyz="${cam_x} 0 ${cam_z}" rpy="0 0 0"/>
   </joint>
 
-  <!-- IMU：LSM6DSRTR（SPI）。2026-10-14 实测安装姿态：芯片"正着放"后绕车体 Y 轴
-       顺时针（自车右侧看）转 90°——芯片 +Z(顶面) 朝车后、+X 朝上、+Y 朝左，
-       即 rpy pitch=-90°。spi_imu.py 的 frame_id=imu_link，EKF(imu0/vyaw) 靠 TF
-       把测量转到 base 系——此姿态写反，航向融合会把滚转当偏航。 -->
+  <!-- IMU：LSM6DSRTR（I2C）。2026-10-26 模块改竖装（芯片 +Y 朝上），
+       i2c_imu.py 的 axis_map='-z,-x,y' 已把数据重排成 REP-103
+       （x 前 / y 左 / z 上），所以 imu_link 与 base_link **同向**，rpy=0。
+       ⚠️ 2026-10-29 修正：原来是 SPI 时代的 pitch=-90°（那时 spi_imu.py
+       原样发芯片轴，靠这个 TF 摆正）。驱动换 I2C 后自己摆正了，URDF 再转
+       一次 = 把滚转当偏航。依据见 i2c_imu.py 头注释的实测表。 -->
   <link name="imu_link"/>
   <joint name="imu_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="imu_link"/>
-    <origin xyz="${imu_x} 0 ${imu_z}" rpy="0 ${-pi/2} 0"/>
+    <origin xyz="${imu_x} 0 ${imu_z}" rpy="0 0 0"/>
   </joint>
 
   <!-- 机械臂安装帧：后·中轴。姿态/安装面高度 TODO(measured)；
@@ -201,17 +208,9 @@
     <limit lower="0.0" upper="4.71239" effort="2.0" velocity="6.0"/>
   </joint>
 
-  <!-- [AI] 2026-10-29 双下位机拆分：以前一个 <ros2_control> 同时管 4 轮（底盘板）
-       和 7 轴（机械臂板），于是一块板掉线会让 controller_manager 停用**整个** hardware，
-       把另一块板还在正常工作的控制器一起 deactivate。现在按物理板拆成两段：
-          rak_chassis -> 0x030/0x200-202/0x220/0x032（4 轮）
-          rak_arm     -> 0x031/0x210/0x211/0x221/0x222（6 定位轴 + 夹爪）
-       两个插件共享同一个 CanSession（can_session_pool.hpp）：同进程、同 socket，
-       不会重复解码。两段的 can_channel / host_build_id / allow_motion 必须完全一致，
-       不一致时 pool 直接让 on_configure 失败（宁可起不来）。 -->
-  <ros2_control name="rak_chassis" type="system">
+  <ros2_control name="rak_chassis_system" type="system">
     <hardware>
-      <plugin>rak_chassis/RakChassisHardware</plugin>
+      <plugin>rak_chassis/RakSystemHardware</plugin>
       <param name="host_build_id">$(arg host_build_id)</param>
       <!-- [AI] 运动许可：默认 false=永远 DISARMED；实驱必须显式 allow_motion:=true -->
       <param name="allow_motion">$(arg allow_motion)</param>
@@ -254,18 +253,6 @@
       <state_interface name="position"/>
       <state_interface name="velocity"/>
     </joint>
-
-  </ros2_control>
-
-  <!-- ================= 机械臂板（独立硬件组件，独立故障域） ================= -->
-  <ros2_control name="rak_arm" type="system">
-    <hardware>
-      <plugin>rak_chassis/RakArmHardware</plugin>
-      <!-- 与底盘段必须是同一组值（pool 会逐字段校验） -->
-      <param name="host_build_id">$(arg host_build_id)</param>
-      <param name="allow_motion">$(arg allow_motion)</param>
-      <param name="can_channel">$(arg can_channel)</param>
-    </hardware>
 
     <!-- [AI] 7 轴臂位置接口（ADR-0012 待闭合项 #1；2026-10-14 随 ADR-0016 的
          ROS 化重建落地）。名称/行程按 docs/arm_moveit_contract.md §1（FROZEN）：
