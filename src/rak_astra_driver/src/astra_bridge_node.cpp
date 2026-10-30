@@ -2,6 +2,7 @@
 // Lists all stream profiles for debugging, enables the best color+depth streams.
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <rclcpp_lifecycle/lifecycle_publisher.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -38,10 +39,10 @@ public:
     // 且与 rak_stereo_driver 的既有约定、ADR-0014 和 docs/perf/ipc_baseline.md §3.1 一致
     // (reliable 发布方一旦遇到 reliable 消费者会触发重传风暴, 实测 p99 108ms)。
     // 在仓消费者 (gpu_pointcloud BE、grasp capture BE、sensors_rviz Image=Best Effort) 全部兼容。
-    color_pub_      = this->create_lifecycle_publisher<sensor_msgs::msg::Image>("/camera/color/image_raw", rclcpp::SensorDataQoS());
-    depth_pub_      = this->create_lifecycle_publisher<sensor_msgs::msg::Image>("/camera/depth/image_raw", rclcpp::SensorDataQoS());
-    color_info_pub_ = this->create_lifecycle_publisher<sensor_msgs::msg::CameraInfo>("/camera/color/camera_info", rclcpp::SensorDataQoS());
-    depth_info_pub_ = this->create_lifecycle_publisher<sensor_msgs::msg::CameraInfo>("/camera/depth/camera_info", rclcpp::SensorDataQoS());
+    color_pub_      = this->create_publisher<sensor_msgs::msg::Image>("/camera/color/image_raw", rclcpp::SensorDataQoS());
+    depth_pub_      = this->create_publisher<sensor_msgs::msg::Image>("/camera/depth/image_raw", rclcpp::SensorDataQoS());
+    color_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/color/camera_info", rclcpp::SensorDataQoS());
+    depth_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/depth/camera_info", rclcpp::SensorDataQoS());
 
     // 设备获取失败（被占用 / 没插）必须是可读的 FAILURE，不是进程消失。
     std::shared_ptr<ob::Device> dev;
@@ -577,8 +578,8 @@ int main(int argc, char ** argv) {
   auto node = std::make_shared<AstraBridgeNode>();
   // 独立可执行没有编排者，自己走到 active；被 launch 以 LifecycleNode 起时
   // 由 launch 事件或 system_manager 发转移。
-  if (node->configure() != AstraBridgeNode::CallbackReturn::SUCCESS ||
-    node->activate() != AstraBridgeNode::CallbackReturn::SUCCESS) {
+  if (node->configure().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE ||
+    node->activate().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
     RCLCPP_ERROR(node->get_logger(), "astra bridge failed to reach active");
     rclcpp::shutdown();
     return 1;

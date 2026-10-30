@@ -17,6 +17,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <lifecycle_msgs/msg/state.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <rclcpp_lifecycle/lifecycle_publisher.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
@@ -69,7 +70,7 @@ public:
     }
 
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
-    points_pub_ = create_lifecycle_publisher<sensor_msgs::msg::PointCloud2>(points_topic_, qos);
+    points_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(points_topic_, qos);
     info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
       info_topic_, qos,
       [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {info_ = msg;});
@@ -239,8 +240,8 @@ int main(int argc, char ** argv)
   auto node = std::make_shared<rak::pointcloud::GpuPointCloudNode>();
   // 独立可执行 = 没有编排者（supervised:=false 的等价物）：自己走到 active。
   // 被 launch 以 LifecycleNode 起时，configure/activate 由 launch 或 system_manager 发。
-  if (node->configure() != rak::pointcloud::GpuPointCloudNode::CallbackReturn::SUCCESS ||
-    node->activate() != rak::pointcloud::GpuPointCloudNode::CallbackReturn::SUCCESS)
+  if (node->configure().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE ||
+    node->activate().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
   {
     RCLCPP_ERROR(node->get_logger(), "point cloud node failed to reach active");
     rclcpp::shutdown();

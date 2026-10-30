@@ -120,10 +120,10 @@ CaptureNode::CallbackReturn CaptureNode::on_configure(const rclcpp_lifecycle::St
   eye_w_ = config_.sbs_width / 2;
   eye_h_ = config_.sbs_height;
 
-  pub_left_ = create_lifecycle_publisher<sensor_msgs::msg::Image>(config_.left_topic, rclcpp::SensorDataQoS());
-  pub_right_ = create_lifecycle_publisher<sensor_msgs::msg::Image>(config_.right_topic, rclcpp::SensorDataQoS());
-  pub_left_info_ = create_lifecycle_publisher<sensor_msgs::msg::CameraInfo>(config_.left_info_topic, rclcpp::SensorDataQoS());
-  pub_right_info_ = create_lifecycle_publisher<sensor_msgs::msg::CameraInfo>(config_.right_info_topic, rclcpp::SensorDataQoS());
+  pub_left_ = create_publisher<sensor_msgs::msg::Image>(config_.left_topic, rclcpp::SensorDataQoS());
+  pub_right_ = create_publisher<sensor_msgs::msg::Image>(config_.right_topic, rclcpp::SensorDataQoS());
+  pub_left_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(config_.left_info_topic, rclcpp::SensorDataQoS());
+  pub_right_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(config_.right_info_topic, rclcpp::SensorDataQoS());
   left_camera_info_ = std::make_unique<camera_info_manager::CameraInfoManager>(
       this, "stereo_left", config_.left_camera_info_url);
   right_camera_info_ = std::make_unique<camera_info_manager::CameraInfoManager>(

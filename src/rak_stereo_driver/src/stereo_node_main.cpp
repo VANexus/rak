@@ -14,8 +14,8 @@ int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
   auto node = std::make_shared<rak::stereo_driver::CaptureNode>();
-  if (node->configure() != rak::stereo_driver::CaptureNode::CallbackReturn::SUCCESS ||
-    node->activate() != rak::stereo_driver::CaptureNode::CallbackReturn::SUCCESS)
+  if (node->configure().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE ||
+    node->activate().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
   {
     RCLCPP_ERROR(node->get_logger(), "stereo capture node failed to reach active");
     rclcpp::shutdown();
