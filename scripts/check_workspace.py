@@ -259,8 +259,16 @@ def check_installed(found, profile=None) -> None:
     for module_name, package_name in modules:
         module = importlib.import_module(module_name)
         prefix = Path(get_package_prefix(package_name)).resolve()
-        module_path = Path(module.__file__).resolve()
-        assert prefix in module_path.parents, f"{module_name} imported outside install: {module_path}"
+        # --symlink-install 下 ament_python 的模块真身在 build/<pkg>（符号链接回 src），
+        # 所以 build 前缀同样算"来自 colcon 环境"；这仍然能抓住真正的源码树污染
+        # （sys.path 里混进 ~/rak/src 之类的情形，路径前缀对不上 build/install）。
+        build_prefix = prefix.parent.parent / "build" / package_name
+        module_path = Path(module.__file__)
+        assert prefix in module_path.parents or build_prefix in module_path.parents, (
+            f"{module_name} imported outside install: {module_path} "
+            f"(install={prefix}, build={build_prefix})")
+        assert "build" not in module_path.parents[1].parts or build_prefix in module_path.parents, (
+            f"{module_name} imported from a foreign build dir: {module_path}")
 
     agent_node = Path(get_package_prefix("rak_agent")) / "lib/rak_agent/agent_node"
     assert agent_node.is_file(), f"missing ROS console entry point: {agent_node}"
