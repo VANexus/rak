@@ -27,7 +27,7 @@ is cheaper. Correctness is pinned by the analytic-plane check in
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from rak_orchestration.launch_helpers import managed
 
 
 def generate_launch_description():
@@ -59,7 +59,11 @@ def generate_launch_description():
                 "log_every_n", default_value="0",
                 description="Log per-frame latency every N frames; 0 disables.",
             ),
-            Node(
+            DeclareLaunchArgument(
+                "supervised", default_value="false",
+                description="true = 由 system_manager 驱动生命周期（本文件不自启）",
+            ),
+            *managed(
                 package="rak_pointcloud",
                 executable="gpu_pointcloud_node",
                 name="gpu_pointcloud",

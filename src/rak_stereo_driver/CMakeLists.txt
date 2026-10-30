@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Find ROS dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(camera_info_manager REQUIRED)
@@ -40,6 +41,7 @@ target_include_directories(capture_component PUBLIC
 
 ament_target_dependencies(capture_component
   rclcpp
+  rclcpp_lifecycle
   rclcpp_components
   sensor_msgs
   camera_info_manager
@@ -52,12 +54,15 @@ target_link_libraries(capture_component
   PkgConfig::NVJPEG
 )
 
-rclcpp_components_register_node(capture_component
-  PLUGIN "rak::stereo_driver::CaptureNode"
-  EXECUTABLE stereo_node
-)
+# 只注册插件（供 component_container 加载）；独立可执行用我们自己的 main，
+# 因为受管节点需要 configure→activate，生成式 main 只会 spin（ADR-0020）。
+rclcpp_components_register_nodes(capture_component "rak::stereo_driver::CaptureNode")
 
-install(TARGETS capture_component
+add_executable(stereo_node src/stereo_node_main.cpp)
+target_link_libraries(stereo_node capture_component)
+ament_target_dependencies(stereo_node rclcpp)
+
+install(TARGETS capture_component stereo_node
   EXPORT export_${PROJECT_NAME}
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
@@ -69,7 +74,7 @@ install(DIRECTORY include/ DESTINATION include)
 # Calibration belongs to the sensor integration configuration.
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(rclcpp rclcpp_components sensor_msgs camera_info_manager rak_gpu CUDAToolkit)
+ament_export_dependencies(rclcpp rclcpp_lifecycle rclcpp_components sensor_msgs camera_info_manager rak_gpu CUDAToolkit)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -30,6 +30,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
 )
@@ -38,6 +39,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+from rak_orchestration.launch_helpers import managed
 
 #: REP-103 optical frame: z forward, x right, y down.
 _OPTICAL_RPY = ("-1.57079632679", "0.0", "-1.57079632679")
@@ -165,6 +168,12 @@ def generate_launch_description():
             "rviz", default_value="true",
             description="start RViz with config/sensors_rviz.rviz",
         ),
+        # ADR-0020: wake_doa_viz 是受管节点。默认 false = 本文件自己
+        # configure→activate（单跑 sensors 排障）；true = 转移交给 system_manager。
+        DeclareLaunchArgument(
+            "supervised", default_value="false",
+            description="true = 转移交给 system_manager，本文件不自启受管节点",
+        ),
 
         # ---- body tree (one publisher) ---------------------------------------
         Node(
@@ -199,7 +208,9 @@ def generate_launch_description():
         # I2C 实测 994-1000 Hz、错误率约 2.5 万分之一（详见 i2c_imu.py 头注）。
         # axis_map 默认值由驱动提供（-z,-x,y，本机安装朝向实测校准），这里显式
         # 写出只是为了让 launch 自解释；换模块/重装后必须重测三轴。
-        Node(
+        # 受管节点（ADR-0020 / ADR-0023）：设备在 configure 打开，1 kHz 采样在 activate
+        # 才开始；时间戳取自采样时刻。supervised:=true 时由 system_manager 驱动。
+        GroupAction(actions=managed(
             package="rak_imu_driver",
             executable="i2c_imu",
             name="i2c_imu",
@@ -212,8 +223,7 @@ def generate_launch_description():
                 "topic": "/imu/data_raw",
                 "axis_map": "-z,-x,y",
             }],
-            condition=IfCondition(LaunchConfiguration("imu")),
-        ),
+        ), condition=IfCondition(LaunchConfiguration("imu"))),
 
         # ---- microphone array ------------------------------------------------
         IncludeLaunchDescription(
@@ -224,11 +234,14 @@ def generate_launch_description():
         ),
         # The board only reports a bearing together with a wake event, and audio has
         # no RViz display -- this arrow is how the array shows up in the view.
-        Node(
-            package="rak_speech",
-            executable="wake_doa_viz",
-            name="wake_doa_viz",
-            output="screen",
+        # Managed node (ADR-0020 §5): `managed()` 返回"节点 + 两个事件处理器"一组动作，
+        # 所以 mic 开关落在 GroupAction 上，整组一起起/停。
+        GroupAction(
+            actions=managed(
+                package="rak_speech",
+                executable="wake_doa_viz",
+                name="wake_doa_viz",
+            ),
             condition=IfCondition(LaunchConfiguration("mic")),
         ),
 

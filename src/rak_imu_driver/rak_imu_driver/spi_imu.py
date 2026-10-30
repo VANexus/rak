@@ -24,11 +24,17 @@ import time
 # ROS 依赖延迟可选: --probe 是纯硬件只读自检, 不要求先 source ROS 环境
 try:
     import rclpy
-    from rclpy.node import Node
+    from diagnostic_msgs.msg import DiagnosticStatus
+    from rclpy.lifecycle import TransitionCallbackReturn
+    from rclpy.time import Time
+    from rak_lifecycle.managed_node import ManagedNode
     from sensor_msgs.msg import Imu
 except ImportError:                                    # --probe 模式允许无 ROS 环境
     rclpy = None
-    Node = object
+    ManagedNode = object
+    TransitionCallbackReturn = None
+    DiagnosticStatus = None
+    Time = None
     Imu = None
 
 # ---- spidev ioctl 常量 (linux/spi/spidev.h) ----
@@ -152,81 +158,122 @@ def loopback(spi, pattern=(0xA5, 0x5A, 0xC3, 0x3C), speed_hz=1_000_000):
     return 0 if ok else 1
 
 
-class SpiImuNode(Node):
+class SpiImuNode(ManagedNode):
+    """LSM6DSRTR SPI 节点（ADR-0020 managed + ADR-0023 采样时刻打戳）。
+
+    SPI 路径当前**不通**（CS 上电电平把芯片锁在 I2C 模式，见文件头），保留它是为了
+    板子改线后能直接起来；因此它与 i2c_imu 保持同一套生命周期与打戳契约，
+    免得"能用的那条"和"备份那条"行为不一致。
+    """
+
     def __init__(self):
         super().__init__('spi_imu')
-        self.declare_parameter('device', '/dev/spidev0.0')
-        self.declare_parameter('mode', 3)
-        self.declare_parameter('speed_hz', 10_000_000)
-        self.declare_parameter('rate_hz', 1000.0)
-        self.declare_parameter('odr', 1660)
-        self.declare_parameter('frame_id', 'imu_link')
-        self.declare_parameter('topic', '/imu/data_raw')
-
-        device = str(self.get_parameter('device').value)
-        self.spi = RawSpi(device,
-                          int(self.get_parameter('mode').value),
-                          int(self.get_parameter('speed_hz').value))
-        self.get_logger().info(
-            f'SPI 就绪: {device} mode={self.spi.mode} speed={self.spi.speed} bits={self.spi.bits}')
-
-        # WHO_AM_I 重试（支持上电稍后于节点启动的场景）
-        who = None
-        for _ in range(50):
-            who = self.spi.read_reg(REG_WHO_AM_I)
-            if who == 0x6B:
-                break
-            time.sleep(0.1)
-        if who != 0x6B:
-            raise RuntimeError(
-                f'WHO_AM_I=0x{who:02x} (期望 0x6b): 检查接线(19/21/23/24)与 pinmux'
-                ' (sudo grep SPI1 /sys/kernel/debug/pinctrl/2430000.pinmux/pinmux-pins)')
-
-        # 裸配置: CTRL3_C=BDU|IF_INC; CTRL1_XL/CTRL2_G=ODR + ±2g/±250dps
-        odr = int(self.get_parameter('odr').value)
-        if odr not in ODR_BITS:
-            self.get_logger().warning(f'odr={odr} 不在档位表, 回落 1660')
-            odr = 1660
-        self.spi.write_reg(REG_CTRL3_C, 0x44)
-        self.spi.write_reg(REG_CTRL1_XL, ODR_BITS[odr])
-        self.spi.write_reg(REG_CTRL2_G, ODR_BITS[odr])
-        rb = (self.spi.read_reg(REG_CTRL3_C), self.spi.read_reg(REG_CTRL1_XL),
-              self.spi.read_reg(REG_CTRL2_G))
-        if rb[1] != ODR_BITS[odr] or rb[2] != ODR_BITS[odr]:
-            raise RuntimeError(f'寄存器回读不符: CTRL3_C=0x{rb[0]:02x} '
-                               f'CTRL1_XL=0x{rb[1]:02x} CTRL2_G=0x{rb[2]:02x}')
-
-        rate = float(self.get_parameter('rate_hz').value)
-        self.pub = self.create_publisher(Imu, str(self.get_parameter('topic').value), 10)
-        self.frame = str(self.get_parameter('frame_id').value)
+        self.spi = None
+        self.pub = None
+        self.frame = 'imu_link'
+        self.topic = '/imu/data_raw'
+        self.rate = 1000.0
+        self.odr = 1660
         self.err = 0
         self.n = 0
         self.t0 = time.monotonic()
         self.last = None
         self.max_gap = 0.0
-        self.timer = self.create_timer(1.0 / rate, self.step)
-        self.stats_timer = self.create_timer(5.0, self.stats)
+        self.max_sample_age_ms = 0.0
+
+    def on_configure(self, state):
+        super().on_configure(state)
+        device = str(self.declare('device', '/dev/spidev0.0'))
+        mode = int(self.declare('mode', 3))
+        speed = int(self.declare('speed_hz', 10_000_000))
+        self.rate = float(self.declare('rate_hz', 1000.0))
+        self.odr = int(self.declare('odr', 1660))
+        self.frame = str(self.declare('frame_id', 'imu_link'))
+        self.topic = str(self.declare('topic', '/imu/data_raw'))
+        timeout_s = float(self.declare('startup_timeout_s', 5.0))
+
+        if self.odr not in ODR_BITS:
+            self.get_logger().warning(f'odr={self.odr} 不在档位表, 回落 1660')
+            self.odr = 1660
+        try:
+            self.spi = RawSpi(device, mode, speed)
+            self.get_logger().info(
+                f'SPI 就绪: {device} mode={self.spi.mode} speed={self.spi.speed} bits={self.spi.bits}')
+            who = None
+            deadline = time.monotonic() + timeout_s
+            while time.monotonic() < deadline:
+                who = self.spi.read_reg(REG_WHO_AM_I)
+                if who == 0x6B:
+                    break
+                time.sleep(0.1)
+            if who != 0x6B:
+                raise RuntimeError(
+                    f'WHO_AM_I=0x{who:02x} (期望 0x6b): 检查接线(19/21/23/24)与 pinmux'
+                    ' (sudo grep SPI1 /sys/kernel/debug/pinctrl/2430000.pinmux/pinmux-pins)')
+            # 裸配置: CTRL3_C=BDU|IF_INC; CTRL1_XL/CTRL2_G=ODR + ±2g/±250dps
+            self.spi.write_reg(REG_CTRL3_C, 0x44)
+            self.spi.write_reg(REG_CTRL1_XL, ODR_BITS[self.odr])
+            self.spi.write_reg(REG_CTRL2_G, ODR_BITS[self.odr])
+            rb = (self.spi.read_reg(REG_CTRL3_C), self.spi.read_reg(REG_CTRL1_XL),
+                  self.spi.read_reg(REG_CTRL2_G))
+            if rb[1] != ODR_BITS[self.odr] or rb[2] != ODR_BITS[self.odr]:
+                raise RuntimeError(f'寄存器回读不符: CTRL3_C=0x{rb[0]:02x} '
+                                   f'CTRL1_XL=0x{rb[1]:02x} CTRL2_G=0x{rb[2]:02x}')
+        except OSError as exc:
+            self._close()
+            return self.fail(f'SPI 传输失败: {exc}')
+        except RuntimeError as exc:
+            self._close()
+            return self.fail(str(exc))
+
+        self.pub = self.lifecycle_publisher(Imu, self.topic, 10)
+        self.report('device', DiagnosticStatus.OK,
+                    f'{device} WHO=0x{who:02x} ODR={self.odr}Hz',
+                    {'device': device, 'odr_hz': self.odr, 'who_am_i': f'0x{who:02x}'})
         self.get_logger().info(
-            f'IMU(SPI) 节点就绪: WHO=0x{who:02x} ODR={odr}Hz rate={rate}Hz '
+            f'IMU(SPI) 已配置: WHO=0x{who:02x} ODR={self.odr}Hz rate={self.rate}Hz '
             f'CTRL3_C=0x{rb[0]:02x} CTRL1_XL=0x{rb[1]:02x} CTRL2_G=0x{rb[2]:02x}')
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state):
+        ret = super().on_activate(state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
+        self.err = 0
+        self.n = 0
+        self.t0 = time.monotonic()
+        self.last = None
+        self.max_gap = 0.0
+        self.max_sample_age_ms = 0.0
+        self.add_timer(1.0 / self.rate, self.step)
+        self.add_timer(5.0, self.stats)
+        return TransitionCallbackReturn.SUCCESS
 
     def step(self):
+        if self.spi is None:
+            return
+        t0 = self.get_clock().now()          # 采样锁存在此之前 0..1/ODR（ADR-0023）
+        try:
+            buf = self.spi.read_regs(REG_OUT_START, 12)
+        except OSError:
+            self.err += 1
+            if self.err % 100 == 1:
+                self.report('spi', DiagnosticStatus.WARN,
+                            f'SPI 读失败累计 {self.err} 次', {'errors': self.err})
+            return
+        stamp_ns = t0.nanoseconds - int(0.5e9 / self.odr)
         now = time.monotonic()
         if self.last is not None:
             gap = now - self.last
             if gap > self.max_gap:
                 self.max_gap = gap
         self.last = now
-        try:
-            buf = self.spi.read_regs(REG_OUT_START, 12)
-        except OSError:
-            self.err += 1
-            if self.err % 100 == 1:
-                self.get_logger().warning(f'SPI 读失败 x{self.err}')
-            return
+        age_ms = (self.get_clock().now().nanoseconds - stamp_ns) / 1e6
+        self.max_sample_age_ms = max(self.max_sample_age_ms, age_ms)
+
         gx, gy, gz, ax, ay, az = struct.unpack_from('<6h', buf)
         m = Imu()
-        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.stamp = Time(nanoseconds=stamp_ns).to_msg()
         m.header.frame_id = self.frame
         m.angular_velocity.x = gx * GYRO_SCALE
         m.angular_velocity.y = gy * GYRO_SCALE
@@ -238,19 +285,51 @@ class SpiImuNode(Node):
         for i in (0, 4, 8):
             m.angular_velocity_covariance[i] = 0.01
             m.linear_acceleration_covariance[i] = 0.1
-        self.pub.publish(m)
+        self.publish(m, publisher=self.pub)
+        self.mark_seen(self.topic)
         self.n += 1
 
     def stats(self):
         dt = time.monotonic() - self.t0
         if dt <= 0 or self.n == 0:
             return
+        rate = self.n / dt
+        level = DiagnosticStatus.OK
+        if abs(rate - self.rate) > 0.1 * self.rate or self.err:
+            level = DiagnosticStatus.WARN
+        self.report('stream', level, f'{rate:.1f}Hz', {
+            'rate_hz': f'{rate:.1f}',
+            'target_hz': f'{self.rate:.0f}',
+            'max_gap_ms': f'{self.max_gap * 1e3:.2f}',
+            'max_sample_age_ms': f'{self.max_sample_age_ms:.2f}',
+            'spi_errors': self.err,
+            'stamp_source': 'sample',
+        })
         self.get_logger().info(
-            f'实测 {self.n / dt:.1f}Hz (目标 {1.0 / self.timer.timer_period_ns * 1e9:.0f}Hz), '
-            f'max_gap={self.max_gap * 1e3:.2f}ms, spi_err={self.err}')
+            f'实测 {rate:.1f}Hz (目标 {self.rate:.0f}Hz), '
+            f'max_gap={self.max_gap * 1e3:.2f}ms, '
+            f'max_sample_age={self.max_sample_age_ms:.2f}ms, spi_err={self.err}')
         self.n = 0
+        self.err = 0
         self.t0 = time.monotonic()
         self.max_gap = 0.0
+        self.max_sample_age_ms = 0.0
+
+    def on_cleanup(self, state):
+        self._close()
+        return super().on_cleanup(state)
+
+    def on_shutdown(self, state):
+        self._close()
+        return super().on_shutdown(state)
+
+    def _close(self):
+        if self.spi is not None:
+            try:
+                self.spi.close()
+            except OSError:
+                pass
+            self.spi = None
 
 
 def main(args=None):

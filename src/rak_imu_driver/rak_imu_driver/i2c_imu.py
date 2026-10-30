@@ -39,12 +39,18 @@ import time
 
 try:
     import rclpy
-    from rclpy.node import Node
+    from diagnostic_msgs.msg import DiagnosticStatus
+    from rclpy.lifecycle import TransitionCallbackReturn
+    from rclpy.time import Time
+    from rak_lifecycle.managed_node import ManagedNode
     from sensor_msgs.msg import Imu
 except ImportError:                                    # --probe 模式允许无 ROS 环境
     rclpy = None
-    Node = object
     Imu = None
+    ManagedNode = object
+    TransitionCallbackReturn = None
+    DiagnosticStatus = None
+    Time = None
 
 # ---- i2c-dev ioctl 常量 (linux/i2c-dev.h) ----
 I2C_SLAVE = 0x0703
@@ -161,83 +167,145 @@ def probe(i2c):
     return 0 if ok else 1
 
 
-class I2cImuNode(Node):
+class I2cImuNode(ManagedNode):
+    """LSM6DSRTR I2C 节点（ADR-0020 managed + ADR-0023 采样时刻打戳）。
+
+    资源在 `on_configure` 打开（设备与寄存器配置），I/O 在 `on_activate` 才开始
+    （timer）。`deactivate → activate` 不重开设备，`cleanup` 才 close —— 这是
+    ADR-0020 §5 的契约：4 GB 单板上重配硬件也是有代价的。
+
+    **时间戳**（ADR-0023）：`header.stamp` 是**采样时刻**，不是发布时刻。
+    寄存器在 ODR 节拍锁存，本轮读到的是"最近一次锁存"的值，因此采样时刻落在
+    `[t0 - 1/ODR, t0]` 内（t0 = 发起读的时刻）。取该区间的中点作为估计，
+    最大偏差 1/ODR（1660 Hz 时 0.6 ms），远小于旧的"发布时刻"打戳误差
+    （timer 抖动 + 调度延迟，实测可达数毫秒且随负载漂移）。
+    `stats` 会把 `now - stamp` 作为 `sample_age_ms` 报出来，用于验证这个估计。
+    """
+
     def __init__(self):
         super().__init__('i2c_imu')
-        self.declare_parameter('device', '/dev/i2c-7')
-        self.declare_parameter('address', 0x6B)
-        self.declare_parameter('rate_hz', 1000.0)
-        self.declare_parameter('odr', 1660)
-        self.declare_parameter('frame_id', 'imu_link')
-        self.declare_parameter('topic', '/imu/data_raw')
-        # [AI] 2026-10-26: 模块只能竖装（芯片 +Y 朝上），用轴映射把发布向量转回
-        # REP-103（x 前 / y 左 / z 上）。默认值是 **本机实测校准值**，不是通用值。
-        self.declare_parameter('axis_map', '-z,-x,y')
-        self.axis_map = parse_axis_map(self.get_parameter('axis_map').value)
-
-        device = str(self.get_parameter('device').value)
-        address = int(self.get_parameter('address').value)
-        self.i2c = RawI2c(device, address)
-        self.get_logger().info(f'I2C 就绪: {device} addr=0x{address:02x}')
-
-        who = None
-        for _ in range(50):
-            who = self.i2c.read_reg(REG_WHO_AM_I)
-            if who == 0x6B:
-                break
-            time.sleep(0.1)
-        if who != 0x6B:
-            raise RuntimeError(
-                f'WHO_AM_I=0x{who:02x} (期望 0x6b): 检查 SDA=3/SCL=5/VCC=1/GND=6，'
-                'CS 必须为高（悬空或接 3V3）')
-
-        odr = int(self.get_parameter('odr').value)
-        if odr not in ODR_BITS:
-            self.get_logger().warning(f'odr={odr} 不在档位表, 回落 1660')
-            odr = 1660
-        self.i2c.write_reg(REG_CTRL3_C, 0x44)          # BDU | IF_INC
-        self.i2c.write_reg(REG_CTRL1_XL, ODR_BITS[odr])
-        self.i2c.write_reg(REG_CTRL2_G, ODR_BITS[odr])
-        rb = (self.i2c.read_reg(REG_CTRL3_C), self.i2c.read_reg(REG_CTRL1_XL),
-              self.i2c.read_reg(REG_CTRL2_G))
-        if rb[1] != ODR_BITS[odr] or rb[2] != ODR_BITS[odr]:
-            raise RuntimeError(f'寄存器回读不符: CTRL3_C=0x{rb[0]:02x} '
-                               f'CTRL1_XL=0x{rb[1]:02x} CTRL2_G=0x{rb[2]:02x}')
-
-        rate = float(self.get_parameter('rate_hz').value)
-        self.pub = self.create_publisher(Imu, str(self.get_parameter('topic').value), 10)
-        self.frame = str(self.get_parameter('frame_id').value)
-        self.err = 0
+        self.i2c = None
+        self.pub = None
+        self.axis_map = None
+        self.frame = 'imu_link'
+        self.topic = '/imu/data_raw'
+        self.rate = 1000.0
+        self.odr = 1660
         self.n = 0
+        self.err = 0
         self.t0 = time.monotonic()
         self.last = None
         self.max_gap = 0.0
-        self.timer = self.create_timer(1.0 / rate, self.step)
-        self.stats_timer = self.create_timer(5.0, self.stats)
+        self.max_sample_age_ms = 0.0
+
+    # ---------------------------------------------------------------- configure
+    def on_configure(self, state):
+        super().on_configure(state)
+        device = str(self.declare('device', '/dev/i2c-7'))
+        address = int(self.declare('address', 0x6B))
+        self.rate = float(self.declare('rate_hz', 1000.0))
+        self.odr = int(self.declare('odr', 1660))
+        self.frame = str(self.declare('frame_id', 'imu_link'))
+        self.topic = str(self.declare('topic', '/imu/data_raw'))
+        # [AI] 2026-10-26: 模块只能竖装（芯片 +Y 朝上），用轴映射把发布向量转回
+        # REP-103（x 前 / y 左 / z 上）。默认值是 **本机实测校准值**，不是通用值。
+        try:
+            self.axis_map = parse_axis_map(self.declare('axis_map', '-z,-x,y'))
+        except ValueError as exc:
+            return self.fail(f'axis_map 非法: {exc}')
+
+        self.declare('startup_timeout_s', 5.0)
+
+        if self.odr not in ODR_BITS:
+            self.get_logger().warning(f'odr={self.odr} 不在档位表, 回落 1660')
+            self.odr = 1660
+
+        try:
+            self.i2c = RawI2c(device, address)
+            self.get_logger().info(f'I2C 就绪: {device} addr=0x{address:02x}')
+            who = None
+            deadline = time.monotonic() + float(
+                self.get_parameter('startup_timeout_s').value)
+            while time.monotonic() < deadline:
+                who = self.i2c.read_reg(REG_WHO_AM_I)
+                if who == 0x6B:
+                    break
+                time.sleep(0.1)
+            if who != 0x6B:
+                raise RuntimeError(
+                    f'WHO_AM_I=0x{who:02x} (期望 0x6b): 检查 SDA=3/SCL=5/VCC=1/GND=6，'
+                    'CS 必须为高（悬空或接 3V3）')
+            self.i2c.write_reg(REG_CTRL3_C, 0x44)          # BDU | IF_INC
+            self.i2c.write_reg(REG_CTRL1_XL, ODR_BITS[self.odr])
+            self.i2c.write_reg(REG_CTRL2_G, ODR_BITS[self.odr])
+            rb = (self.i2c.read_reg(REG_CTRL3_C), self.i2c.read_reg(REG_CTRL1_XL),
+                  self.i2c.read_reg(REG_CTRL2_G))
+            if rb[1] != ODR_BITS[self.odr] or rb[2] != ODR_BITS[self.odr]:
+                raise RuntimeError(f'寄存器回读不符: CTRL3_C=0x{rb[0]:02x} '
+                                   f'CTRL1_XL=0x{rb[1]:02x} CTRL2_G=0x{rb[2]:02x}')
+        except OSError as exc:
+            self._close()
+            return self.fail(f'I2C 传输失败: {exc}')
+        except RuntimeError as exc:
+            self._close()
+            return self.fail(str(exc))
+
+        # 未激活不发布：LifecyclePublisher 在 on_activate 之前丢弃 publish()
+        self.pub = self.lifecycle_publisher(Imu, self.topic, 10)
+        self.report('device', DiagnosticStatus.OK,
+                    f'{device} 0x{address:02x} WHO=0x{who:02x} ODR={self.odr}Hz',
+                    {'device': device, 'odr_hz': self.odr, 'who_am_i': f'0x{who:02x}'})
         self.get_logger().info(
-            f'IMU(I2C) 节点就绪: WHO=0x{who:02x} ODR={odr}Hz rate={rate}Hz '
+            f'IMU(I2C) 已配置: WHO=0x{who:02x} ODR={self.odr}Hz rate={self.rate}Hz '
             f'CTRL3_C=0x{rb[0]:02x} CTRL1_XL=0x{rb[1]:02x} CTRL2_G=0x{rb[2]:02x} '
             f'axis_map={self.get_parameter("axis_map").value}')
+        return TransitionCallbackReturn.SUCCESS
 
+    # ----------------------------------------------------------------- activate
+    def on_activate(self, state):
+        ret = super().on_activate(state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
+        self.n = 0
+        self.err = 0
+        self.t0 = time.monotonic()
+        self.last = None
+        self.max_gap = 0.0
+        self.add_timer(1.0 / self.rate, self.step)
+        self.add_timer(5.0, self.stats)
+        return TransitionCallbackReturn.SUCCESS
+
+    # -------------------------------------------------------------------- work
     def step(self):
-        now = time.monotonic()
-        if self.last is not None:
-            gap = now - self.last
-            if gap > self.max_gap:
-                self.max_gap = gap
-        self.last = now
+        if self.i2c is None:
+            return
+        # t0 = 发起读的时刻；采样锁存在此之前 0..1/ODR 内（见类 docstring）
+        t0 = self.get_clock().now()
         try:
             buf = self.i2c.read_regs(REG_OUT_START, 12)
         except OSError:
             self.err += 1
             if self.err % 100 == 1:
-                self.get_logger().warning(f'I2C 读失败 x{self.err}')
+                self.report('i2c', DiagnosticStatus.WARN,
+                            f'I2C 读失败累计 {self.err} 次', {'errors': self.err})
             return
+
+        stamp_ns = t0.nanoseconds - int(0.5e9 / self.odr)
+        now_mono = time.monotonic()
+        if self.last is not None:
+            gap = now_mono - self.last
+            if gap > self.max_gap:
+                self.max_gap = gap
+        self.last = now_mono
+        age_ms = (self.get_clock().now().nanoseconds - stamp_ns) / 1e6
+        if age_ms > self.max_sample_age_ms:
+            self.max_sample_age_ms = age_ms
+
         gx, gy, gz, ax, ay, az = struct.unpack_from('<6h', buf)
         gyro = map_vec((gx * GYRO_SCALE, gy * GYRO_SCALE, gz * GYRO_SCALE), self.axis_map)
         accel = map_vec((ax * ACCEL_SCALE, ay * ACCEL_SCALE, az * ACCEL_SCALE), self.axis_map)
         m = Imu()
-        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.stamp = Time(nanoseconds=stamp_ns).to_msg()
         m.header.frame_id = self.frame
         m.angular_velocity.x = gyro[0]
         m.angular_velocity.y = gyro[1]
@@ -249,19 +317,53 @@ class I2cImuNode(Node):
         for i in (0, 4, 8):
             m.angular_velocity_covariance[i] = 0.01
             m.linear_acceleration_covariance[i] = 0.1
-        self.pub.publish(m)
+        self.publish(m, publisher=self.pub)
+        self.mark_seen(self.topic)
         self.n += 1
 
     def stats(self):
         dt = time.monotonic() - self.t0
         if dt <= 0 or self.n == 0:
             return
+        rate = self.n / dt
+        values = {
+            'rate_hz': f'{rate:.1f}',
+            'target_hz': f'{self.rate:.0f}',
+            'max_gap_ms': f'{self.max_gap * 1e3:.2f}',
+            'max_sample_age_ms': f'{self.max_sample_age_ms:.2f}',
+            'i2c_errors': self.err,
+            'stamp_source': 'sample',
+        }
+        level = DiagnosticStatus.OK
+        if abs(rate - self.rate) > 0.1 * self.rate or self.err:
+            level = DiagnosticStatus.WARN
+        self.report('stream', level, f'{rate:.1f}Hz', values)
         self.get_logger().info(
-            f'实测 {self.n / dt:.1f}Hz (目标 {1.0 / self.timer.timer_period_ns * 1e9:.0f}Hz), '
-            f'max_gap={self.max_gap * 1e3:.2f}ms, i2c_err={self.err}')
+            f'实测 {rate:.1f}Hz (目标 {self.rate:.0f}Hz), '
+            f'max_gap={self.max_gap * 1e3:.2f}ms, '
+            f'max_sample_age={self.max_sample_age_ms:.2f}ms, i2c_err={self.err}')
         self.n = 0
+        self.err = 0
         self.t0 = time.monotonic()
         self.max_gap = 0.0
+        self.max_sample_age_ms = 0.0
+
+    # ------------------------------------------------------------------ cleanup
+    def on_cleanup(self, state):
+        self._close()
+        return super().on_cleanup(state)
+
+    def on_shutdown(self, state):
+        self._close()
+        return super().on_shutdown(state)
+
+    def _close(self):
+        if self.i2c is not None:
+            try:
+                self.i2c.close()
+            except OSError:
+                pass
+            self.i2c = None
 
 
 def main(args=None):

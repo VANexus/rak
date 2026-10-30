@@ -10,6 +10,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(rak_gpu REQUIRED)
@@ -37,6 +38,7 @@ rclcpp_components_register_node(gpu_pointcloud_component
 
 ament_target_dependencies(gpu_pointcloud_component
   rclcpp
+  rclcpp_lifecycle
   rclcpp_components
   sensor_msgs
 )

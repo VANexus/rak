@@ -10,7 +10,9 @@ docs/brain_arm_tools_design.md.
 
 Isolation contract (D7 in docs/brain_arm_tools_design.md):
   * Runs as a SUBPROCESS of harness_node: the SDK bundles a pydantic-v2
-    dependency tree that must never leak into the ROS system Python.
+    dependency tree that must never leak into the ROS system Python. The
+    overlay path is resolved by rak_harness.sdk and injected via PYTHONPATH
+    by the parent; this module never hardcodes a home directory.
   * Tool EXECUTION authority lives in rak_tool_executor (deterministic
     preconditions + audit). This process only proposes and narrates.
   * Motion-class tools are only exposed when the parent says so; the
@@ -40,7 +42,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-_SDK_OVERLAY = "/home/xrak/rak/tools/harness-sdk"
 
 
 def _load_registry():

@@ -11,34 +11,68 @@ import math
 
 import rclpy
 from geometry_msgs.msg import Point
-from rclpy.node import Node
+from rclpy.lifecycle import TransitionCallbackReturn
 from rak_interfaces.msg import WakeEvent
+from rak_lifecycle.managed_node import ManagedNode
 from visualization_msgs.msg import Marker
 
 
-class WakeDoaViz(Node):
+class WakeDoaViz(ManagedNode):
+    """Marker fan-out for the array's bearing, split along ADR-0020 §5.
+
+    Nothing here is expensive, but the contract is the same as every other managed
+    node: parameters and entities in `on_configure`, no publishing before
+    `on_activate`.
+    """
+
     def __init__(self):
         super().__init__("wake_doa_viz")
-        self.declare_parameter("wake_topic", "/speech/wake")
-        self.declare_parameter("marker_topic", "/wake_doa")
-        self.declare_parameter("frame_id", "mic_array_link")
-        self.declare_parameter("length", 0.35)
-        self.declare_parameter("lifetime_sec", 8.0)
+        # 只做字段初始化：参数、发布器、订阅都归 on_configure（ADR-0020 §5）。
+        self.frame = "mic_array_link"
+        self.length = 0.35
+        self.lifetime = 8.0
+        self._seq = 0
+        self.pub = None
+        self.sub = None
 
-        self.frame = str(self.get_parameter("frame_id").value)
-        self.length = float(self.get_parameter("length").value)
-        self.lifetime = float(self.get_parameter("lifetime_sec").value)
+    def on_configure(self, state) -> TransitionCallbackReturn:
+        super().on_configure(state)
+        wake_topic = str(self.declare("wake_topic", "/speech/wake"))
+        marker_topic = str(self.declare("marker_topic", "/wake_doa"))
+        self.frame = str(self.declare("frame_id", "mic_array_link"))
+        self.length = float(self.declare("length", 0.35))
+        self.lifetime = float(self.declare("lifetime_sec", 8.0))
         self._seq = 0
 
-        self.pub = self.create_publisher(
-            Marker, str(self.get_parameter("marker_topic").value), 10
-        )
-        self.sub = self.create_subscription(
-            WakeEvent, str(self.get_parameter("wake_topic").value), self._on_wake, 10
-        )
+        # 未激活不发布：发布器一律走受管包装。
+        self.pub = self.lifecycle_publisher(Marker, marker_topic, 10)
+        try:
+            self.sub = self.create_subscription(WakeEvent, wake_topic, self._on_wake, 10)
+        except Exception as exc:  # noqa: BLE001 -- configure 失败必须带可读原因
+            return self.fail(f"订阅 {wake_topic} 失败: {exc}")
         self.get_logger().info(
             "wake DOA -> marker ready; audio has no RViz display, the arrow is it"
         )
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state) -> TransitionCallbackReturn:
+        ret = super().on_activate(state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
+        self._seq = 0
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_deactivate(self, state) -> TransitionCallbackReturn:
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state) -> TransitionCallbackReturn:
+        if self.sub is not None:
+            try:
+                self.destroy_subscription(self.sub)
+            except Exception:  # noqa: BLE001 -- 退出路径不打新错
+                pass
+            self.sub = None
+        return super().on_cleanup(state)
 
     def _on_wake(self, msg: WakeEvent) -> None:
         # WakeEvent.angle is the circular array's own bearing in degrees (0-365),
@@ -73,7 +107,7 @@ class WakeDoaViz(Node):
         m.text = f"{msg.keyword} {msg.angle:.0f} deg"
         m.pose.orientation.w = 1.0
 
-        self.pub.publish(m)
+        self.publish(m, publisher=self.pub)
         self.get_logger().info(
             f"wake '{msg.keyword}' score={msg.score:.3f} angle={msg.angle:.1f} deg "
             f"-> marker drawn"

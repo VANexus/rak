@@ -8,6 +8,9 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>rak_interfaces</exec_depend>
+  <!-- ADR-0020: ManagedNode 基类 + 诊断上报 -->
+  <exec_depend>rak_lifecycle</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
   <!-- dialogue consumes the shared text-intent contract, same parser as ASR/executor -->
   <exec_depend>rak_intent</exec_depend>
   <!-- P1: the agent loop imports the single-source tool registry -->

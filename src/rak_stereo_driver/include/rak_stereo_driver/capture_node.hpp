@@ -5,6 +5,8 @@
 
 #include <camera_info_manager/camera_info_manager.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <rclcpp_lifecycle/lifecycle_publisher.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
@@ -44,8 +46,9 @@ private:
  *
  * Default: 1280x720 SBS @ 30 Hz -> left 640x720 + right 640x720.
  */
-class CaptureNode : public rclcpp::Node {
+class CaptureNode : public rclcpp_lifecycle::LifecycleNode {
 public:
+  using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
   struct Config {
     std::string device = "/dev/video0";
     int sbs_width = 1280;     // full SBS frame width
@@ -63,6 +66,14 @@ public:
 
   explicit CaptureNode(const rclcpp::NodeOptions &opts = {});
   ~CaptureNode() override;
+
+  // ADR-0020 §5：资源在 configure，I/O 在 activate。原实现把 init_cuda() 放在
+  // cudaMalloc 之后（设备缓冲先分配、CUDA 上下文后建立），是会随驱动版本翻脸的
+  // 初始化顺序缺陷；现在顺序由这段代码固定。
+  CallbackReturn on_configure(const rclcpp_lifecycle::State & state) override;
+  CallbackReturn on_activate(const rclcpp_lifecycle::State & state) override;
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State & state) override;
+  CallbackReturn on_cleanup(const rclcpp_lifecycle::State & state) override;
 
   CaptureNode(const CaptureNode &) = delete;
   CaptureNode &operator=(const CaptureNode &) = delete;
@@ -82,10 +93,10 @@ private:
   std::vector<Buffer> buffers_;
 
   // Publishers
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_left_;
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_right_;
-  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_left_info_;
-  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_right_info_;
+  rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::Image>::SharedPtr pub_left_;
+  rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::Image>::SharedPtr pub_right_;
+  rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_left_info_;
+  rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_right_info_;
   std::unique_ptr<camera_info_manager::CameraInfoManager> left_camera_info_;
   std::unique_ptr<camera_info_manager::CameraInfoManager> right_camera_info_;
 

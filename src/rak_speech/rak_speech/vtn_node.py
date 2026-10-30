@@ -20,12 +20,14 @@ import threading
 import time
 
 import rclpy
+from diagnostic_msgs.msg import DiagnosticStatus
 from rclpy.executors import ExternalShutdownException
-from rclpy.node import Node
+from rclpy.lifecycle import TransitionCallbackReturn
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
 
 from rak_interfaces.msg import WakeEvent
+from rak_lifecycle.managed_node import ManagedNode
 
 from .vtn_link import (
     DEFAULT_LOCAL_PORT,
@@ -51,41 +53,109 @@ def _i(value, default: int = 0) -> int:
         return default
 
 
-class VtnNode(Node):
+class VtnNode(ManagedNode):
+    """唤醒桥接节点，按 ADR-0020 §5 拆分。
+
+    链路宿主（参数 + 回调 + stop 事件）在 `on_configure` 建好，真正的 socket 在
+    `on_activate` 才由工作线程打开、`on_deactivate` 立刻关掉——板子掉线只是唤醒
+    降级，deactivate 之后一个字节都不该再进 `/speech/wake`。
+    """
+
     def __init__(self) -> None:
         super().__init__("speech_vtn")
 
-        self.declare_parameter("wake_topic", "/speech/wake")
-        self.declare_parameter("ready_topic", "/speech/vtn_ready")
-        self.declare_parameter("host", "127.0.0.1")
-        self.declare_parameter("local_port", DEFAULT_LOCAL_PORT)
-        self.declare_parameter("manage_forward", True)
-        self.declare_parameter("remote_socket", DEFAULT_REMOTE_SOCKET)
-        self.declare_parameter("adb_serial", "")
-        self.declare_parameter("push_keywords", "")
-        self.declare_parameter("reconnect_sec", 3.0)
+        # 只做字段初始化：发布器、链路、线程都归 configure/activate（ADR-0020 §5）。
+        self._host = "127.0.0.1"
+        self._port = DEFAULT_LOCAL_PORT
+        self._manage_forward = True
+        self._remote_socket = DEFAULT_REMOTE_SOCKET
+        self._adb_serial = ""
+        self._push_keywords = ""
+        self._reconnect_sec = 3.0
 
-        g = lambda name: self.get_parameter(name).value  # noqa: E731
-        self._host = str(g("host"))
-        self._port = int(g("local_port"))
-        self._manage_forward = bool(g("manage_forward"))
-        self._remote_socket = str(g("remote_socket"))
-        self._adb_serial = str(g("adb_serial"))
-        self._push_keywords = str(g("push_keywords"))
-        self._reconnect_sec = float(g("reconnect_sec"))
+        self._wake_pub = None
+        self._ready_pub = None
+        self._stop = threading.Event()
+        self._link = None
+        self._worker = None
+        self._link_up = False
+        self._last_log = ("", 0.0)
+        self._wakes = 0
+        self._started_at = 0.0
 
-        self._wake_pub = self.create_publisher(WakeEvent, str(g("wake_topic")), 10)
+    # ---------------------------------------------------------------- configure
+    def on_configure(self, state) -> TransitionCallbackReturn:
+        super().on_configure(state)
+
+        wake_topic = str(self.declare("wake_topic", "/speech/wake"))
+        ready_topic = str(self.declare("ready_topic", "/speech/vtn_ready"))
+        self._host = str(self.declare("host", "127.0.0.1"))
+        self._port = int(self.declare("local_port", DEFAULT_LOCAL_PORT))
+        self._manage_forward = bool(self.declare("manage_forward", True))
+        self._remote_socket = str(self.declare("remote_socket", DEFAULT_REMOTE_SOCKET))
+        self._adb_serial = str(self.declare("adb_serial", ""))
+        self._push_keywords = str(self.declare("push_keywords", ""))
+        self._reconnect_sec = float(self.declare("reconnect_sec", 3.0))
+
+        self._wake_pub = self.lifecycle_publisher(WakeEvent, wake_topic, 10)
         # 链路状态是“最后已知事实”,新加入的订阅者应立刻拿到 → latched
         latched = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
         )
-        self._ready_pub = self.create_publisher(Bool, str(g("ready_topic")), latched)
-        self._ready_pub.publish(Bool(data=False))
+        self._ready_pub = self.lifecycle_publisher(Bool, ready_topic, latched)
 
-        self._stop = threading.Event()
-        self._link = VtnLink(
+        try:
+            # 链路宿主在这里建好（端口/隧道/唤醒词配置都在构造期定下）;
+            # socket 本身在 activate 的工作线程里才连——未激活不碰硬件。
+            self._link = self._make_link()
+        except Exception as exc:  # noqa: BLE001 -- configure 失败必须带可读原因
+            self._link = None
+            return self.fail(f"链路初始化失败: {exc}")
+
+        self.report(
+            "link",
+            DiagnosticStatus.WARN,
+            "configured, not activated",
+            {"host": self._host, "port": self._port},
+        )
+        return TransitionCallbackReturn.SUCCESS
+
+    # ----------------------------------------------------------------- activate
+    def on_activate(self, state) -> TransitionCallbackReturn:
+        ret = super().on_activate(state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
+        if self._link is None:
+            # deactivate 丢弃过链路宿主（它的 stop 事件绑在构造期），这里重建。
+            self._link = self._make_link()
+        self._wakes = 0
+        self._started_at = time.monotonic()
+        self._last_log = ("", 0.0)
+        self.publish(Bool(data=self._link_up), publisher=self._ready_pub)
+        self._worker = threading.Thread(target=self._link.run, name="vtn", daemon=True)
+        self._worker.start()
+        self.add_timer(10.0, self._stats)
+        return TransitionCallbackReturn.SUCCESS
+
+    # --------------------------------------------------------------- deactivate
+    def on_deactivate(self, state) -> TransitionCallbackReturn:
+        # 先关链路再交给基类停 timer / 停发布器：链路线程不该在禁用之后还发一帧。
+        self._stop_link()
+        return super().on_deactivate(state)
+
+    # ------------------------------------------------------------------ cleanup
+    def on_cleanup(self, state) -> TransitionCallbackReturn:
+        self._stop_link()
+        return super().on_cleanup(state)
+
+    def on_shutdown(self, state) -> TransitionCallbackReturn:
+        self._stop_link()
+        return super().on_shutdown(state)
+
+    def _make_link(self) -> VtnLink:
+        return VtnLink(
             connect=lambda: tcp_connect(self._host, self._port),
             ensure_forward=self._ensure_forward if self._manage_forward else None,
             push_keywords=self._push_keywords,
@@ -96,9 +166,17 @@ class VtnNode(Node):
             stop=self._stop,
             log=self._log_throttled,
         )
-        self._last_log = ("", 0.0)
-        self._worker = threading.Thread(target=self._link.run, name="vtn", daemon=True)
-        self._worker.start()
+
+    def _stop_link(self) -> None:
+        if self._link is not None:
+            self._link.stop()
+        self._stop.set()
+        worker, self._worker = self._worker, None
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=2.0)
+        self._link = None
+        self._stop = threading.Event()
+        self._link_up = False
 
     # -- 链路回调(工作线程) ----------------------------------------------------
 
@@ -110,7 +188,9 @@ class VtnNode(Node):
         )
 
     def _on_state(self, up: bool) -> None:
-        self._ready_pub.publish(Bool(data=up))
+        self._link_up = up
+        # 未激活时 `publish()` 返回 False（基类语义），这里不需要额外判状态。
+        self.publish(Bool(data=up), publisher=self._ready_pub)
         if not up:
             self.get_logger().warning("vtn link down, wake unavailable")
 
@@ -125,7 +205,8 @@ class VtnNode(Node):
         msg.power = _f(ivw.get("power"))
         msg.start_ms = _i(ivw.get("start_ms"))
         msg.end_ms = _i(ivw.get("end_ms"))
-        self._wake_pub.publish(msg)
+        self.publish(msg, publisher=self._wake_pub)
+        self._wakes += 1
         self.get_logger().info(
             f"wake: '{msg.keyword}' angle={msg.angle:.0f}° "
             f"beam={msg.beam} score={msg.score:.0f}"
@@ -144,10 +225,24 @@ class VtnNode(Node):
         self._last_log = (message, now)
         self.get_logger().warning(message)
 
+    def _stats(self) -> None:
+        """周期性统计：链路上线状态 + 每分钟唤醒次数。"""
+        elapsed = time.monotonic() - self._started_at
+        per_min = (self._wakes / elapsed * 60.0) if elapsed > 0 else 0.0
+        self.report(
+            "link",
+            DiagnosticStatus.OK if self._link_up else DiagnosticStatus.WARN,
+            "up" if self._link_up else "down (wake unavailable)",
+            {
+                "up": str(self._link_up),
+                "wakes_per_min": f"{per_min:.1f}",
+                "wakes": self._wakes,
+                "port": self._port,
+            },
+        )
+
     def destroy_node(self) -> bool:
-        self._stop.set()
-        if hasattr(self, "_link"):
-            self._link.stop()
+        self._stop_link()
         return super().destroy_node()
 
 

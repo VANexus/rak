@@ -14,7 +14,13 @@ path, which the architecture forbids.
 ROS must be sourced before this module is imported -- `rclpy` comes from
 /opt/ros/jazzy and `rak_interfaces.msg` from the colcon install space.
 
+The node is `ManagedNode` (ADR-0020 §5): the TensorRT engine is opened in
+`on_configure` and released in `on_cleanup`, so `deactivate -> activate` restarts
+the tick loop without re-paying an 800 MiB weight load on a 4 GB board.
+
+    ros2 launch rak_bringup agent.launch.py                        # autostarts
     ros2 run rak_agent agent_node --ros-args -p decider:=stub -p sim:=true
+    ros2 lifecycle set /brain configure && ros2 lifecycle set /brain activate
 """
 
 from __future__ import annotations
@@ -23,10 +29,12 @@ import threading
 import time
 
 import rclpy
+from diagnostic_msgs.msg import DiagnosticStatus
 from rclpy.executors import ExternalShutdownException
-from rclpy.node import Node
+from rclpy.lifecycle import TransitionCallbackReturn
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
+from rak_lifecycle.managed_node import ManagedNode
 from rak_interfaces.msg import Action as ActionMsg
 from rak_interfaces.msg import Decision as DecisionMsg
 from rak_interfaces.msg import TrackedObject
@@ -109,92 +117,51 @@ def _make_decider(name: str, model_dir: str = "") -> Decider:
     return make_decider(name, model_dir)
 
 
-class BrainNode(Node):
-    """Runs guard/gate/resolve over live perception and publishes the decision."""
+#: `report()` 里的引擎后端名（ADR-0020 §5 的健康字段）。
+_ENGINE_BACKENDS = {"tensorrt": "trt", "stub": "text"}
+
+
+class BrainNode(ManagedNode):
+    """Runs guard/gate/resolve over live perception and publishes the decision.
+
+    Lifecycle（ADR-0020 §5）：引擎与图上接口在 `on_configure` 打开、`on_cleanup` 释放，
+    `deactivate -> activate` 只重开 tick 循环。TensorRT 权重是几百 MiB 到 ~800 MiB 的
+    代价，重启一个域不该重付一次 —— 这就是把加载搬出构造函数的全部理由。
+    """
 
     def __init__(self) -> None:
         super().__init__("brain")
 
-        # -- parameters -------------------------------------------------
-        self.declare_parameter("decider", "stub")
-        # Empty -> the decider searches data/models/ under the module dir and
-        # CWD (see tensorrt_decider._default_model_dir); set it when the assets
-        # live somewhere else.
-        self.declare_parameter("decider_model_dir", "")
-        self.declare_parameter("consultant", "stub")
-        self.declare_parameter("scenario", "approach")
-        self.declare_parameter("sim", False)
-        self.declare_parameter("rate", 10.0)  # sim + watchdog Hz
-        self.declare_parameter("force_s2", -1)  # escalate from this tick on
-        self.declare_parameter("max_state_age", 1.0)  # seconds before stale
-        # scene/flags are parameters because SceneState.to_text() feeds the
-        # frozen episode corpus: perception does not carry them yet, and
-        # guessing them at runtime would silently change every state_text.
-        self.declare_parameter("scene", "open_floor")
-        self.declare_parameter("flags", "")
-        self.declare_parameter("frame_id", "stereo_camera")  # matches eye
-        self.declare_parameter("out", "")  # "" -> <repo>/data/episodes (ADR-0013)
-        self.declare_parameter("verbose", True)
-        # Out-of-domain System 1 answers rarely clear the gate, so escalation would
-        # otherwise fire on every tick while System 2 takes 12-30 s to answer:
-        # hundreds of live threads, and answers that were stale on arrival.
-        self.declare_parameter("max_s2_in_flight", 1)
-        # `loop.py` is bounded by --ticks and so gets one file for free. This
-        # node never stops, so without a tick budget per file an always-on run
-        # produces a single ever-growing file no tool wants to open. 0 = never.
-        self.declare_parameter("episode_ticks", 10000)
+        # -- 参数值：on_configure 才读（launch 的 -p override 到那时已经可见）---
+        self._scene = "open_floor"
+        self._flags: list[str] = []
+        self._frame_id = "stereo_camera"
+        self._rate = 10.0
+        self._force_s2 = -1
+        self._max_state_age = 1.0
+        self._verbose = True
+        self._max_s2 = 1
+        self._episode_ticks = 10000
+        self._decider = "stub"
+        self._consultant = "stub"
+        self._backend = "none"
 
-        g = lambda n: self.get_parameter(n).value  # noqa: E731
-        self._scene = str(g("scene"))
-        self._flags = [f for f in str(g("flags")).split(",") if f]
-        self._frame_id = str(g("frame_id"))
-        self._rate = max(0.1, float(g("rate")))
-        self._force_s2 = int(g("force_s2"))
-        self._max_state_age = float(g("max_state_age"))
-        self._verbose = bool(g("verbose"))
-        self._max_s2 = max(0, int(g("max_s2_in_flight")))
-        self._episode_ticks = max(0, int(g("episode_ticks")))
+        # -- 资源：on_configure 打开、on_cleanup 释放 --------------------------
+        self._s1: Decider | None = None
+        self._s2: Consultant | None = None
+        self._s1_device = ""
+        self._s1_weights = ""
+        self._s1_place_error = ""
+        self._s1_weights_mib = 0
+        self._out_dir = None
+        self._log: Logger | None = None
+        self._pub = None
+        self._sim_pub = None
+        self._sub = None
+        self._body: MockBody | None = None
 
-        # -- the two halves of the brain, both in this process ----------
-        decider = str(g("decider"))
-        self._s1 = _make_decider(decider, str(g("decider_model_dir")))
-        # Preserve device/weight provenance in episode metadata across decider backends.
-        self._s1_device = str(getattr(self._s1, "device", ""))
-        self._s1_weights = str(getattr(self._s1, "weights", ""))
-        self._s1_place_error = str(getattr(self._s1, "place_error", ""))
-        self._s1_weights_mib = round(int(getattr(self._s1, "weights_bytes", 0) or 0) / 1048576)
-        consultant = str(g("consultant"))
-        self._s2: Consultant = StubConsultant() if consultant == "stub" else _rai(consultant)
-
-        self._decider, self._consultant = decider, consultant
-        self._out_dir = _episode_dir(str(g("out")))
-        self._log = self._new_episode()
-
-        # -- wire -------------------------------------------------------
-        # Perception is keep-last-1 best-effort: only the newest frame matters
-        # and a backlog would be worse than a gap. Decision is reliable -- the
-        # consumer is an actuator.
-        self._pub = self.create_publisher(
-            DecisionMsg, DECISION_TOPIC, QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=10)
-        )
-        self._sim_pub = (
-            self.create_publisher(
-                TrackedObjects,
-                PERCEPTION_TOPIC,
-                QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
-            )
-            if bool(g("sim"))
-            else None
-        )
-        self._sub = self.create_subscription(
-            TrackedObjects,
-            PERCEPTION_TOPIC,
-            self._on_perception,
-            QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
-        )
-
-        self._body = MockBody(str(g("scenario"))) if self._sim_pub is not None else None
-        self._last_rx = time.monotonic()
+        # -- 运行态：on_activate 起、on_deactivate 停 --------------------------
+        self._last_rx = 0.0
         self._last_state: SceneState | None = None
         self._stale_reported = False
         self._tick_count = 0
@@ -203,7 +170,7 @@ class BrainNode(Node):
         # and `state_text` opens with `t=12.44`. Perception stamps wall clock,
         # so the first stamp anchors a clock the corpus can actually share
         # between the CLI loop and this node.
-        self._started = time.monotonic()
+        self._started = 0.0
         self._epoch0: float | None = None
 
         self._pending: dict[int, tuple[SceneState, Decision, str]] = {}
@@ -214,13 +181,125 @@ class BrainNode(Node):
         self._s2_lock = threading.Lock()
         self._s2_in_flight = 0
 
-        if self._body is not None:
-            self.create_timer(1.0 / self._rate, self._sim_step)
-        self.create_timer(1.0 / self._rate, self._watchdog)
+    # ---------------------------------------------------------------- configure
+    def on_configure(self, state) -> TransitionCallbackReturn:
+        """参数、引擎、两半大脑与图上接口在这一装配（ADR-0020 §5）。
+
+        引擎加载失败（plan 缺失、反序列化失败、cudaMalloc 失败）在这里变成
+        FAULTED 的可读 reason；旧实现里它是构造函数异常 = 进程消失。
+        """
+        ret = super().on_configure(state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
+
+        # -- parameters -------------------------------------------------
+        decider = str(self.declare("decider", "stub"))
+        # Empty -> the decider searches data/models/ under the module dir and
+        # CWD (see tensorrt_decider._default_model_dir); set it when the assets
+        # live somewhere else.
+        model_dir = str(self.declare("decider_model_dir", ""))
+        consultant = str(self.declare("consultant", "stub"))
+        scenario = str(self.declare("scenario", "approach"))
+        sim = bool(self.declare("sim", False))
+        self._rate = max(0.1, float(self.declare("rate", 10.0)))  # sim + watchdog Hz
+        self._force_s2 = int(self.declare("force_s2", -1))  # escalate from this tick on
+        self._max_state_age = float(self.declare("max_state_age", 1.0))  # seconds before stale
+        # scene/flags are parameters because SceneState.to_text() feeds the
+        # frozen episode corpus: perception does not carry them yet, and
+        # guessing them at runtime would silently change every state_text.
+        self._scene = str(self.declare("scene", "open_floor"))
+        self._flags = [f for f in str(self.declare("flags", "")).split(",") if f]
+        self._frame_id = str(self.declare("frame_id", "stereo_camera"))  # matches eye
+        out = str(self.declare("out", ""))  # "" -> <repo>/data/episodes (ADR-0013)
+        self._verbose = bool(self.declare("verbose", True))
+        # Out-of-domain System 1 answers rarely clear the gate, so escalation would
+        # otherwise fire on every tick while System 2 takes 12-30 s to answer:
+        # hundreds of live threads, and answers that were stale on arrival.
+        self._max_s2 = max(0, int(self.declare("max_s2_in_flight", 1)))
+        # `loop.py` is bounded by --ticks and so gets one file for free. This
+        # node never stops, so without a tick budget per file an always-on run
+        # produces a single ever-growing file no tool wants to open. 0 = never.
+        self._episode_ticks = max(0, int(self.declare("episode_ticks", 10000)))
+
+        # -- 引擎：本节点最贵的资源，只能在这里付一次 ---------------------
+        try:
+            self._s1 = _make_decider(decider, model_dir)
+        except Exception as exc:  # noqa: BLE001 - 加载失败是状态，不是崩溃
+            self._s1 = None
+            return self.fail(f"decider={decider} 加载失败: {exc}")
+        self._decider = decider
+        self._backend = _ENGINE_BACKENDS.get(decider, decider)
+        # Preserve device/weight provenance in episode metadata across decider backends.
+        self._s1_device = str(getattr(self._s1, "device", ""))
+        self._s1_weights = str(getattr(self._s1, "weights", ""))
+        self._s1_place_error = str(getattr(self._s1, "place_error", ""))
+        self._s1_weights_mib = round(int(getattr(self._s1, "weights_bytes", 0) or 0) / 1048576)
+
+        try:
+            self._s2 = StubConsultant() if consultant == "stub" else _rai(consultant)
+        except Exception as exc:  # noqa: BLE001 - 同上：让编排层读到原因
+            self._release_engine()
+            return self.fail(f"consultant={consultant} 初始化失败: {exc}")
+        self._consultant = consultant
+
+        try:
+            self._out_dir = _episode_dir(out)
+            self._log = self._new_episode()
+        except OSError as exc:  # 语料目录不可写：配置失败，而不是跑到一半才发现
+            self._release_engine()
+            return self.fail(f"episode corpus 不可写 ({self._out_dir}): {exc}")
+
+        try:
+            self._body = MockBody(scenario) if sim else None
+        except Exception as exc:  # noqa: BLE001 - scenario 名非法
+            self._release_engine()
+            return self.fail(f"scenario={scenario} 无法模拟: {exc}")
+
+        # -- wire -------------------------------------------------------
+        # Perception is keep-last-1 best-effort: only the newest frame matters
+        # and a backlog would be worse than a gap. Decision is reliable -- the
+        # consumer is an actuator.
+        perception_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST, depth=1, reliability=ReliabilityPolicy.BEST_EFFORT
+        )
+        self._pub = self.lifecycle_publisher(
+            DecisionMsg, DECISION_TOPIC, QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=10)
+        )
+        self._sim_pub = (
+            self.lifecycle_publisher(TrackedObjects, PERCEPTION_TOPIC, perception_qos)
+            if self._body is not None
+            else None
+        )
+        self._sub = self.create_subscription(
+            TrackedObjects, PERCEPTION_TOPIC, self._on_perception, perception_qos
+        )
+
+        # 新配置 = 新一集语料：tick 计数与场景时钟都从头锚定。
+        self._tick_count = 0
+        self._last_veto = ""
+        self._last_state = None
+        self._stale_reported = False
+        self._epoch0 = None
+        self._pending.clear()
+        self._replies.clear()
+        self._applied.clear()
+        self._landed.clear()
+        self._threads[:] = [t for t in self._threads if t.is_alive()]
+
+        self.report(
+            "engine",
+            DiagnosticStatus.OK,
+            f"{self._backend} 已加载 {self._s1_weights_mib} MiB",
+            {
+                "backend": self._backend,
+                "decider": self._decider,
+                "device": self._s1_device or "-",
+                "weights_mib": self._s1_weights_mib,
+            },
+        )
         self.get_logger().info(
-            f"brain up: decider={decider} s1_device={self._s1_device or '-'} "
-            f"sim={self._body is not None} "
-            f"perception={PERCEPTION_TOPIC} decision={DECISION_TOPIC}"
+            f"brain configured: decider={decider} backend={self._backend} "
+            f"s1_device={self._s1_device or '-'} sim={self._body is not None}"
         )
         # An installed node's default corpus is not beside its source, so say
         # where it goes rather than making someone discover that after a run.
@@ -231,14 +310,98 @@ class BrainNode(Node):
                 "the sensor-rate and latency requirements."
                 + (f" Placement said: {self._s1_place_error[:200]}" if self._s1_place_error else "")
             )
+        return TransitionCallbackReturn.SUCCESS
+
+    # ----------------------------------------------------------------- activate
+    def on_activate(self, state) -> TransitionCallbackReturn:
+        """激活 = 开始 tick。**不重载引擎**：这是整个转换的收益所在。"""
+        ret = super().on_activate(state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
+        if self._s1 is None or self._log is None:
+            # activate 只该从 inactive 来；没有 configure 的激活等于一个静默空转的 tick 环。
+            return self.fail("activate 之前没有 configure：引擎与语料都不在")
+        # 停用期间可能过了很久，看门狗必须从激活这一刻重新计时。
+        self._last_rx = time.monotonic()
+        self._started = time.monotonic()
+        self._stale_reported = False
+        if self._body is not None:
+            self.add_timer(1.0 / self._rate, self._sim_step)
+        self.add_timer(1.0 / self._rate, self._watchdog)
+        self.add_timer(1.0, self._report_health)
+        self._report_health()
+        self.get_logger().info(
+            f"brain up: decider={self._decider} s1_device={self._s1_device or '-'} "
+            f"sim={self._body is not None} "
+            f"perception={PERCEPTION_TOPIC} decision={DECISION_TOPIC}"
+        )
+        return TransitionCallbackReturn.SUCCESS
+
+    # --------------------------------------------------------------- deactivate
+    def on_deactivate(self, state) -> TransitionCallbackReturn:
+        """停 tick 循环（timer 由基类登记与取消）；引擎、语料、图上接口原样保留。"""
+        self.cancel_timers()
+        return super().on_deactivate(state)
+
+    # ------------------------------------------------------------------ cleanup
+    def on_cleanup(self, state) -> TransitionCallbackReturn:
+        """释放 TensorRT 引擎（唯一真正昂贵的资源），再交回基类。
+
+        发布器不在这里手动销毁：`on_cleanup` 的受管实体钩子会走这一步，提前 destroy
+        会让那次钩子打到失效句柄上，cleanup 转移失败。订阅器不归生命周期管，手动销毁。
+        """
+        self._release_engine()
+        if self._sub is not None:
+            self.destroy_subscription(self._sub)
+            self._sub = None
+        self._pub = None
+        self._sim_pub = None
+        self._body = None
+        self._log = None
+        self.report("engine", DiagnosticStatus.WARN, "已释放（unconfigured）", {"backend": "released"})
+        return super().on_cleanup(state)
+
+    # ------------------------------------------------------------------- health
+    def _report_health(self) -> None:
+        age = self.age_ms(DECISION_TOPIC)
+        values = {
+            "backend": self._backend,
+            "decider": self._decider,
+            "decisions": self._tick_count,
+            "last_decision_age_ms": "never" if age is None else f"{age:.0f}",
+            "s1_device": self._s1_device or "-",
+            "weights_mib": self._s1_weights_mib,
+        }
+        level = DiagnosticStatus.OK
+        message = f"{self._backend} decisions={self._tick_count}"
+        if age is None:
+            level = DiagnosticStatus.WARN
+            message += ": 还没有决策"
+        elif age > 5000.0:
+            level = DiagnosticStatus.WARN
+            message += f": 上次决策 {age:.0f} ms 前"
+        self.report("decision", level, message, values)
+
+    def _release_engine(self) -> None:
+        """释放 decider 的引擎（`StubDecider` 没有释放路径，跳过）。"""
+        s1, self._s1 = self._s1, None
+        close = getattr(s1, "close", None)
+        if callable(close):
+            close()
 
     # -- inputs --------------------------------------------------------
 
     def _sim_step(self) -> None:
         assert self._body is not None and self._sim_pub is not None
-        self._sim_pub.publish(_state_to_msg(self._body.step(), self.get_clock(), self._frame_id))
+        self.publish(
+            _state_to_msg(self._body.step(), self.get_clock(), self._frame_id),
+            publisher=self._sim_pub,
+        )
 
     def _on_perception(self, msg: TrackedObjects) -> None:
+        # 订阅器不随生命周期启停，所以"未激活不干活"必须由这里判（ADR-0020 §5）。
+        if not self.active:
+            return
         try:
             state = _state_from_msg(msg, self._scene, self._flags)
         except ValueError as exc:
@@ -326,7 +489,8 @@ class BrainNode(Node):
         msg.p, msg.margin = float(final.p), float(final.margin)
         msg.latency_ms, msg.t = float(final.latency_ms), float(final.t)
         msg.tier = tier.value
-        self._pub.publish(msg)
+        if self.publish(msg, publisher=self._pub):
+            self.mark_seen(DECISION_TOPIC)
 
     def _record(self, state: SceneState, decision: Decision, tier: Tier, veto: Action | None, final: Decision) -> None:
         """Same episode shape as the CLI loop -- one corpus, two entry points."""
@@ -446,6 +610,8 @@ class BrainNode(Node):
             for k, reply in self._landed.items():
                 self._replies.append((k, reply))
             self._landed.clear()
+        if self._log is None:  # 从未 configure：没有语料文件可收尾
+            return
         if self._replies and self._pending:
             _drain(self._replies, self._applied, self._pending, self._last_state, self._log, self._verbose)
         self._log.log(kind="end", ticks=self._tick_count)

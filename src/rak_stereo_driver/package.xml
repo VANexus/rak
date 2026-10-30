@@ -10,6 +10,8 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <!-- ADR-0020：受管节点 + LifecyclePublisher -->
+  <depend>rclcpp_lifecycle</depend>
   <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
   <depend>camera_info_manager</depend>

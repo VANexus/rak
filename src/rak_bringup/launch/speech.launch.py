@@ -38,14 +38,22 @@ Four components, each individually switchable (capture/wake/tts/playback args):
 The array does beamforming on board; its UAC interface already carries the
 processed single channel, so no host-side beamforming is involved. Measured
 device detail and verification commands: docs/microphone_array.md.
+
+Lifecycle (ADR-0020 §5): asr_node / vtn_node / tts_node are `ManagedNode`s and are
+started through `rak_orchestration.launch_helpers.managed`. `supervised:=false`
+(default) configures and activates them from here; `supervised:=true` leaves every
+transition to `system_manager`. audio_capture / audio_play are third-party
+executables and stay plain `Node`s.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, GroupAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+from rak_orchestration.launch_helpers import managed
 
 #: Card *id*, not index: replug must not renumber the array out from under us.
 ARRAY_DEVICE = "hw:CARD=XFMDPV0018"
@@ -201,6 +209,14 @@ def generate_launch_description():
                     "Empty = keep the board's own configuration."
                 ),
             ),
+            # ADR-0020: asr/vtn/tts 都是受管节点。默认 false = 本文件自己
+            # configure→activate（单跑语音链排障）；true = 转移交给 system_manager，
+            # 这里一个事件都不发，否则就成了第二个生命周期权威源。
+            DeclareLaunchArgument(
+                "supervised",
+                default_value="false",
+                description="true = 转移交给 system_manager，本文件不自启受管节点。",
+            ),
             Node(
                 package="audio_capture",
                 executable="audio_capture_node",
@@ -221,11 +237,10 @@ def generate_launch_description():
                 ],
                 remappings=[("audio", audio_topic)],
             ),
-            Node(
+            *managed(
                 package="rak_speech",
                 executable="asr_node",
                 name="speech_asr",
-                output="screen",
                 parameters=[
                     {
                         "source": "topic",
@@ -235,46 +250,48 @@ def generate_launch_description():
                     }
                 ],
             ),
-            Node(
-                package="rak_speech",
-                executable="vtn_node",
-                name="speech_vtn",
-                output="screen",
+            GroupAction(
+                actions=managed(
+                    package="rak_speech",
+                    executable="vtn_node",
+                    name="speech_vtn",
+                    parameters=[
+                        {
+                            "manage_forward": True,  # adb tunnel is owned by the node
+                            "push_keywords": vtn_push_keywords,
+                        }
+                    ],
+                ),
                 condition=IfCondition(LaunchConfiguration("wake")),
-                parameters=[
-                    {
-                        "manage_forward": True,  # adb tunnel is owned by the node
-                        "push_keywords": vtn_push_keywords,
-                    }
-                ],
             ),
-            Node(
-                package="rak_speech",
-                executable="tts_node",
-                name="speech_tts",
-                output="screen",
+            GroupAction(
+                actions=managed(
+                    package="rak_speech",
+                    executable="tts_node",
+                    name="speech_tts",
+                    parameters=[
+                        {
+                            "model_dir": tts_model_dir,
+                            "audio_topic": "/audio_out",
+                            "backend": LaunchConfiguration("tts_backend"),
+                            "sid": ParameterValue(
+                                LaunchConfiguration("tts_sid"), value_type=int
+                            ),
+                            "speaker": LaunchConfiguration("tts_speaker"),
+                            "instruct": LaunchConfiguration("tts_instruct"),
+                            "qwentts_server": LaunchConfiguration("qwentts_server"),
+                            "qwentts_model": LaunchConfiguration("qwentts_model"),
+                            "qwentts_codec": LaunchConfiguration("qwentts_codec"),
+                            "qwentts_device": LaunchConfiguration("qwentts_device"),
+                            "qwentts_max_seq": ParameterValue(
+                                LaunchConfiguration("qwentts_max_seq"), value_type=int
+                            ),
+                            "quick_spec": LaunchConfiguration("quick_spec"),
+                            "quick_wav_dir": LaunchConfiguration("quick_wav_dir"),
+                        }
+                    ],
+                ),
                 condition=IfCondition(LaunchConfiguration("tts")),
-                parameters=[
-                    {
-                        "model_dir": tts_model_dir,
-                        "audio_topic": "/audio_out",
-                        "backend": LaunchConfiguration("tts_backend"),
-                        "sid": ParameterValue(
-                            LaunchConfiguration("tts_sid"), value_type=int
-                        ),
-                        "speaker": LaunchConfiguration("tts_speaker"),
-                        "instruct": LaunchConfiguration("tts_instruct"),
-                        "qwentts_server": LaunchConfiguration("qwentts_server"),
-                        "qwentts_model": LaunchConfiguration("qwentts_model"),
-                        "qwentts_codec": LaunchConfiguration("qwentts_codec"),
-                        "qwentts_device": LaunchConfiguration("qwentts_device"),
-                        "qwentts_max_seq": ParameterValue(
-                            LaunchConfiguration("qwentts_max_seq"), value_type=int
-                        ),
-                        "quick_spec": LaunchConfiguration("quick_spec"),
-                        "quick_wav_dir": LaunchConfiguration("quick_wav_dir"),
-                    }
-                ],
             ),
             Node(
                 package="audio_play",

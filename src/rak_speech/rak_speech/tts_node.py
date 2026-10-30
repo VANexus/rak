@@ -39,13 +39,15 @@ from pathlib import Path
 
 import numpy as np
 import rclpy
+from diagnostic_msgs.msg import DiagnosticStatus
 from rclpy.executors import ExternalShutdownException
-from rclpy.node import Node
+from rclpy.lifecycle import TransitionCallbackReturn
 from std_msgs.msg import String
 
 from audio_common_msgs.msg import AudioData
 
 from rak_interfaces.srv import Say
+from rak_lifecycle.managed_node import ManagedNode
 
 from .tts_layers import QuickAssets, split_sentences
 
@@ -55,69 +57,42 @@ MAX_TEXT = 500
 DEGRADE_KEY = "hold"
 
 
-class SpeechTts(Node):
+class SpeechTts(ManagedNode):
+    """离线 TTS,按 ADR-0020 §5 拆分。
+
+    `on_configure` 建接口、载即时层素材、并**只在这里**加载内容层引擎(cosyvoice
+    约 1.7 GB);`on_activate` 才开始合成线程;`on_deactivate` 停线程但**不卸载引擎**
+    —— deactivate → activate 是秒级恢复,不该重付一次模型加载;`on_cleanup` 才 close。
+
+    引擎缺失是**降级**而不是 configure 失败:即时层素材在磁盘上、不依赖模型,
+    服务仍要能回 accepted=false(ADR-0018 的既定行为),所以这里报 ERROR 诊断后
+    照常返回 SUCCESS。
+    """
+
     def __init__(self) -> None:
         super().__init__("speech_tts")
 
-        self.declare_parameter("say_service", "/speech/say")
-        self.declare_parameter("audio_topic", "/audio_out")
-        self.declare_parameter("quick_topic", "/speech/quick")
-        self.declare_parameter("model_dir", "")
-        self.declare_parameter("model_file", "")  # 具体 .onnx;空=自动挑选
-        self.declare_parameter(
-            "backend", "qwentts"
-        )  # qwentts(qwentts.cpp+serena,默认) | sherpa(kokoro/vits,CPU) | cosyvoice(GPU)
-        # kokoro 是 82M 参数的 24 kHz 模型,CPU 上约 0.75× 实时;留 2 个核给
-        # ASR/驱动。要更低延迟可 model_dir 换 vits-aishell3(8 kHz,约 3× 实时)。
-        self.declare_parameter("num_threads", 4)
-        self.declare_parameter("lang", "en-us")  # kokoro 的 espeak 语种(zh 词典直查不受影响)
-        self.declare_parameter("speed", 1.0)
-        self.declare_parameter("sid", 0)
-        self.declare_parameter("queue_max", 4)
-        # -- qwentts 内容层(ADR-0018 定稿路线) --------------------------------
-        self.declare_parameter("qwentts_server", "")  # 空=仓库内 tools/qwentts.cpp/build/tts-server
-        self.declare_parameter("qwentts_model", "")   # 空=自动挑 qwen-talker-*-customvoice-*.gguf
-        self.declare_parameter("qwentts_codec", "")   # 空=自动挑 qwen-tokenizer-*.gguf
-        self.declare_parameter("qwentts_device", "CPU")  # GPU 路径待上游修复(qwentts.cpp#40)
-        self.declare_parameter("qwentts_max_seq", 2048)  # KV cache 长度(=QT_MAX_SEQ);4096≈896MB
-        self.declare_parameter("qwentts_warmup", True)   # 启动时用一句废话垫掉冷启动
-        self.declare_parameter("speaker", "serena")   # 2026-10-17 定稿音色
-        self.declare_parameter("instruct", "")        # 空=后端默认语气档
-        # -- 即时反应层 + 响应预算 --------------------------------------------
-        self.declare_parameter("quick_spec", "")      # 空=仓库内 src/rak_speech/config/quick_phrases.toml
-        self.declare_parameter("quick_wav_dir", "")   # 空=仓库内 acoustic/models/quick
-        self.declare_parameter("sentence_max_chars", 40)
-        self.declare_parameter("sentence_pause", 0.5)   # 句间自然停顿(秒)
-        self.declare_parameter("sentence_budget", 30.0)  # 单句合成预算(秒),超时丢弃降级
-        self.declare_parameter("first_frame_budget", 1.5)  # 首帧出声预算(秒;超了记 warning)
+        # 只做字段初始化:引擎、素材、发布器、服务、线程都归 configure/activate
+        # (ADR-0020 §5)。下面这些默认值是"未配置"时的样子。
+        self._backend = "qwentts"
+        self._model_dir = ""
+        self._model_file = ""
+        self._num_threads = 4
+        self._lang = "en-us"
+        self._speed = 1.0
+        self._sid = 0
+        self._queue_max = 4
+        self._speaker = "serena"
+        self._instruct = ""
+        self._sentence_max_chars = 40
+        self._sentence_pause = 0.5
+        self._sentence_budget = 30.0
+        self._first_frame_budget = 1.5
 
-        g = lambda name: self.get_parameter(name).value  # noqa: E731
-        self._backend = str(g("backend"))
-        self._model_dir = str(g("model_dir"))
-        self._model_file = str(g("model_file"))
-        self._num_threads = int(g("num_threads"))
-        self._lang = str(g("lang"))
-        self._speed = float(g("speed"))
-        self._sid = int(g("sid"))
-        self._queue_max = max(1, int(g("queue_max")))
-        self._speaker = str(g("speaker")) or "serena"
-        self._instruct = str(g("instruct"))
-        self._sentence_max_chars = max(1, int(g("sentence_max_chars")))
-        self._sentence_pause = max(0.0, float(g("sentence_pause")))
-        self._sentence_budget = max(1.0, float(g("sentence_budget")))
-        self._first_frame_budget = max(0.1, float(g("first_frame_budget")))
-
-        self._audio_pub = self.create_publisher(
-            AudioData, str(g("audio_topic")), 10
-        )
-
-        # 即时反应层:先于模型加载——素材在磁盘上就能出声,不依赖内容层。
-        spec = str(g("quick_spec")) or os.environ.get("RAK_TTS_QUICK_SPEC", "")
-        wav_dir = str(g("quick_wav_dir")) or os.environ.get("RAK_TTS_QUICK_DIR", "")
-        self._quick = QuickAssets.load(
-            Path(spec) if spec else self._find_quick_spec(),
-            Path(wav_dir) if wav_dir else self._find_quick_dir(),
-        )
+        self._audio_pub = None
+        self._quick = None
+        self._say_service = None
+        self._quick_sub = None
 
         self._engine = None
         self._engine_error = ""
@@ -134,17 +109,207 @@ class SpeechTts(Node):
         self._pub_lock = threading.Lock()
         self._interrupt = 0
 
-        self.create_service(Say, str(g("say_service")), self._on_say)
-        self.create_subscription(
-            String, str(g("quick_topic")), self._on_quick, 10
-        )
-        self._worker = threading.Thread(target=self._run, name="tts", daemon=True)
-        self._worker.start()
+        self._worker = None
+        self._utterances = 0
+        self._errors = 0
+        self._last_ttfa_ms = 0.0
+        self._max_ttfa_ms = 0.0
 
+    # ---------------------------------------------------------------- configure
+    def on_configure(self, state) -> TransitionCallbackReturn:
+        super().on_configure(state)
+
+        say_service = str(self.declare("say_service", "/speech/say"))
+        audio_topic = str(self.declare("audio_topic", "/audio_out"))
+        quick_topic = str(self.declare("quick_topic", "/speech/quick"))
+        self._model_dir = str(self.declare("model_dir", ""))
+        self._model_file = str(self.declare("model_file", ""))  # 具体 .onnx;空=自动挑选
+        self._backend = str(
+            self.declare("backend", "qwentts")
+        )  # qwentts(qwentts.cpp+serena,默认) | sherpa(kokoro/vits,CPU) | cosyvoice(GPU)
+        # kokoro 是 82M 参数的 24 kHz 模型,CPU 上约 0.75× 实时;留 2 个核给
+        # ASR/驱动。要更低延迟可 model_dir 换 vits-aishell3(8 kHz,约 3× 实时)。
+        self._num_threads = int(self.declare("num_threads", 4))
+        self._lang = str(self.declare("lang", "en-us"))  # kokoro 的 espeak 语种(zh 词典直查不受影响)
+        self._speed = float(self.declare("speed", 1.0))
+        self._sid = int(self.declare("sid", 0))
+        self._queue_max = max(1, int(self.declare("queue_max", 4)))
+        # -- qwentts 内容层(ADR-0018 定稿路线) --------------------------------
+        self.declare("qwentts_server", "")  # 空=仓库内 tools/qwentts.cpp/build/tts-server
+        self.declare("qwentts_model", "")   # 空=自动挑 qwen-talker-*-customvoice-*.gguf
+        self.declare("qwentts_codec", "")   # 空=自动挑 qwen-tokenizer-*.gguf
+        self.declare("qwentts_device", "CPU")  # GPU 路径待上游修复(qwentts.cpp#40)
+        self.declare("qwentts_max_seq", 2048)  # KV cache 长度(=QT_MAX_SEQ);4096≈896MB
+        self.declare("qwentts_warmup", True)   # 启动时用一句废话垫掉冷启动
+        self._speaker = str(self.declare("speaker", "serena")) or "serena"  # 2026-10-17 定稿音色
+        self._instruct = str(self.declare("instruct", ""))  # 空=后端默认语气档
+        # -- 即时反应层 + 响应预算 --------------------------------------------
+        quick_spec = str(self.declare("quick_spec", ""))    # 空=仓库内 src/rak_speech/config/quick_phrases.toml
+        quick_wav_dir = str(self.declare("quick_wav_dir", ""))  # 空=仓库内 acoustic/models/quick
+        self._sentence_max_chars = max(1, int(self.declare("sentence_max_chars", 40)))
+        self._sentence_pause = max(0.0, float(self.declare("sentence_pause", 0.5)))
+        self._sentence_budget = max(1.0, float(self.declare("sentence_budget", 30.0)))
+        self._first_frame_budget = max(0.1, float(self.declare("first_frame_budget", 1.5)))
+
+        self._audio_pub = self.lifecycle_publisher(AudioData, audio_topic, 10)
+
+        try:
+            # 即时反应层:先于模型加载——素材在磁盘上就能出声,不依赖内容层。
+            spec = quick_spec or os.environ.get("RAK_TTS_QUICK_SPEC", "")
+            wav_dir = quick_wav_dir or os.environ.get("RAK_TTS_QUICK_DIR", "")
+            self._quick = QuickAssets.load(
+                Path(spec) if spec else self._find_quick_spec(),
+                Path(wav_dir) if wav_dir else self._find_quick_dir(),
+            )
+            self._say_service = self.create_service(Say, say_service, self._on_say)
+            self._quick_sub = self.create_subscription(
+                String, quick_topic, self._on_quick, 10
+            )
+        except Exception as exc:  # noqa: BLE001 -- configure 失败必须带可读原因
+            self._release()
+            return self.fail(f"即时层/接口创建失败: {type(exc).__name__}: {exc}")
+
+        # 内容层引擎:configure 里唯一的重活(cosyvoice ≈1.7 GB,秒级到十秒级)。
+        try:
+            self._engine, label = self._load_engine()
+        except Exception as exc:  # noqa: BLE001 -- 缺模型不能把节点弄崩
+            self._state = "failed"
+            self._engine_error = str(exc)
+            self.get_logger().error(f"tts engine unavailable: {exc}")
+            self.get_logger().error("即时反应层仍可用(预合成素材不依赖模型)")
+            self.report(
+                "engine",
+                DiagnosticStatus.ERROR,
+                f"内容层不可用: {exc}",
+                {"backend": self._backend, "state": self._state},
+            )
+            return TransitionCallbackReturn.SUCCESS
+
+        self._state = "ready"
+        voice = (f" speaker={self._speaker}" if self._backend == "qwentts"
+                 else f" sid={self._sid}")
+        self.get_logger().info(
+            f"tts up: backend={self._backend} model={label} "
+            f"rate={self._sample_rate}Hz threads={self._num_threads} "
+            f"speed={self._speed}{voice}"
+        )
+        # 即时层素材与内容层采样率必须一致:audio_play 只按一个 rate 播 /audio_out,
+        # 不一致会让素材变调(且没人会在日志里发现)。
+        odd = self._quick.sample_rates - {self._sample_rate}
+        if odd:
+            self.get_logger().warning(
+                f"即时层素材采样率 {sorted(odd)} != 内容层 {self._sample_rate}Hz;"
+                "素材会变调,请用同一个 rate 重新生成"
+            )
         self.get_logger().info(
             f"即时层就绪: {len(self._quick.keys)} 条素材"
             + (f", 缺 wav: {self._quick.missing}" if self._quick.missing else "")
         )
+        self.report(
+            "engine",
+            DiagnosticStatus.OK,
+            f"{self._backend} {self._sample_rate}Hz",
+            {
+                "backend": self._backend,
+                "sample_rate": self._sample_rate,
+                "quick_keys": len(self._quick.keys),
+            },
+        )
+        return TransitionCallbackReturn.SUCCESS
+
+    # ----------------------------------------------------------------- activate
+    def on_activate(self, state) -> TransitionCallbackReturn:
+        ret = super().on_activate(state)
+        if ret != TransitionCallbackReturn.SUCCESS:
+            return ret
+        self._stop.clear()
+        self._dropped = 0
+        self._utterances = 0
+        self._errors = 0
+        self._last_ttfa_ms = 0.0
+        self._max_ttfa_ms = 0.0
+        self._started_at = time.monotonic()
+        self._worker = threading.Thread(target=self._run, name="tts", daemon=True)
+        self._worker.start()
+        self.add_timer(10.0, self._stats)
+        return TransitionCallbackReturn.SUCCESS
+
+    # --------------------------------------------------------------- deactivate
+    def on_deactivate(self, state) -> TransitionCallbackReturn:
+        # 停的是"在跑的东西",不是 1.7 GB 的引擎:deactivate → activate 不重付加载。
+        self._stop_worker()
+        return super().on_deactivate(state)
+
+    # ------------------------------------------------------------------ cleanup
+    def on_cleanup(self, state) -> TransitionCallbackReturn:
+        self._release()
+        return super().on_cleanup(state)
+
+    def on_shutdown(self, state) -> TransitionCallbackReturn:
+        self._release()
+        return super().on_shutdown(state)
+
+    def _stop_worker(self) -> None:
+        self._stop.set()
+        with self._cond:
+            self._cond.notify_all()
+        worker, self._worker = self._worker, None
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=2.0)
+
+    def _release(self) -> None:
+        """只有 cleanup/shutdown 走这里:引擎与接口是真资源,deactivate 不动它们。"""
+        self._stop_worker()
+        engine, self._engine = self._engine, None
+        if engine is not None and hasattr(engine, "close"):
+            try:
+                engine.close()
+            except Exception:  # noqa: BLE001 -- 退出路径不打新错
+                pass
+        if self._say_service is not None:
+            try:
+                self.destroy_service(self._say_service)
+            except Exception:  # noqa: BLE001
+                pass
+            self._say_service = None
+        if self._quick_sub is not None:
+            try:
+                self.destroy_subscription(self._quick_sub)
+            except Exception:  # noqa: BLE001
+                pass
+            self._quick_sub = None
+        self._quick = None
+        self._state = "loading"
+        self._engine_error = ""
+        self._sample_rate = 0
+
+    def _stats(self) -> None:
+        """周期性统计:首帧延迟就是 ADR-0018 的响应预算,必须是可观测的数字。"""
+        level = DiagnosticStatus.OK
+        if self._state == "failed":
+            level = DiagnosticStatus.ERROR
+        elif self._errors or self._last_ttfa_ms > self._first_frame_budget * 1000.0:
+            level = DiagnosticStatus.WARN
+        self.report(
+            "tts",
+            level,
+            f"{self._state}, ttfa {self._last_ttfa_ms:.0f}ms",
+            {
+                "state": self._state,
+                "backend": self._backend,
+                "utterances": self._utterances,
+                "errors": self._errors,
+                "queue": len(self._queue),
+                "dropped": self._dropped,
+                "ttfa_ms": f"{self._last_ttfa_ms:.0f}",
+                "ttfa_max_ms": f"{self._max_ttfa_ms:.0f}",
+            },
+        )
+
+    def _note_ttfa(self, started: float) -> None:
+        self._last_ttfa_ms = (time.monotonic() - started) * 1000.0
+        if self._last_ttfa_ms > self._max_ttfa_ms:
+            self._max_ttfa_ms = self._last_ttfa_ms
 
     # -- 服务/话题(执行器线程:即时层直出,内容层只入队) ------------------------
 
@@ -201,46 +366,21 @@ class SpeechTts(Node):
         """
         self._interrupt += 1
         with self._pub_lock:
-            self._audio_pub.publish(AudioData(data=pcm))
+            self.publish(AudioData(data=pcm), publisher=self._audio_pub)
         self.get_logger().info(f"say {tag}: {len(pcm) // 48}ms audio")
 
     # -- 工作线程 -----------------------------------------------------------------
 
     def _run(self) -> None:
-        try:
-            engine, model_dir = self._load_engine()
-        except Exception as exc:  # noqa: BLE001 -- 缺模型不能把节点弄崩
-            self._state = "failed"
-            self._engine_error = str(exc)
-            self.get_logger().error(f"tts engine unavailable: {exc}")
-            self.get_logger().error("即时反应层仍可用(预合成素材不依赖模型)")
-            # 加载期可能已经有人入队(服务回的是 queued);引擎起不来就别让它们
-            # 静默消失——说一声比不说强。
-            with self._cond:
-                pending, self._queue = len(self._queue), deque()
-            if pending:
-                self.get_logger().warning(
-                    f"引擎不可用,丢弃加载期排队的 {pending} 条内容句"
-                )
-            return
-        self._engine = engine
-        self._state = "ready"
-        voice = (f" speaker={self._speaker}" if self._backend == "qwentts"
-                 else f" sid={self._sid}")
-        self.get_logger().info(
-            f"tts up: backend={self._backend} model={model_dir} "
-            f"rate={self._sample_rate}Hz threads={self._num_threads} "
-            f"speed={self._speed}{voice}"
-        )
-        # 即时层素材与内容层采样率必须一致:audio_play 只按一个 rate 播 /audio_out,
-        # 不一致会让素材变调(且没人会在日志里发现)。
-        odd = self._quick.sample_rates - {self._sample_rate}
-        if odd:
-            self.get_logger().warning(
-                f"即时层素材采样率 {sorted(odd)} != 内容层 {self._sample_rate}Hz;"
-                "素材会变调,请用同一个 rate 重新生成"
-            )
+        """内容层工作线程:引擎在 configure 已起好,这里只排队/合成(activate 才开跑)。
 
+        即时层不经过这里——它在服务回调线程直出,所以引擎不可用时它照常出声。
+        """
+        if self._engine is None:
+            self.get_logger().warning(
+                "内容层引擎不可用,合成线程不启动(即时反应层照常)"
+            )
+            return
         while not self._stop.is_set():
             with self._cond:
                 while not self._queue and not self._stop.is_set():
@@ -251,9 +391,12 @@ class SpeechTts(Node):
             try:
                 self._speak(text, instruct)
             except Exception as exc:  # noqa: BLE001 -- 单句失败不能停播
+                self._errors += 1
                 self.get_logger().error(f"synthesis failed for {text!r}: {exc}")
 
     def _speak(self, text: str, instruct: str = "") -> None:
+        started = time.monotonic()
+        self._utterances += 1
         if self._backend == "qwentts":
             self._speak_qwentts(text, instruct)
             return
@@ -261,6 +404,7 @@ class SpeechTts(Node):
             sample_rate, samples = self._engine.synthesize(text, instruct)
             pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
             self._publish_chunk(pcm)
+            self._note_ttfa(started)
             self.get_logger().info(
                 f"say [cosyvoice] ({len(pcm) // (2 * sample_rate) + 1}s): {text}")
             return
@@ -271,6 +415,7 @@ class SpeechTts(Node):
             return
         pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
         self._publish_chunk(pcm)
+        self._note_ttfa(started)
         self.get_logger().info(f"say ({len(pcm) // (2 * self._sample_rate) + 1}s): {text}")
 
     # -- 内容层:分句 + 流式 + 预算(ADR-0018 层2/层3) ----------------------------
@@ -283,6 +428,7 @@ class SpeechTts(Node):
             try:
                 done = self._stream_sentence(sentence, instruct)
             except Exception as exc:  # noqa: BLE001 -- 超预算/后端失败都降级
+                self._errors += 1
                 self.get_logger().error(f"内容层丢句 {sentence!r}: {exc}")
                 self._degrade(exc)
                 return
@@ -312,6 +458,9 @@ class SpeechTts(Node):
             if first:
                 first = False
                 ttfa = now - started
+                self._last_ttfa_ms = ttfa * 1000.0
+                if self._last_ttfa_ms > self._max_ttfa_ms:
+                    self._max_ttfa_ms = self._last_ttfa_ms
                 # 注意:两个 severity 必须是两个调用点——rclpy 按调用点记 severity,
                 # 同一行的 `level(...)` 在第二次换成另一种 severity 会直接抛
                 # ValueError('Logger severity cannot be changed between calls')。
@@ -356,7 +505,7 @@ class SpeechTts(Node):
         if not pcm:
             return
         with self._pub_lock:
-            self._audio_pub.publish(AudioData(data=pcm))
+            self.publish(AudioData(data=pcm), publisher=self._audio_pub)
 
     # -- 模型定位与引擎构建 ----------------------------------------------------------
 
@@ -551,15 +700,7 @@ class SpeechTts(Node):
         return chosen
 
     def destroy_node(self) -> bool:
-        self._stop.set()
-        with self._cond:
-            self._cond.notify_all()
-        engine = self._engine
-        if engine is not None and hasattr(engine, "close"):
-            try:
-                engine.close()
-            except Exception:  # noqa: BLE001 -- 退出路径不打新错
-                pass
+        self._release()
         return super().destroy_node()
 
 

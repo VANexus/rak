@@ -7,6 +7,8 @@
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
+  <!-- ADR-0020：受管节点 + LifecyclePublisher（未激活不发布） -->
+  <depend>rclcpp_lifecycle</depend>
   <!-- [AI] L2 组件化: 组件库 + component_container(launch 引用) -->
   <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
@@ -14,6 +16,7 @@
   <!-- perception_container.launch.py 按 launch 引用要求声明(门禁) -->
   <exec_depend>rak_astra_driver</exec_depend>
   <exec_depend>rak_stereo_driver</exec_depend>
+  <exec_depend>rak_orchestration</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <test_depend>ament_lint_auto</test_depend>

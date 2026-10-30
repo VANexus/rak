@@ -3,7 +3,8 @@
 The SDK's dependency tree (pydantic v2 and friends) must never enter the
 ROS system Python, so the loop runs as a child process started with a
 PYTHONPATH overlay that points only at the vendored SDK directory
-(default /home/xrak/rak/tools/harness-sdk). The bridge carries:
+(resolved by rak_harness.sdk: param -> RAK_HARNESS_SDK_DIR -> ament -> source tree;
+never a hardcoded home directory). The bridge carries:
 
   * transcripts  (parent -> child, from /speech/transcript)
   * tool proposals (child -> parent -> /tool_proposals, source=harness)
@@ -53,14 +54,21 @@ class AgentBridge:
         self._context_provider = context_provider
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
+        # close() 置位：收尾线程据此不再回报 "down"（那是我们自己关的，不是故障）。
+        self._stopping = False
+        self._thread: threading.Thread | None = None
         self._proposal_pub = node.create_publisher(ToolProposal, "/tool_proposals", 10)
-        node.create_subscription(ToolResult, "/tool_results", self._on_tool_result, 10)
-        node.create_subscription(String, "/speech/transcript", self._on_transcript, 10)
+        self._result_sub = node.create_subscription(
+            ToolResult, "/tool_results", self._on_tool_result, 10)
+        self._transcript_sub = node.create_subscription(
+            String, "/speech/transcript", self._on_transcript, 10)
         self._spawn()
 
     # ------------------------------------------------------------- lifecycle
 
     def _spawn(self) -> None:
+        if self._stopping:
+            return
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
             [self._sdk_path] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
@@ -90,7 +98,9 @@ class AgentBridge:
         except OSError as exc:
             self._on_state("down", f"agent subprocess spawn failed: {exc}")
             return
-        threading.Thread(target=self._pump, name="harness-agent", daemon=True).start()
+        self._thread = threading.Thread(
+            target=self._pump, name="harness-agent", daemon=True)
+        self._thread.start()
         self._node.get_logger().info(
             f"agent loop spawned (model={self._model}, motion_tools={self._allow_motion_tools})")
 
@@ -98,30 +108,76 @@ class AgentBridge:
         proc = self._proc
         if proc is None or proc.stdout is None:
             return
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    self._handle(json.loads(line))
+                except ValueError:
+                    continue
+        except (OSError, ValueError):
+            pass
+        if not self._stopping:
+            self._on_state("down", "agent subprocess exited")
+
+    def close(self) -> None:
+        """停掉子进程与读线程；`deactivate → activate` 靠它保证不泄漏子进程。
+
+        幂等、异常安全：任何一步失败都只是少收一次 SIGTERM，不影响调用方的转移。
+        """
+        self._stopping = True
+        proc, self._proc = self._proc, None
+        if proc is not None:
+            try:
+                if proc.stdin:
+                    proc.stdin.write(json.dumps({"type": "shutdown"}) + "\n")
+                    proc.stdin.flush()
+            except (OSError, ValueError):
+                pass
+            try:
+                proc.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2.0)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+            for stream in (proc.stdin, proc.stdout):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except (OSError, ValueError):
+                    pass
+        thread, self._thread = self._thread, None
+        if thread is not None and thread.is_alive():
+            try:
+                thread.join(timeout=2.0)
+            except RuntimeError:  # 从自己的线程里 join 自己
+                pass
+        for entity, destroy in (
+            (self._result_sub, self._node.destroy_subscription),
+            (self._transcript_sub, self._node.destroy_subscription),
+            (self._proposal_pub, self._node.destroy_publisher),
+        ):
+            if entity is None:
                 continue
             try:
-                self._handle(json.loads(line))
-            except ValueError:
-                continue
-        self._on_state("down", "agent subprocess exited")
+                destroy(entity)
+            except Exception:  # noqa: BLE001 - 节点可能已在销毁
+                pass
+        self._result_sub = None
+        self._transcript_sub = None
+        self._proposal_pub = None
 
     def destroy(self) -> None:
-        proc = self._proc
-        if proc is None:
-            return
-        try:
-            if proc.stdin:
-                proc.stdin.write(json.dumps({"type": "shutdown"}) + "\n")
-                proc.stdin.flush()
-        except OSError:
-            pass
-        try:
-            proc.wait(timeout=3.0)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        self.close()
 
     # ------------------------------------------------------------- child msgs
 
@@ -147,6 +203,8 @@ class AgentBridge:
             self._publish_proposal(msg)
 
     def _publish_proposal(self, msg: dict) -> None:
+        if self._stopping or self._proposal_pub is None:
+            return
         proposal = ToolProposal(
             call_id=str(msg.get("call_id", "")),
             source="harness",
@@ -162,7 +220,7 @@ class AgentBridge:
 
     def _on_transcript(self, msg: String) -> None:
         text = msg.data.strip()
-        if not text or self._proc is None or self._proc.stdin is None:
+        if self._stopping or not text or self._proc is None or self._proc.stdin is None:
             return
         payload_lines = []
         if self._context_provider is not None:
@@ -183,7 +241,7 @@ class AgentBridge:
                 self._on_state("down", "agent stdin closed")
 
     def _on_tool_result(self, msg: ToolResult) -> None:
-        if self._proc is None or self._proc.stdin is None:
+        if self._stopping or self._proc is None or self._proc.stdin is None:
             return
         try:
             detail = json.loads(msg.detail_json) if msg.detail_json else {}
@@ -201,7 +259,7 @@ class AgentBridge:
                 self._on_state("down", "agent stdin closed")
 
     def _trace_line(self, label: str, msg: dict) -> None:
-        if self._trace is None:
+        if self._trace is None or self._stopping:
             return
         out = String()
         out.data = json.dumps({"label": label, **msg}, ensure_ascii=False)

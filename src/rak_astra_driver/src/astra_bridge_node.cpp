@@ -2,6 +2,8 @@
 // Lists all stream profiles for debugging, enables the best color+depth streams.
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <rclcpp_lifecycle/lifecycle_publisher.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <libobsensor/ObSensor.hpp>
@@ -13,12 +15,20 @@
 #include <string>
 #include <vector>
 
-class AstraBridgeNode : public rclcpp::Node {
+class AstraBridgeNode : public rclcpp_lifecycle::LifecycleNode {
 public:
   // 组件化 (L2, 2026-10-14): NodeOptions 让 launch_ros 的 ComposableNode 能传
   // use_intra_process_comms 等选项; 默认构造保持向后兼容, 独立可执行行为不变。
+  //
+  // ADR-0020 §5: 构造函数只做字段初始化。原实现把 getDevice() 与 pipe_.start()
+  // 都放在构造函数里 —— 相机被别的进程占用时节点直接抛异常退出, 编排层看到的只是
+  // "进程没了"; 现在失败变成 on_configure/on_activate 的可读 reason。
+  using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+
   explicit AstraBridgeNode(const rclcpp::NodeOptions &opts = rclcpp::NodeOptions())
-      : Node("astra_bridge_node", opts), pipe_() {
+      : rclcpp_lifecycle::LifecycleNode("astra_bridge_node", opts), pipe_() {}
+
+  CallbackReturn on_configure(const rclcpp_lifecycle::State &) override {
     declare_parameter("color_frame_id", "camera_color_frame");
     declare_parameter("depth_frame_id", "camera_depth_frame");
     color_frame_id_ = get_parameter("color_frame_id").as_string();
@@ -28,12 +38,27 @@ public:
     // 且与 rak_stereo_driver 的既有约定、ADR-0014 和 docs/perf/ipc_baseline.md §3.1 一致
     // (reliable 发布方一旦遇到 reliable 消费者会触发重传风暴, 实测 p99 108ms)。
     // 在仓消费者 (gpu_pointcloud BE、grasp capture BE、sensors_rviz Image=Best Effort) 全部兼容。
-    color_pub_      = this->create_publisher<sensor_msgs::msg::Image>("/camera/color/image_raw", rclcpp::SensorDataQoS());
-    depth_pub_      = this->create_publisher<sensor_msgs::msg::Image>("/camera/depth/image_raw", rclcpp::SensorDataQoS());
-    color_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/color/camera_info", rclcpp::SensorDataQoS());
-    depth_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/depth/camera_info", rclcpp::SensorDataQoS());
+    color_pub_      = this->create_lifecycle_publisher<sensor_msgs::msg::Image>("/camera/color/image_raw", rclcpp::SensorDataQoS());
+    depth_pub_      = this->create_lifecycle_publisher<sensor_msgs::msg::Image>("/camera/depth/image_raw", rclcpp::SensorDataQoS());
+    color_info_pub_ = this->create_lifecycle_publisher<sensor_msgs::msg::CameraInfo>("/camera/color/camera_info", rclcpp::SensorDataQoS());
+    depth_info_pub_ = this->create_lifecycle_publisher<sensor_msgs::msg::CameraInfo>("/camera/depth/camera_info", rclcpp::SensorDataQoS());
 
-    auto dev = pipe_.getDevice();
+    // 设备获取失败（被占用 / 没插）必须是可读的 FAILURE，不是进程消失。
+    std::shared_ptr<ob::Device> dev;
+    try {
+      dev = pipe_.getDevice();
+    } catch (const ob::Error &error) {
+      RCLCPP_ERROR(get_logger(), "Astra getDevice failed: %s",
+                   error.getMessage() ? error.getMessage() : "ob::Error");
+      return CallbackReturn::FAILURE;
+    } catch (const std::exception &error) {
+      RCLCPP_ERROR(get_logger(), "Astra getDevice failed: %s", error.what());
+      return CallbackReturn::FAILURE;
+    }
+    if (!dev) {
+      RCLCPP_ERROR(get_logger(), "Astra getDevice returned null");
+      return CallbackReturn::FAILURE;
+    }
     auto sensor_list = dev->getSensorList();
 
     // Collect *candidates*, do not commit to the first match. The Astra S exposes
@@ -69,7 +94,7 @@ public:
                    "No supported color/depth profile (color=%zu depth=%zu); "
                    "pipeline will not start.",
                    color_cands.size(), depth_cands.size());
-      throw std::runtime_error("Astra requires supported color and depth profiles");
+      return CallbackReturn::FAILURE;
     }
 
     // 30 fps first, enumeration order otherwise (stable_sort keeps the rest as-is).
@@ -79,6 +104,22 @@ public:
     };
     std::stable_sort(color_cands.begin(), color_cands.end(), prefer_30);
     std::stable_sort(depth_cands.begin(), depth_cands.end(), prefer_30);
+    color_cands_ = color_cands;
+    depth_cands_ = depth_cands;
+    return CallbackReturn::SUCCESS;
+  }
+
+  // activate 才碰相机：configure 只枚举能力与建发布器，开流是 I/O。
+  CallbackReturn on_activate(const rclcpp_lifecycle::State & state) override {
+    if (rclcpp_lifecycle::LifecycleNode::on_activate(state) != CallbackReturn::SUCCESS) {
+      return CallbackReturn::FAILURE;
+    }
+    if (color_cands_.empty() || depth_cands_.empty()) {
+      RCLCPP_ERROR(get_logger(), "activate before configure: no stream profiles cached");
+      return CallbackReturn::FAILURE;
+    }
+    const auto color_cands = color_cands_;
+    const auto depth_cands = depth_cands_;
 
     const auto frameset_cb = [this](std::shared_ptr<ob::FrameSet> frameset) {
       RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
@@ -146,11 +187,12 @@ public:
         used_depth = depth_cands.front();
         RCLCPP_WARN(this->get_logger(), "Astra started DEPTH-ONLY (no colour mode would start)");
       } catch (const ob::Error &error) {
-        throw std::runtime_error(std::string("Astra pipeline failed to start: ") +
-                                 (error.getMessage() ? error.getMessage() : "ob::Error"));
+        RCLCPP_ERROR(get_logger(), "Astra pipeline failed to start: %s",
+                     error.getMessage() ? error.getMessage() : "ob::Error");
+        return CallbackReturn::FAILURE;
       } catch (const std::exception &error) {
-        throw std::runtime_error(
-            std::string("Astra pipeline failed to start: ") + error.what());
+        RCLCPP_ERROR(get_logger(), "Astra pipeline failed to start: %s", error.what());
+        return CallbackReturn::FAILURE;
       }
     }
 
@@ -161,6 +203,23 @@ public:
                   profileFps(used_color), used_depth->format(), profileWidth(used_depth),
                   profileHeight(used_depth), profileFps(used_depth));
     }
+    return CallbackReturn::SUCCESS;
+  }
+
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State & state) override {
+    try { pipe_.stop(); } catch (...) {}
+    return rclcpp_lifecycle::LifecycleNode::on_deactivate(state);
+  }
+
+  CallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override {
+    try { pipe_.stop(); } catch (...) {}
+    color_cands_.clear();
+    depth_cands_.clear();
+    color_pub_.reset();
+    depth_pub_.reset();
+    color_info_pub_.reset();
+    depth_info_pub_.reset();
+    return CallbackReturn::SUCCESS;
   }
 
   // noexcept by language: an ob::Error escaping here would std::terminate the
@@ -432,7 +491,9 @@ private:
           img->data.data() + static_cast<size_t>(row) * row_bytes,
           source + static_cast<size_t>(row) * source_stride, row_bytes);
     }
-    color_pub_->publish(*img);
+    if (color_pub_->is_activated()) {
+      color_pub_->publish(*img);
+    }
     color_info_pub_->publish(makeCameraInfo(source_frame, stamp, w, h, color_frame_id_, false));
   }
 
@@ -492,12 +553,15 @@ private:
             &millimeters, sizeof(millimeters));
       }
     }
-    depth_pub_->publish(*img);
+    if (depth_pub_->is_activated()) {
+      depth_pub_->publish(*img);
+    }
     depth_info_pub_->publish(makeCameraInfo(frame, stamp, w, h, depth_frame_id_, true));
   }
 
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr color_pub_, depth_pub_;
-  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr color_info_pub_, depth_info_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::Image>::SharedPtr color_pub_, depth_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::CameraInfo>::SharedPtr color_info_pub_, depth_info_pub_;
+  std::vector<std::shared_ptr<ob::StreamProfile>> color_cands_, depth_cands_;
   std::string color_frame_id_;
   std::string depth_frame_id_;
   ob::FormatConvertFilter color_converter_;
@@ -510,7 +574,16 @@ RCLCPP_COMPONENTS_REGISTER_NODE(AstraBridgeNode)
 
 int main(int argc, char ** argv) {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<AstraBridgeNode>());
+  auto node = std::make_shared<AstraBridgeNode>();
+  // 独立可执行没有编排者，自己走到 active；被 launch 以 LifecycleNode 起时
+  // 由 launch 事件或 system_manager 发转移。
+  if (node->configure() != AstraBridgeNode::CallbackReturn::SUCCESS ||
+    node->activate() != AstraBridgeNode::CallbackReturn::SUCCESS) {
+    RCLCPP_ERROR(node->get_logger(), "astra bridge failed to reach active");
+    rclcpp::shutdown();
+    return 1;
+  }
+  rclcpp::spin(node->get_node_base_interface());
   rclcpp::shutdown();
   return 0;
 }

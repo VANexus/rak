@@ -88,6 +88,22 @@ class ManagedNode(LifecycleNode):
             self.destroy_timer(timer)
         self._managed_timers.clear()
 
+    def publish(self, message: Any, publisher: Any = None) -> bool:
+        """受管发布：未启用就**不发**，并返回是否真的发出去了。
+
+        为什么要这层薄封装：`LifecyclePublisher.publish()` 在未启用时会**静默丢弃**，
+        调用方拿不到任何信号。绝大多数"节点活着但不发数据"的现场故障都是这么来的
+        （on_configure 里建了发布器、忘写 on_activate，或反过来提前发）。
+        返回值让调用方能把"没发"记进统计，而不是当作成功。
+        """
+        target = publisher
+        if target is None:
+            raise RuntimeError("publish() 需要显式 publisher=（没有全局默认发布器）")
+        if hasattr(target, "is_activated") and not target.is_activated:
+            return False
+        target.publish(message)
+        return True
+
     # ------------------------------------------------------------- 新鲜度判据
     def mark_seen(self, topic: str) -> None:
         """在已有的回调里调用，记录"这一帧确实进来了"的单调时刻。"""

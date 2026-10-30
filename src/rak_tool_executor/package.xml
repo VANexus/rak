@@ -11,6 +11,9 @@
 
   <depend>rclpy</depend>
   <depend>rak_interfaces</depend>
+  <!-- ADR-0020: ManagedNode 基类 + 诊断上报 -->
+  <depend>rak_lifecycle</depend>
+  <depend>diagnostic_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>control_msgs</depend>
   <depend>trajectory_msgs</depend>

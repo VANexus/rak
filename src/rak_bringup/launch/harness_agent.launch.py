@@ -8,8 +8,10 @@ docs/brain_arm_tools_design.md until its ADR lands):
     loop final text -> /speech/say -> tts_node -> /audio_out -> speaker
     thinking / tool traces -> /harness/trace (String JSON, for the operator)
 
-Requires the vendored SDK overlay (tools/harness-sdk) and, for the cloud path,
-ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL in the environment of this launch.
+SDK overlay 的位置**不再写死**（AGENTS §2 第 3 条）：由
+`rak_harness.sdk` 按 `agent_sdk_path` 参数 → `RAK_HARNESS_SDK_DIR` 环境变量 →
+ament 索引 → 源码树 `tools/harness-sdk` 依次解析；找不到就降级到 dialogue 语音路径
+并打印每个候选的命中情况。云端路径另需 ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL。
 """
 
 from launch import LaunchDescription
@@ -19,9 +21,10 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
+from rak_orchestration.launch_helpers import managed
+
 MIC_DEFAULT = "plughw:0,0"          # Astra camera mic (array board not fitted)
 SPEAKER_DEFAULT = "plughw:CARD=Device"
-SDK_PATH = "/home/xrak/rak/tools/harness-sdk"
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -40,14 +43,16 @@ def generate_launch_description() -> LaunchDescription:
     asr_engine = LaunchConfiguration("asr_engine")
     tts_backend = LaunchConfiguration("tts_backend")
 
-    tool_executor = Node(
+    # 两者都是 ManagedNode（ADR-0020）：资源在 configure、工作线程在 activate。
+    # supervised:=true 时由 system_manager 驱动；单独跑本文件时自启到 active。
+    tool_executor = managed(
         package="rak_tool_executor",
         executable="tool_executor",
         name="tool_executor",
         output="screen",
         parameters=[{"allow_motion": allow_motion}],
     )
-    harness = Node(
+    harness = managed(
         package="rak_harness",
         executable="harness_node",
         name="harness",
@@ -75,7 +80,10 @@ def generate_launch_description() -> LaunchDescription:
         arg("tts_backend", "qwentts",
             "TTS backend: qwentts (qwentts.cpp + serena, 默认) | sherpa | cosyvoice."),
         arg("voice_path", "agent", "agent (Claude Agent SDK loop) | dialogue (ADR-0010 engine only)."),
-        arg("agent_sdk_path", SDK_PATH, "vendored claude-agent-sdk overlay directory."),
+            arg("agent_sdk_path", "",
+            "vendored claude-agent-sdk overlay; 空 = 自动解析（RAK_HARNESS_SDK_DIR → ament → 源码树）."),
+        arg("supervised", "false",
+            "true = 由 system_manager 驱动 harness/tool_executor 的生命周期"),
         arg("model", "deepseek-chat", "model name passed to the loop (endpoint-dependent)."),
         # Speech stack (capture + ASR + TTS + playback), wake off without the board.
         IncludeLaunchDescription(
@@ -88,6 +96,7 @@ def generate_launch_description() -> LaunchDescription:
                 "engine": asr_engine, "tts_backend": tts_backend,
             }.items(),
         ),
-        tool_executor,
-        harness,
+        # managed() 返回 [节点, configure 事件, activate 事件]，必须展开
+        *tool_executor,
+        *harness,
     ])

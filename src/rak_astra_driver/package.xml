@@ -9,6 +9,8 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
+  <!-- ADR-0020：受管节点 + LifecyclePublisher（未激活不发布） -->
+  <depend>rclcpp_lifecycle</depend>
   <!-- [AI] L2 组件化: 组件库 + component_container(launch 引用) -->
   <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>

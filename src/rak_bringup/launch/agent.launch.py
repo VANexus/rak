@@ -3,6 +3,7 @@
     ros2 launch rak_bringup agent.launch.py                       # stub decider + sim
     ros2 launch rak_bringup agent.launch.py sim:=false            # wait for real
                                                            # /perception/tracked_objects
+    ros2 launch rak_bringup agent.launch.py supervised:=true      # 交给 system_manager
 
 `sim` defaults to true because nothing publishes TrackedObjects yet: the
 simulator emits the scripted body on the real perception topic, so the whole
@@ -11,13 +12,19 @@ code that will run when perception lands. Set `sim:=false` and the node just
 waits, publishing `inspect` once `max_state_age` expires.
 
 System 1 runs inside the node process. Only perception and decisions cross it.
+
+生命周期（ADR-0020 §5）：`/brain` 是 `ManagedNode`，TensorRT 引擎在 `on_configure`
+加载。走 `managed(...)` 而不是 `Node(...)` —— 后者会让进程停在 `unconfigured`：
+订阅不建、话题不发、也不报错。`supervised:=true` 时本文件不发转移，等编排层；
+默认 false 自启，单独跑这个 launch 排障时不会出现"进程在但不干活"。
 """
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+from rak_orchestration.launch_helpers import managed
 
 
 def _arg(name: str, default: str) -> DeclareLaunchArgument:
@@ -62,7 +69,8 @@ def generate_launch_description() -> LaunchDescription:
             _arg("verbose", "true"),
             _arg("out", ""),
             _arg("episode_ticks", "10000"),
-            Node(
+            _arg("supervised", "false"),
+            *managed(
                 package="rak_agent",
                 executable="agent_node",
                 name="brain",

@@ -11,6 +11,9 @@
 
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
+  <!-- ADR-0020：managed 基类；ADR-0023：采样时刻打戳 -->
+  <depend>rak_lifecycle</depend>
+  <depend>diagnostic_msgs</depend>
   <exec_depend>python3-numpy</exec_depend>
 
   <test_depend>python3-pytest</test_depend>

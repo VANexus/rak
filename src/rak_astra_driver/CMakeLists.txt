@@ -16,6 +16,7 @@ find_path(ORBBecSDK_INC NAMES "libobsensor/ObSensor.hpp"
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
@@ -28,7 +29,7 @@ include_directories(BEFORE ${ORBBecSDK_INC})
 # SDK 动态库挂在组件库上 (容器以 dlopen 加载组件, 必须靠组件自身的 RPATH 找到 libOrbbecSDK)。
 add_library(astra_bridge_component SHARED src/astra_bridge_node.cpp)
 target_link_libraries(astra_bridge_component ${OrbbecSDK_LIB_ABS})
-ament_target_dependencies(astra_bridge_component rclcpp rclcpp_components sensor_msgs)
+ament_target_dependencies(astra_bridge_component rclcpp rclcpp_lifecycle rclcpp_components sensor_msgs)
 set_target_properties(astra_bridge_component PROPERTIES
   BUILD_RPATH "${OrbbecSDK_DIR}/lib"
   INSTALL_RPATH "${OrbbecSDK_DIR}/lib")

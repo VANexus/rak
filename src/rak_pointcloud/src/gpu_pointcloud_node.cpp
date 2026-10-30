@@ -17,6 +17,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <rclcpp_lifecycle/lifecycle_publisher.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -28,13 +30,23 @@
 namespace rak::pointcloud
 {
 
-class GpuPointCloudNode : public rclcpp::Node
+class GpuPointCloudNode : public rclcpp_lifecycle::LifecycleNode
 {
 public:
   // [AI] 组件化: 接受 NodeOptions(launch_ros 的 ComposableNode 用它传 use_intra_process_comms
   // 等选项); 默认构造保持向后兼容, 单独可执行的行为不变。
+  //
+  // ADR-0020 §5：构造函数**不碰 CUDA**。原实现先建订阅、再 init_cuda()，于是第一帧
+  // depth 可能在 CUDA 上下文就绪之前进回调 —— 这是已经存在的初始化顺序缺陷，不是
+  // 风格问题。现在顺序由生命周期固定：configure 里 init_cuda() 成功后**才**建订阅。
+  using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+
   explicit GpuPointCloudNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
-  : rclcpp::Node("gpu_pointcloud", options)
+  : rclcpp_lifecycle::LifecycleNode("gpu_pointcloud", options)
+  {
+  }
+
+  CallbackReturn on_configure(const rclcpp_lifecycle::State &) override
   {
     depth_topic_ = declare_parameter("depth_topic", std::string("/camera/depth/image_raw"));
     info_topic_ = declare_parameter("camera_info_topic", std::string("/camera/depth/camera_info"));
@@ -47,8 +59,17 @@ public:
     max_range_m_ = declare_parameter("max_range_m", 10.0);
     log_every_n_ = declare_parameter("log_every_n", 0);
 
+    // 资源先于 I/O：CUDA 上下文失败时返回 FAILURE（编排层看到可读原因），
+    // 而不是让第一帧在回调里崩。
+    try {
+      rak::gpu::init_cuda();
+    } catch (const std::exception & error) {
+      RCLCPP_ERROR(get_logger(), "init_cuda failed: %s", error.what());
+      return CallbackReturn::FAILURE;
+    }
+
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
-    points_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(points_topic_, qos);
+    points_pub_ = create_lifecycle_publisher<sensor_msgs::msg::PointCloud2>(points_topic_, qos);
     info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
       info_topic_, qos,
       [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {info_ = msg;});
@@ -56,10 +77,39 @@ public:
       depth_topic_, qos,
       [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {on_depth(msg);});
 
-    rak::gpu::init_cuda();
     RCLCPP_INFO(
       get_logger(), "gpu point cloud: %s + %s -> %s (decimation %d)",
       depth_topic_.c_str(), info_topic_.c_str(), points_topic_.c_str(), decimation_);
+    return CallbackReturn::SUCCESS;
+  }
+
+  CallbackReturn on_activate(const rclcpp_lifecycle::State & state) override
+  {
+    // 必须转发生命周期基类实现，否则 LifecyclePublisher 永远不启用，
+    // publish() 静默丢弃（本仓在 Python 侧踩过同款坑）。
+    if (rclcpp_lifecycle::LifecycleNode::on_activate(state) != CallbackReturn::SUCCESS) {
+      return CallbackReturn::FAILURE;
+    }
+    frame_count_ = 0;
+    info_.reset();
+    return CallbackReturn::SUCCESS;
+  }
+
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State & state) override
+  {
+    return rclcpp_lifecycle::LifecycleNode::on_deactivate(state);
+  }
+
+  CallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override
+  {
+    depth_sub_.reset();
+    info_sub_.reset();
+    points_pub_.reset();
+    depth_dev_.free();
+    xyz_dev_.free();
+    src_capacity_ = 0;
+    xyz_capacity_ = 0;
+    return CallbackReturn::SUCCESS;
   }
 
 private:
@@ -131,7 +181,9 @@ private:
                       static_cast<std::size_t>(out_w) * out_h * 4, stream_.get());
     stream_.synchronize();
 
-    points_pub_->publish(cloud);
+    if (points_pub_ && points_pub_->is_activated()) {
+      points_pub_->publish(cloud);
+    }
 
     if (log_every_n_ > 0 && ++frame_count_ % log_every_n_ == 0) {
       const double ms = std::chrono::duration<double, std::milli>(
@@ -166,7 +218,7 @@ private:
   sensor_msgs::msg::CameraInfo::ConstSharedPtr info_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr points_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::PointCloud2>::SharedPtr points_pub_;
 
   rak::gpu::CudaStream stream_;
   sensor_msgs::msg::PointCloud2 cloud_;
@@ -184,7 +236,17 @@ RCLCPP_COMPONENTS_REGISTER_NODE(rak::pointcloud::GpuPointCloudNode)
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<rak::pointcloud::GpuPointCloudNode>());
+  auto node = std::make_shared<rak::pointcloud::GpuPointCloudNode>();
+  // 独立可执行 = 没有编排者（supervised:=false 的等价物）：自己走到 active。
+  // 被 launch 以 LifecycleNode 起时，configure/activate 由 launch 或 system_manager 发。
+  if (node->configure() != rak::pointcloud::GpuPointCloudNode::CallbackReturn::SUCCESS ||
+    node->activate() != rak::pointcloud::GpuPointCloudNode::CallbackReturn::SUCCESS)
+  {
+    RCLCPP_ERROR(node->get_logger(), "point cloud node failed to reach active");
+    rclcpp::shutdown();
+    return 1;
+  }
+  rclcpp::spin(node->get_node_base_interface());
   rclcpp::shutdown();
   return 0;
 }

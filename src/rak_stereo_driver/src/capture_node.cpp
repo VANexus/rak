@@ -89,7 +89,9 @@ size_t NvJpegDecoder::decode_to_gpu(const unsigned char *data, size_t len, int w
 // ---------- CaptureNode ----------
 
 CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
-    : Node("eye_capture", opts), logger_(get_logger()) {
+    : rclcpp_lifecycle::LifecycleNode("eye_capture", opts), logger_(get_logger()) {}
+
+CaptureNode::CallbackReturn CaptureNode::on_configure(const rclcpp_lifecycle::State &) {
   // Declare parameters (with defaults from Config) and load config_.
   declare_parameter("device", config_.device);
   declare_parameter("sbs_width", config_.sbs_width);
@@ -118,10 +120,10 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
   eye_w_ = config_.sbs_width / 2;
   eye_h_ = config_.sbs_height;
 
-  pub_left_ = create_publisher<sensor_msgs::msg::Image>(config_.left_topic, rclcpp::SensorDataQoS());
-  pub_right_ = create_publisher<sensor_msgs::msg::Image>(config_.right_topic, rclcpp::SensorDataQoS());
-  pub_left_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(config_.left_info_topic, rclcpp::SensorDataQoS());
-  pub_right_info_ = create_publisher<sensor_msgs::msg::CameraInfo>(config_.right_info_topic, rclcpp::SensorDataQoS());
+  pub_left_ = create_lifecycle_publisher<sensor_msgs::msg::Image>(config_.left_topic, rclcpp::SensorDataQoS());
+  pub_right_ = create_lifecycle_publisher<sensor_msgs::msg::Image>(config_.right_topic, rclcpp::SensorDataQoS());
+  pub_left_info_ = create_lifecycle_publisher<sensor_msgs::msg::CameraInfo>(config_.left_info_topic, rclcpp::SensorDataQoS());
+  pub_right_info_ = create_lifecycle_publisher<sensor_msgs::msg::CameraInfo>(config_.right_info_topic, rclcpp::SensorDataQoS());
   left_camera_info_ = std::make_unique<camera_info_manager::CameraInfoManager>(
       this, "stereo_left", config_.left_camera_info_url);
   right_camera_info_ = std::make_unique<camera_info_manager::CameraInfoManager>(
@@ -131,6 +133,14 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
         logger_,
         "stereo calibration missing; CameraInfo will be published as uncalibrated until "
         "left_camera_info_url and right_camera_info_url are configured");
+  }
+
+  // CUDA 上下文必须先于任何 cudaMalloc（原实现顺序相反）。
+  try {
+    rak::gpu::init_cuda(0);
+  } catch (const std::exception & error) {
+    RCLCPP_ERROR(logger_, "init_cuda failed: %s", error.what());
+    return CallbackReturn::FAILURE;
   }
 
   // Ping-pong GPU buffer for the decoded SBS frame (pipeline overlap)
@@ -145,8 +155,6 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
   left_host_ = std::make_unique<rak::gpu::PinnedBuffer<uint8_t>>(eye_bytes);
   right_host_ = std::make_unique<rak::gpu::PinnedBuffer<uint8_t>>(eye_bytes);
 
-  rak::gpu::init_cuda(0);
-
   // nvJPEG decoder (GPU-side MJPEG decode) — owned by the decode thread.
   nvjpeg_ = std::make_unique<NvJpegDecoder>();
 
@@ -155,17 +163,60 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &opts)
   decode_stream_ = std::make_unique<rak::gpu::CudaStream>();
   copy_stream_ = std::make_unique<rak::gpu::CudaStream>();
 
-  if (!open_device() || !init_device()) {
-    throw std::runtime_error("eye: failed to initialise camera " + config_.device);
+  if (!open_device()) {
+    RCLCPP_ERROR(logger_, "eye: cannot open %s", config_.device.c_str());
+    return CallbackReturn::FAILURE;
   }
+  if (!init_device()) {
+    close_device();
+    RCLCPP_ERROR(logger_, "eye: cannot configure %s", config_.device.c_str());
+    return CallbackReturn::FAILURE;
+  }
+  RCLCPP_INFO(logger_, "eye: configured %s %dx%d SBS @ %d fps -> left/right %dx%d",
+              config_.device.c_str(), config_.sbs_width, config_.sbs_height,
+              config_.fps, eye_w_, eye_h_);
+  return CallbackReturn::SUCCESS;
+}
 
+CaptureNode::CallbackReturn CaptureNode::on_activate(const rclcpp_lifecycle::State & state) {
+  if (rclcpp_lifecycle::LifecycleNode::on_activate(state) != CallbackReturn::SUCCESS) {
+    return CallbackReturn::FAILURE;
+  }
+  if (fd_ < 0) {
+    RCLCPP_ERROR(logger_, "eye: activate before configure");
+    return CallbackReturn::FAILURE;
+  }
   running_ = true;
   decode_thread_ = std::thread([this] { decode_loop(); });
   capture_thread_ = std::thread([this] { capture_loop(); });
+  return CallbackReturn::SUCCESS;
+}
 
-  RCLCPP_INFO(logger_, "eye: capturing %s %dx%d SBS @ %d fps -> left/right %dx%d (nvJPEG GPU decode thread, pinned DMA)",
-              config_.device.c_str(), config_.sbs_width, config_.sbs_height,
-              config_.fps, eye_w_, eye_h_);
+CaptureNode::CallbackReturn CaptureNode::on_deactivate(const rclcpp_lifecycle::State & state) {
+  running_ = false;
+  decode_cv_.notify_all();  // wake decode thread so it can exit
+  if (decode_thread_.joinable()) decode_thread_.join();
+  if (capture_thread_.joinable()) capture_thread_.join();
+  return rclcpp_lifecycle::LifecycleNode::on_deactivate(state);
+}
+
+CaptureNode::CallbackReturn CaptureNode::on_cleanup(const rclcpp_lifecycle::State &) {
+  running_ = false;
+  decode_cv_.notify_all();
+  if (decode_thread_.joinable()) decode_thread_.join();
+  if (capture_thread_.joinable()) capture_thread_.join();
+  close_device();
+  nvjpeg_.reset();
+  decode_stream_.reset();
+  copy_stream_.reset();
+  for (auto & slot : sbs_gpu_) slot.reset();
+  left_host_.reset();
+  right_host_.reset();
+  pub_left_.reset();
+  pub_right_.reset();
+  pub_left_info_.reset();
+  pub_right_info_.reset();
+  return CallbackReturn::SUCCESS;
 }
 
 CaptureNode::~CaptureNode() {
@@ -395,6 +446,11 @@ void CaptureNode::capture_loop() {
       msg->data.assign(eye_data, eye_data + eye_bytes);
       return msg;
     };
+    // 未激活不发：deactivate 之后残留的帧直接丢弃（LifecyclePublisher 也会挡，
+    // 但这里连 image 的构造一起省掉）。
+    if (!pub_left_->is_activated() || !pub_right_->is_activated()) {
+      continue;
+    }
     pub_left_->publish(*make_image(config_.frame_id + "_left", left_host_->data()));
     pub_right_->publish(*make_image(config_.frame_id + "_right", right_host_->data()));
 
