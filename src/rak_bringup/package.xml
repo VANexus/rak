@@ -12,6 +12,8 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <!-- canopen_bringup.launch.py 引用 rak_canopen 的 bus/controllers 配置（ADR-0024） -->
+  <exec_depend>rak_canopen</exec_depend>
   <!-- 组装契约层（清单 / 编排入口 / 档位），本包只负责硬件全栈组合（ADR-0026） -->
   <exec_depend>rak_orchestration</exec_depend>
   <!-- 传感器链（原 rak_sensor_bringup） -->
