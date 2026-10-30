@@ -61,7 +61,15 @@ controller_server:
       vy_std: 0.10
       wz_std: 0.20
       vx_max: 0.25
-      vx_min: -0.10
+      # [AI] 2026-10-30（chassis-control-design §6"Jetson 侧配合"）：vx_min 从
+      # -0.10 提到 +0.02 —— MPPI 采样下限 = 最低平移速度钳位，避免长期爬行指令：
+      # 固件 M 法测速在慢轮 0.196 rad/s（≈0.0054 m/s 车体）时 1 count 量化占
+      # 读数 52%，长期爬行指令会打进 stick-slip 极限环（台架 82% 平坦样本实测）。
+      # 0.02 m/s ÷ r0.0275 ≈ 0.73 rad/s，远高于 stick-slip 区。
+      # basis=推断（待落地期复核）：① MPPI 从此不倒车（倒车仍可经 behavior_server
+      # 的 BackUp，走 velocity_smoother 的 min_velocity=-0.10，不经本参数）；
+      # ② vx+vy 对角组合下个别轮仍可能接近零速，vy 侧钳位待落地期一起标定。
+      vx_min: 0.02
       vy_max: 0.15
       vy_min: -0.15
       wz_max: 0.50

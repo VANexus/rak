@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from rak_metrics.stats import RateMeter, Window, percentile
+from rak_metrics.stats import FlatnessTracker, RateMeter, Window, percentile
 
 
 def test_percentile_matches_linear_interpolation():
@@ -57,3 +57,48 @@ def test_nan_samples_are_ignored():
     window.add(float("nan"))
     window.add(5.0)
     assert window.summary()["count"] == 1
+
+
+# ---- FlatnessTracker（低速质量指标，chassis-control-design §6） ----
+
+def test_flatness_counts_exact_repeats_and_jumps():
+    tracker = FlatnessTracker(size=10)
+    for value in (1.0, 1.0, 1.0, 1.4, 1.4):
+        tracker.observe(value)
+    s = tracker.summary()
+    # 4 个相邻对里 3 对完全相等（M 法台阶化的指纹）
+    assert s["flat_ratio"] == pytest.approx(3 / 4)
+    assert s["flat_max_jump"] == pytest.approx(0.4)
+    assert s["flat_jump_events"] == 1
+
+
+def test_flatness_moving_ratio_ignores_standing_still():
+    """停着不动样本全是平坦的，flat_ratio 会虚高——moving 档只看有一端 |v|>eps 的样本。"""
+    tracker = FlatnessTracker(size=10, moving_eps=0.05)
+    for value in (0.0, 0.0, 0.0, 0.0):   # 静止：不该计入 moving 档
+        tracker.observe(value)
+    for value in (0.2, 0.2, 0.5, 0.5):   # 低速爬行：4 对里 2 对平坦
+        tracker.observe(value)
+    s = tracker.summary()
+    # moving 档 = (0→0.2 非平坦), (0.2→0.2 平坦), (0.2→0.5 非平坦), (0.5→0.5 平坦)
+    assert s["flat_ratio_moving"] == pytest.approx(0.5)
+    assert s["flat_ratio"] > s["flat_ratio_moving"]
+
+
+def test_flatness_sliding_window_drops_old_samples():
+    tracker = FlatnessTracker(size=4)
+    for value in (1.0, 2.0, 3.0, 4.0, 5.0, 5.0):
+        tracker.observe(value)
+    s = tracker.summary()
+    assert s["flat_count"] == 4
+    assert s["flat_ratio"] == pytest.approx(1 / 4)
+    assert s["flat_max_jump"] == pytest.approx(1.0)
+
+
+def test_flatness_ignores_nan_and_first_sample():
+    tracker = FlatnessTracker(size=10)
+    tracker.observe(float("nan"))
+    tracker.observe(1.0)
+    s = tracker.summary()
+    assert s["flat_count"] == 0
+    assert "flat_ratio" not in s

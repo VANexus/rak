@@ -5,6 +5,11 @@
     curl -s http://127.0.0.1:8088/metrics | python3 -m json.tool
 
 `supervised:=true` 时由 `system_manager` 驱动生命周期，本文件不自启。
+
+slip_watch（抗打滑 L1 检测，firmware-capability-spec §7.2）：默认随本文件
+启动，只观测（残差 p50/p95 进 /rak/metrics），sigma_baseline 未标定前
+不产生打滑判定。L3 的 /cmd_vel 限幅通路默认关闭（gate_enabled:=false），
+bringup 重接线属于落地期动作（架空期真打滑不可复现）。
 """
 
 from launch import LaunchDescription
@@ -25,6 +30,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "probes", default_value="",
             description="YAML 列表，覆盖默认探针（话题/类型/标称频率/依据）"),
+        # [AI] 抗打滑阈值（§7.2）：sigma_baseline=0 表示未标定——由首日基线
+        # （本节点发布的 residual_p50/p95_mrad_s）回填后再启用判定。
+        DeclareLaunchArgument("slip_sigma_baseline", default_value="0.0"),
+        DeclareLaunchArgument(
+            "slip_gate", default_value="false",
+            description="L3 /cmd_vel 限幅通路（落地期重接线时才开）"),
         *managed(
             package="rak_metrics",
             executable="rak_metrics",
@@ -34,6 +45,18 @@ def generate_launch_description():
                 "http_port": ParameterValue(LaunchConfiguration("http_port"), value_type=int),
                 "http_host": LaunchConfiguration("http_host"),
                 "probes": LaunchConfiguration("probes"),
+            }],
+        ),
+        *managed(
+            package="rak_metrics",
+            executable="slip_watch",
+            name="slip_watch",
+            output="screen",
+            parameters=[{
+                "sigma_baseline": ParameterValue(
+                    LaunchConfiguration("slip_sigma_baseline"), value_type=float),
+                "gate_enabled": ParameterValue(
+                    LaunchConfiguration("slip_gate"), value_type=bool),
             }],
         ),
     ])

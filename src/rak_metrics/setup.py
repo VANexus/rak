@@ -22,6 +22,7 @@ setup(
     entry_points={
         "console_scripts": [
             "rak_metrics = rak_metrics.node:main",
+            "slip_watch = rak_metrics.slip_watch:main",
         ],
     },
 )

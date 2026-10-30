@@ -33,7 +33,7 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from rak_lifecycle.managed_node import ManagedNode
 
-from .stats import RateMeter, Window
+from .stats import FlatnessTracker, RateMeter, Window
 
 #: 探针类型 → 消息类（模块名, 类名）。缺包时跳过该探针，不整体失败。
 _PROBE_TYPES = {
@@ -55,7 +55,11 @@ DEFAULT_PROBES = [
     {"name": "odom", "topic": "/odometry/filtered", "type": "odom", "nominal_hz": 30.0,
      "basis": "measured", "note": "2026-10-29 现场 30.0 Hz"},
     {"name": "joint_states", "topic": "/joint_states", "type": "joint_state",
-     "nominal_hz": 100.0, "basis": "nominal", "note": "控制器标称"},
+     "nominal_hz": 100.0, "basis": "nominal", "note": "控制器标称",
+     # [AI] 低速质量指标（chassis-control-design §6）：四轮速度反馈的台阶统计。
+     # watch=关节名子串匹配；moving_eps(rad/s) 区分"在动"与"停着"——basis
+     # placeholder，待落地期用首日基线标定。
+     "flatness": True, "watch": ["wheel"], "moving_eps": 0.05},
     {"name": "cmd_vel", "topic": "/cmd_vel", "type": "twist", "nominal_hz": 20.0,
      "basis": "nominal", "note": "Nav2 controller 默认 20 Hz"},
 ]
@@ -86,6 +90,13 @@ class MetricProbe:
         self.received = 0
         self.rate_hz = 0.0
         self._last_receive_s: float | None = None
+        # [AI] 低速质量指标（chassis-control-design §6）：joint_state 探针可选
+        # 开启平坦样本统计（flatness/watch/moving_eps，见 DEFAULT_PROBES）。
+        self.flatness: FlatnessTracker | None = None
+        if spec.get("flatness"):
+            self.flatness = FlatnessTracker(
+                WINDOW, moving_eps=float(spec.get("moving_eps", 0.05)))
+            self._watch = tuple(str(w) for w in spec.get("watch", ()))
 
     def observe(self, now_s: float, stamp_s: float | None) -> None:
         self.received += 1
@@ -98,10 +109,18 @@ class MetricProbe:
             self.age.add((now_s - stamp_s) * 1e3)
             self.age.observe_gap(stamp_s)
 
+    def observe_joint_state(self, name: str, velocity: float | None) -> None:
+        """喂平坦样本统计（joint_state 探针专用；watch 子串匹配关节名）。"""
+        if self.flatness is None or velocity is None:
+            return
+        if self._watch and not any(w in name for w in self._watch):
+            return
+        self.flatness.observe(float(velocity))
+
     def summary(self) -> dict[str, Any]:
         age = self.age.summary()
         interval = self.interval.summary()
-        return {
+        out = {
             "topic": self.topic,
             "rate_hz": round(self.rate_hz, 2),
             "received": self.received,
@@ -113,6 +132,9 @@ class MetricProbe:
             "basis": self.basis,
             "note": self.note,
         }
+        if self.flatness is not None:
+            out.update(self.flatness.summary())
+        return out
 
     def age_budget_ms(self) -> float | None:
         """p95 超过它就告警：2 个标称周期 + 20 ms 调度余量。"""
@@ -222,6 +244,12 @@ class MetricsNode(ManagedNode):
         if header is not None and hasattr(header, "stamp"):
             stamp_s = header.stamp.sec + header.stamp.nanosec * 1e-9
         probe.observe(now_s, stamp_s)
+        # [AI] joint_state 探针：喂平坦样本统计（低速质量指标，§6）
+        if probe.flatness is not None and probe.type_name == "joint_state":
+            names = getattr(message, "name", None) or []
+            velocities = getattr(message, "velocity", None) or []
+            for name, vel in zip(names, velocities):
+                probe.observe_joint_state(name, vel)
         self.mark_seen(probe.topic)
 
     # ----------------------------------------------------------------- publish

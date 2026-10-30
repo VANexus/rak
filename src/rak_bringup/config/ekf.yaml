@@ -30,6 +30,16 @@
 #   - imu0 只用 vyaw: 陀螺 Z 是航向角速率权威; 无磁力计不做绝对航向;
 #     加速度暂不用(零偏未标定)
 #   - imu_link 帧变换来自 URDF (base_link->imu_link 固定关节, 安装姿态 TODO(measured))
+#
+# [AI] 抗打滑 L2 融合保护（firmware-capability-spec §7.2，2026-10-30）：
+#   robot_localization 不支持运行期动态改协方差，§7.2 的"打滑嫌疑期间轮式
+#   odom 协方差膨胀 ×(1+k·残差²)"做不了动态版。按 §7.2 的既定回退：
+#   轮式 odom1 就位后，其 yaw/vyaw 一律排除（上方注释已有团队规矩），x/y/vx
+#   可用；slip_watch（rak_metrics 包）报 slip_suspected=1 期间的静态保守回退是：
+#     1) odom1_differential: true（位置增量改差分，吞掉打滑期间的绝对漂移），或
+#     2) odom1_covariance 的 x/y/vx 对角 ×N（N 取 10 起步，落地期标定）后重启 EKF。
+#   两者都是重启级切换，不做自动切换——L3 的 /cmd_vel 限幅（slip_watch gate）
+#   才是运行期防线。真打滑落地期才可复现，阈值标定排在那里。
 
 ekf_filter_node:
   ros__parameters:
