@@ -31,6 +31,9 @@ setup(
             "tts_node = rak_speech.tts_node:main",
             # [AI] wake event DOA -> RViz arrow (sensors.launch.py single view)
             "wake_doa_viz = rak_speech.wake_doa_viz:main",
+            # [AI] speaker id: /audio -> /speech/speaker. Online clustering,
+            # no enrolment profiles -- labels are session-scoped (S1, S2, ...).
+            "speaker_node = rak_speech.speaker_node:main",
         ]
     },
 )

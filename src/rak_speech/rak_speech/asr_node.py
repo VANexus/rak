@@ -116,14 +116,17 @@ class SpeechAsr(Node):
 
     def _find_model(self, starts: tuple[Path, ...] | None = None) -> str:
         """Locate the ASR model beside the other model assets, the same way the
-        decider does -- an installed copy of this module cannot use `__file__`.
+        decider does -- an installed copy of this module cannot use `__file__`
+        as the only anchor, so both the module path and cwd are walked (the
+        zipformer branch once walked only cwd: launching the stack from $HOME
+        made a perfectly good model look missing).
 
         Assets live under `data/models/` at the repo root since ADR-0013 moved
         `brain/`; the streaming zipformer (14M, sherpa-onnx) lives next to the
         kokoro TTS under `acoustic/models/`. `-p model_dir:=` overrides both.
         """
         if self._engine == "zipformer":
-            for start in starts or (Path.cwd(),):
+            for start in starts or (Path(__file__).resolve().parent, Path.cwd()):
                 for base in (start, *start.parents):
                     candidate = base / "acoustic" / "models"
                     if candidate.is_dir():

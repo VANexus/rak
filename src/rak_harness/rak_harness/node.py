@@ -66,6 +66,11 @@ class HarnessNode(Node):
     def __init__(self) -> None:
         super().__init__("harness")
         self.declare_parameter("attention_sec", 12.0)
+        # 唤醒应答的两道闸(只压应答,不压注意力窗口/方位箭头):
+        # 板阈值 500 贴地,环境语音会擦线误触发;分数闸按实测缝调(误触发
+        # 501-546、真唤醒 589+),去抖压连环触发。
+        self.declare_parameter("ack_min_score", 650.0)
+        self.declare_parameter("ack_cooldown_sec", 4.0)
         self.declare_parameter("persona_file", "")
         self.declare_parameter("proposal_ttl_sec", 20.0)
         self.declare_parameter("cloud_model", "deepseek-chat")
@@ -77,7 +82,11 @@ class HarnessNode(Node):
         g = lambda name: self.get_parameter(name).value  # noqa: E731
         persona_file = str(g("persona_file")) or self._default_persona()
         self._persona = load_persona(persona_file)
-        self._engine = DialogueEngine(attention_sec=float(g("attention_sec")))
+        self._engine = DialogueEngine(
+            attention_sec=float(g("attention_sec")),
+            ack_min_score=float(g("ack_min_score")),
+            ack_cooldown_sec=float(g("ack_cooldown_sec")),
+        )
         self._ttl = float(g("proposal_ttl_sec"))
         self._cloud = HarnessCloud(
             model=str(g("cloud_model")),
@@ -198,9 +207,12 @@ class HarnessNode(Node):
         with self._lock:
             self._snapshot.wake_angle = float(msg.angle)
             self._snapshot.wake_beam = int(msg.beam)
-            self._engine.on_wake(now=time.time())
+            out = self._engine.on_wake(now=time.time(), score=float(msg.score))
         self.get_logger().info(
             f"attentive: '{msg.keyword}' angle={msg.angle:.0f}° beam={msg.beam}")
+        # 引擎在唤醒时会带应答指令(ack_wake,带分数闸与去抖);不执行的话,
+        # 听到名字却不吭声。
+        self._execute_commands(out)
 
     def _on_intent(self, msg: String) -> None:
         if self._agent_active:

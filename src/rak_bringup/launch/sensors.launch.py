@@ -11,7 +11,8 @@ What lands in RViz (config: config/sensors_rviz.rviz)
     depth cam  /camera/depth/image_raw, /camera/color/image_raw,
                /camera/depth/points (PointCloud2, built by depth_image_proc)
     IMU        /imu/data_raw (rviz_imu_plugin, LSM6DSRTR @1kHz, frame imu_link)
-    mic array  /wake_doa (Marker) -- a direction arrow, see rak_speech/wake_doa_viz;
+    mic array  /wake_doa (Marker) -- live bearing arrow + fading event trail
+               (repainted continuously, see rak_speech/wake_doa_viz);
                audio itself has no RViz display, the DOA angle is its picture.
     wheel odom /mecanum_drive_controller/odom (Odometry arrows, needs chassis:=true)
 
@@ -211,6 +212,12 @@ def generate_launch_description():
                 "frame_id": "imu_link",
                 "topic": "/imu/data_raw",
                 "axis_map": "-z,-x,y",
+                # [AI] 2026-10-29: 陀螺零偏，**本机静置 60 s 实测**（rad/s），
+                # 在 axis_map 之后施加。不补的后果：Z 轴 −0.27 °/s →
+                # 10 min 漂 −163°，EKF 的 vyaw 直接吃这个误差，地图整体转歪。
+                # robot_localization 的 EKF **不会**自己估计零偏，只能在这里补。
+                # 重测：python3 debug/bias_measure.py 60（车必须完全静止）
+                "gyro_bias": "-0.002902,-0.006872,-0.002291",
             }],
             condition=IfCondition(LaunchConfiguration("imu")),
         ),
@@ -223,7 +230,8 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration("mic")),
         ),
         # The board only reports a bearing together with a wake event, and audio has
-        # no RViz display -- this arrow is how the array shows up in the view.
+        # no RViz display -- wake_doa_viz holds the latest bearing and repaints it
+        # (plus a fading trail of recent wakes) so the view stays live.
         Node(
             package="rak_speech",
             executable="wake_doa_viz",

@@ -22,18 +22,10 @@ Four components, each individually switchable (capture/wake/tts/playback args):
   (rak_interfaces/WakeEvent) and latched `/speech/vtn_ready`. The board is the
   only wake-word authority; it reports sound-source angle **only together with
   a wake event** (firmware behaviour, docs/microphone_array.md).
-- `tts_node` (rak_speech, offline) turns `/speech/say` requests into raw 24 kHz
-  mono S16 PCM on `/audio_out`, in three layers (ADR-0018): a **instant layer**
-  plays pre-synthesized wav assets (`acoustic/models/quick/*.wav`, keyed by the
-  persona templates; also driven by `/speech/quick`) with no inference at all; a
-  **content layer** synthesizes everything else with `qwentts.cpp`
-  (`backend:=qwentts`, speaker `serena`, resident local server, streaming PCM);
-  and a **response budget** (first frame <= `tts_first_frame_budget`) drops an
-  over-budget sentence and falls back to an instant asset. `sherpa` (kokoro/vits
-  CPU) and `cosyvoice` (GPU) remain selectable backends. `audio_play`
-  (audio_common) feeds `/audio_out` to the USB speaker through
-  `plughw:CARD=<id>` (device *id*, not index). Synthesis is queued: the service
-  callback only enqueues (the instant layer is the exception -- it must fire now).
+- `tts_node` (rak_speech, sherpa-onnx, offline) turns `/speech/say` requests
+  into raw 24 kHz mono S16 PCM on `/audio_out`; `audio_play` (audio_common)
+  feeds that to the USB speaker through `plughw:CARD=<id>` (device *id*, not
+  index). Synthesis is queued: the service callback only enqueues.
 
 The array does beamforming on board; its UAC interface already carries the
 processed single channel, so no host-side beamforming is involved. Measured
@@ -51,11 +43,8 @@ from launch_ros.parameter_descriptions import ParameterValue
 ARRAY_DEVICE = "hw:CARD=XFMDPV0018"
 #: USB speaker (C-Media). plughw lets ALSA resample/rate-convert for us.
 SPEAKER_DEVICE = "plughw:CARD=Device"
-#: kokoro-multi-lang-v1_1 / qwentts.cpp both emit 24 kHz; audio_play must
-#: declare the same rate.
+#: kokoro-multi-lang-v1_1 emits 24 kHz; audio_play must declare the same rate.
 TTS_SAMPLE_RATE = "24000"
-#: Repo-local qwentts.cpp runtime (gitignored tools/). Empty = node discovers it.
-QWENTTS_SERVER = ""
 
 
 def generate_launch_description():
@@ -95,16 +84,21 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "tts_backend",
-                default_value="qwentts",
-                description=(
-                    "TTS backend: qwentts (qwentts.cpp + serena, offline, 默认) | "
-                    "sherpa (kokoro CPU) | cosyvoice (GPU, emotional)."
-                ),
+                default_value="sherpa",
+                description="TTS backend: sherpa (kokoro CPU) | cosyvoice (GPU, emotional).",
             ),
             DeclareLaunchArgument(
                 "wake",
                 default_value="true",
                 description="false: no vtn_node (no /speech/wake from the array).",
+            ),
+            DeclareLaunchArgument(
+                "speaker",
+                default_value="true",
+                description=(
+                    "false: no speaker_node (speaker id needs capture:=true so "
+                    "/audio exists; roster = files in speakers_dir, reloaded live)."
+                ),
             ),
             DeclareLaunchArgument(
                 "tts",
@@ -140,51 +134,6 @@ def generate_launch_description():
                     "Sample rate tts_node publishes; audio_play declares it so "
                     "GStreamer can negotiate. kokoro=24000, vits-aishell3=8000."
                 ),
-            ),
-            DeclareLaunchArgument(
-                "tts_speaker",
-                default_value="serena",
-                description="qwentts 音色(qwentts.cpp CustomVoice speaker;2026-10-17 定稿 serena)。",
-            ),
-            DeclareLaunchArgument(
-                "tts_instruct",
-                default_value="",
-                description="qwentts 默认语气档(instruct);空=节点默认「清晰自然、亲切温和」。",
-            ),
-            DeclareLaunchArgument(
-                "qwentts_server",
-                default_value=QWENTTS_SERVER,
-                description="qwentts.cpp 的 tts-server 可执行文件;空=仓库内 tools/qwentts.cpp/build/tts-server。",
-            ),
-            DeclareLaunchArgument(
-                "qwentts_model",
-                default_value="",
-                description="talker GGUF;空=自动挑 tools/qwentts.cpp/models/qwen-talker-*-customvoice-*.gguf(Q4_K_M 优先)。",
-            ),
-            DeclareLaunchArgument(
-                "qwentts_codec",
-                default_value="",
-                description="codec GGUF;空=自动挑 tools/qwentts.cpp/models/qwen-tokenizer-*.gguf。",
-            ),
-            DeclareLaunchArgument(
-                "qwentts_device",
-                default_value="CPU",
-                description="qwentts 计算设备:CPU | CUDA0(GPU 路径待上游修复 qwentts.cpp#40)。",
-            ),
-            DeclareLaunchArgument(
-                "qwentts_max_seq",
-                default_value="2048",
-                description="qwentts KV cache 长度(=QT_MAX_SEQ);4096≈896MB,短句场景 1024~2048 足够。",
-            ),
-            DeclareLaunchArgument(
-                "quick_spec",
-                default_value="",
-                description="即时反应层素材清单;空=仓库内 src/rak_speech/config/quick_phrases.toml。",
-            ),
-            DeclareLaunchArgument(
-                "quick_wav_dir",
-                default_value="",
-                description="即时反应层 wav 目录;空=仓库内 acoustic/models/quick(缺素材即时层静默关闭)。",
             ),
             DeclareLaunchArgument(
                 "speaker_device",
@@ -250,6 +199,13 @@ def generate_launch_description():
             ),
             Node(
                 package="rak_speech",
+                executable="speaker_node",
+                name="speaker_id",
+                output="screen",
+                condition=IfCondition(LaunchConfiguration("speaker")),
+            ),
+            Node(
+                package="rak_speech",
                 executable="tts_node",
                 name="speech_tts",
                 output="screen",
@@ -262,17 +218,6 @@ def generate_launch_description():
                         "sid": ParameterValue(
                             LaunchConfiguration("tts_sid"), value_type=int
                         ),
-                        "speaker": LaunchConfiguration("tts_speaker"),
-                        "instruct": LaunchConfiguration("tts_instruct"),
-                        "qwentts_server": LaunchConfiguration("qwentts_server"),
-                        "qwentts_model": LaunchConfiguration("qwentts_model"),
-                        "qwentts_codec": LaunchConfiguration("qwentts_codec"),
-                        "qwentts_device": LaunchConfiguration("qwentts_device"),
-                        "qwentts_max_seq": ParameterValue(
-                            LaunchConfiguration("qwentts_max_seq"), value_type=int
-                        ),
-                        "quick_spec": LaunchConfiguration("quick_spec"),
-                        "quick_wav_dir": LaunchConfiguration("quick_wav_dir"),
                     }
                 ],
             ),

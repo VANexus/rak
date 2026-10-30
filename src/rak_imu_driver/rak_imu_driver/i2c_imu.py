@@ -174,6 +174,13 @@ class I2cImuNode(Node):
         # REP-103（x 前 / y 左 / z 上）。默认值是 **本机实测校准值**，不是通用值。
         self.declare_parameter('axis_map', '-z,-x,y')
         self.axis_map = parse_axis_map(self.get_parameter('axis_map').value)
+        # [AI] 2026-10-29: 陀螺零偏补偿。三个数单位 rad/s，作用在 **发布坐标系**
+        # 上（即 axis_map 之后），所以直接减、不用再映射。默认 0 = 不补偿。
+        self.declare_parameter('gyro_bias', '0,0,0')
+        self.gyro_bias = tuple(
+            float(v) for v in str(self.get_parameter('gyro_bias').value).split(','))
+        if len(self.gyro_bias) != 3:
+            raise ValueError('gyro_bias 需要 3 个数: x,y,z')
 
         device = str(self.get_parameter('device').value)
         address = int(self.get_parameter('address').value)
@@ -235,6 +242,7 @@ class I2cImuNode(Node):
             return
         gx, gy, gz, ax, ay, az = struct.unpack_from('<6h', buf)
         gyro = map_vec((gx * GYRO_SCALE, gy * GYRO_SCALE, gz * GYRO_SCALE), self.axis_map)
+        gyro = tuple(v - b for v, b in zip(gyro, self.gyro_bias))
         accel = map_vec((ax * ACCEL_SCALE, ay * ACCEL_SCALE, az * ACCEL_SCALE), self.axis_map)
         m = Imu()
         m.header.stamp = self.get_clock().now().to_msg()
