@@ -14,6 +14,9 @@ setup(
             # EDS 副本必须一起装：门禁比较的就是"契约派生 vs 同一份 EDS"，
             # 只装 JSON 的话安装态跑 eds_gate 必然报"缺少 EDS 副本"。
             "config/chassis.eds", "config/arm.eds",
+            # 主站与 ros2_control 映射（ADR-0024）：帧级参数只在 EDS 里，
+            # 这里只有总线级参数与对象→接口映射。
+            "config/bus.yaml", "config/canopen_controllers.yaml",
         ]),
     ],
     install_requires=["setuptools", "PyYAML"],

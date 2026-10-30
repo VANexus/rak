@@ -26,8 +26,11 @@ NMT_COB_ID = 0x000
 EMCY_BASE = 0x080
 TPDO_BASE = 0x180
 RPDO_BASE = 0x200
-TGA_BASE = 0x580        # SDO 客户端→服务端（我们发）
-RGA_BASE = 0x600       # SDO 服务端→客户端
+#: SDO 的方向以**从站的 SDO 服务端**为参照（EDS `1200sub1` 原文：
+#: "COB-ID client to server (rx) = 0x600+$NODEID"）。写反一个基址就是往空 ID 发请求，
+#: 所以这里不用 TGA/RGA 这类简称，也不写"我们发/我们收"——只写服务端语义。
+SDO_SRV_TX_BASE = 0x580  # 服务端→客户端：Jetson 在 0x580+node **收** SDO 应答
+SDO_SRV_RX_BASE = 0x600  # 客户端→服务端：Jetson 往 0x600+node **发** SDO 请求
 HEARTBEAT_BASE = 0x700
 PDO_DISABLE_BIT = 0x80000000   # bit31 = 该 PDO 未启用（canopen_gate.py 第 4 项检查同一条）
 
@@ -138,8 +141,8 @@ class NodeContract:
         ids = {
             HEARTBEAT_BASE + self.node_id: f"{self.node}.heartbeat",
             EMCY_BASE + self.node_id: f"{self.node}.emcy",
-            TGA_BASE + self.node_id: f"{self.node}.sdo_tx",
-            RGA_BASE + self.node_id: f"{self.node}.sdo_rx",
+            SDO_SRV_TX_BASE + self.node_id: f"{self.node}.sdo_srv_tx",
+            SDO_SRV_RX_BASE + self.node_id: f"{self.node}.sdo_srv_rx",
         }
         for item in self.pdos:
             ids[item.cob_id] = f"{self.node}.{item.name}"

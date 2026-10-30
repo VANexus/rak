@@ -1,0 +1,64 @@
+# ros2_control × CANopen v5（ADR-0024 §3）
+#
+# ⚠️ 状态：**未编译、未实机验证**。接口名按"对象索引即接口名"的原则书写，
+#    这是 ADR-0022 唯一允许的命名方式（不新造语义名，避免第四份帧表）。
+#    上机第一步：`ros2 control list_hardware_interfaces`，把实际暴露的名字抄回本文件，
+#    差异写进 ADR-0024 待闭合项 #2。
+#
+# 与 `chassis_controllers.yaml` 的关系：**互斥**。那份走 v4 `CanSession`，
+# 这份走 ros2_control 的 CANopen 硬件插件；同一总线不得同时起两个主站。
+
+controller_manager:
+  ros__parameters:
+    update_rate: 100           # 与 v4 档一致；25 kHz 闭环在 MCU 里，这里只是命令刷新率
+    use_sim_time: false
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    mecanum_drive_controller:
+      type: mecanum_drive_controller/MecanumDriveController
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+# CANopen 硬件插件（名字可被 launch 的 hardware_plugin 参数覆盖）
+canopen_hardware:
+  ros__parameters:
+    # 一个 RobotSystem 同时管两个从站：node 1（底盘 4 轮）+ node 2（臂 6 轴 + 夹爪）
+    bus_config: bus.yaml
+    # 轮速命令：0x2000..0x2003 INT16，0.01 rad/s（[SPEC] 对象表）
+    # 关节命令：0x2100..0x2106 UINT16，0.1°
+    # 反馈：0x2010.. / 0x2110..
+    joints:
+      - {name: wheel_front_left_joint,  command: "0x2000", state: "0x2010", factor: 0.01}
+      - {name: wheel_rear_left_joint,   command: "0x2001", state: "0x2011", factor: 0.01}
+      - {name: wheel_rear_right_joint,  command: "0x2002", state: "0x2012", factor: 0.01}
+      - {name: wheel_front_right_joint, command: "0x2003", state: "0x2013", factor: 0.01}
+      - {name: joint_1, command: "0x2100", state: "0x2110", factor: 0.1}
+      - {name: joint_2, command: "0x2101", state: "0x2111", factor: 0.1}
+      - {name: joint_3, command: "0x2102", state: "0x2112", factor: 0.1}
+      - {name: joint_4, command: "0x2103", state: "0x2113", factor: 0.1}
+      - {name: joint_5, command: "0x2104", state: "0x2114", factor: 0.1}
+      - {name: joint_6, command: "0x2105", state: "0x2115", factor: 0.1}
+      - {name: gripper_joint, command: "0x2106", state: "0x2116", factor: 0.1}
+    # 命令活性（deadman）：cmd_seq 在 100 ms 内必须变化，且 cmd_flags.bit0=1，
+    # 且节点 Operational（[V5] §5）。这一条由主站实现，硬件插件只负责写 PDO。
+    command_liveness:
+      seq_object: "0x2040"
+      flags_object: "0x2041"
+      enable_bit: 0
+      window_ms: 100
+
+mecanum_drive_controller:
+  ros__parameters:
+    # ADR-0007：机体轴级限幅在这里；轮级等比饱和由 MCU 承担
+    reference_timeout: 0.2     # = lease 200 ms（P0-2 的签字值）
+    enable_odom_tf: false      # ADR-0015：odom→base 归 EKF/slam，控制器不许发
+    wheel_separation_x: 0.0    # TODO(measured)：几何占位，禁止当事实引用
+    wheel_separation_y: 0.0
+    wheel_radius: 0.0
+
+arm_controller:
+  ros__parameters:
+    joints: [joint_1, joint_2, joint_3, joint_4, joint_5, joint_6]
+    command_interfaces: [position]
+    state_interfaces: [position]

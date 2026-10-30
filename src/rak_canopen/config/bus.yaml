@@ -1,0 +1,36 @@
+# CANopen v5 总线级配置（ADR-0024）—— 主站 + 两个从站
+#
+# ⚠️ 状态：**schema 未在本机验证**（桌面机没有 ros2_canopen）。本文件的键名按
+#    ros2_canopen Jazzy 分支的 `DeviceContainer` 约定书写；上机第一件事是用
+#    `ros2 run canopen_core canopen_core_node --ros-args --params-file <本文件>`
+#    核对它是否被接受，差异写回本文件与 ADR-0024 待闭合项 #1。
+#
+# 为什么要有这份文件：帧级参数（COB-ID/PDO 布局/量纲）全部由 EDS 决定，
+# 这里只放**总线级**参数。把 COB-ID 抄进来就是第四份帧表（ADR-0022 的原罪）。
+
+master:
+  node_id: 127                 # [V5] §1：Jetson = NMT master，node 127
+  baudrate: 1000000            # [V5] §1：1 Mbps，CAN 2.0A / 11 bit / 不开 FD
+  # SYNC 由主站产生，2 ms（500 Hz）。这是**唯一**允许在配置里出现的周期值，
+  # 各 PDO 的实际速率由 EDS 的 transmission type 推导（contract.py 已算过）。
+  sync_period_us: 2000
+  # 主站自己是周期写入者：它的存活必须进健康聚合（ADR-0020 修订 (a)），
+  # 否则"Jetson 侧 SYNC 停了"在总线上表现为所有同步 PDO 一起消失。
+  heartbeat_producer_ms: 1000
+
+nodes:
+  - node_id: 1                 # [V5] §1：底盘
+    name: chassis
+    dcf: chassis.eds           # 与 SSOT JSON 同批生成（docs/canopen/chassis.json）
+    # 心跳消费者超时：按契约 consume_timeout_ms: 500 声明；主站侧是否真的判死待实测。
+    heartbeat_consumer_ms: 500
+    # NMT：上电停在 Pre-operational，主站 Start 后才允许 PDO（这就是链路层的
+    # configure/activate 分界，见 ADR-0020 修订 (a)）。
+    nmt_start: true
+
+  - node_id: 2                 # [V5] §1：机械臂
+    name: arm
+    dcf: arm.eds
+    heartbeat_consumer_ms: 500
+    nmt_start: true
+    # 已知缺口：arm.json 没有 identity 段，运行版本一律读 SDO 0x2F00（docs/canopen-bitfields.md §3）

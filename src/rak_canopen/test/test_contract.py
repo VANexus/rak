@@ -38,8 +38,10 @@ def test_chassis_cob_ids_match_the_spec_table(contract):
     assert chassis.node_id == 1
     ids = chassis.cob_ids()
     assert ids[0x701] == "chassis.heartbeat"     # [V5] §3 心跳 0x700+ID
-    assert ids[0x581] == "chassis.sdo_tx"        # SDO 客户端→服务端 0x580+ID
-    assert ids[0x601] == "chassis.sdo_rx"
+    # SDO 方向以"从站的 SDO 服务端"为参照，实测出处是台架工具本身：
+    # tools/canopen_bringup.py 往 0x600+node 发请求、从 0x580+node 收应答（读回 "R73"）。
+    assert ids[0x581] == "chassis.sdo_srv_tx"    # 服务端→客户端：Jetson 在这里收
+    assert ids[0x601] == "chassis.sdo_srv_rx"    # 客户端→服务端：Jetson 往这里发
 
 
 def test_arm_cob_ids_match_the_spec_table(contract):
