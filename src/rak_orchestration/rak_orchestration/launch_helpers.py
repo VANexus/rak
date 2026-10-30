@@ -25,6 +25,7 @@ from launch import Action
 from launch.actions import EmitEvent, RegisterEventHandler
 from launch.conditions import UnlessCondition
 from launch.event_handlers import OnProcessStart
+from launch.events import matches_action
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LifecycleNode
 from launch_ros.event_handlers import OnStateTransition
@@ -71,7 +72,10 @@ def managed(
         RegisterEventHandler(
             OnProcessStart(
                 target_action=node,
-                on_start=[EmitEvent(ChangeState(node, Transition.TRANSITION_CONFIGURE))],
+                on_start=[EmitEvent(event=ChangeState(
+                lifecycle_node_matcher=matches_action(node),
+                transition_id=Transition.TRANSITION_CONFIGURE,
+            ))],
             ),
             condition=condition,
         ),
@@ -80,7 +84,10 @@ def managed(
                 target_lifecycle_node=node,
                 start_state="configuring",
                 goal_state="inactive",
-                entities=[EmitEvent(ChangeState(node, Transition.TRANSITION_ACTIVATE))],
+                entities=[EmitEvent(event=ChangeState(
+                    lifecycle_node_matcher=matches_action(node),
+                    transition_id=Transition.TRANSITION_ACTIVATE,
+                ))],
             ),
             condition=condition,
         ),
