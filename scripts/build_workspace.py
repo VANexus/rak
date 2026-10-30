@@ -41,7 +41,10 @@ def main() -> int:
     profile = profiles.load(args.profile)
     extra = [item for item in args.colcon_args if item != "--"]
 
-    command = ["colcon", "build", "--symlink-install"]
+    # 只发现 src/（自有包 + src/vendor 厂商栈）。仓库根下还有 tools/（orbbec SDK
+    # 示例等非 ROS 内容），默认全仓扫描会把它们当成包——OrbbecSDK-Samples 就是
+    # 这样混进构建图并整条链 aborted 的。
+    command = ["colcon", "build", "--symlink-install", "--base-paths", "src"]
     # skip 只影响"要不要构建"，不影响依赖声明；colcon 允许过滤不存在的包名。
     if profile.skip_packages:
         command += ["--packages-skip", *profile.skip_packages]
