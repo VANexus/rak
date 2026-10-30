@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rak_metrics</name>
+  <version>0.1.0</version>
+  <description>Latency/age/drop aggregator (p50/p95/p99) for the whole stack, published as diagnostic_msgs plus a tiny HTTP endpoint. Also owns the rosbag record profile, because "no recording → no replay → no offline evolution".</description>
+  <maintainer email="xrak@example.com">xrak</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+  <buildtool_depend>ament_cmake_pytest</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>rak_lifecycle</exec_depend>
+  <!-- launch 走 managed() 助手（ADR-0026） -->
+  <exec_depend>rak_orchestration</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

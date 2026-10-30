@@ -1,0 +1,66 @@
+# rosbag 录制白名单（"没有录制就没有回放，没有回放就没有上层逻辑离线演进"）
+#
+# 为什么是白名单而不是 `-a`：整机话题加起来在 1080p 双目 + 点云下能到 200+ MB/s，
+# 一盘录 10 分钟就把 Orin 的 eMMC 写满，且回放时没人知道哪条是噪声。
+#
+# 用法：python3 scripts/record_session.py --profile bringup --duration 300
+#       （脚本读本文件生成 ros2 bag record 命令行，不手抄话题名）
+
+profiles:
+  # 最小集：调上层逻辑时够用，约 1–3 MB/s
+  logic:
+    description: 任务/决策/运动链，不含图像
+    topics:
+      - /tf
+      - /tf_static
+      - /scan
+      - /imu/data_raw
+      - /odometry/filtered
+      - /joint_states
+      - /cmd_vel
+      - /cmd_vel_nav
+      - /task/status
+      - /brain/decision
+      - /harness/trace
+      - /speech/transcript
+      - /speech/intent
+      - /diagnostics
+      - /rak/metrics
+    max_size_mb: 4096
+    split_mb: 512
+
+  # 感知调参：加图像与点云，约 30–80 MB/s，只建议短录
+  perception:
+    description: 加深度/彩色与点云
+    extends: logic
+    topics:
+      - /camera/depth/image_raw
+      - /camera/color/image_raw
+      - /camera/depth/camera_info
+      - /camera/depth/points
+    max_size_mb: 8192
+    split_mb: 1024
+
+  # 底盘/台架：只录链路与反馈，最小带宽
+  bench:
+    description: 台架排障
+    topics:
+      - /tf
+      - /joint_states
+      - /imu/data_raw
+      - /diagnostics
+      - /rak/metrics
+    max_size_mb: 1024
+    split_mb: 256
+
+# QoS 覆盖：传感流是 best_effort，rosbag 默认 reliable 会录不到。
+qos_overrides:
+  "/camera/depth/image_raw": {reliability: best_effort}
+  "/camera/color/image_raw": {reliability: best_effort}
+  "/camera/depth/points": {reliability: best_effort}
+  "/imu/data_raw": {reliability: best_effort}
+  "/scan": {reliability: best_effort}
+
+defaults:
+  output_dir: bags
+  storage: mcap
