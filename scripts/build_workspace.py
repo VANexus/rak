@@ -50,6 +50,13 @@ def main() -> int:
         command += ["--packages-skip", *profile.skip_packages]
     command += extra
 
+    # CUDA：JetPack 的 nvcc 不在非登录 shell 的 PATH 里，colcon 的 enable_language(CUDA)
+    # 会报 "No CMAKE_CUDA_COMPILER"。有 /usr/local/cuda 就补上（用户显式设置的优先）。
+    cuda_bin = Path("/usr/local/cuda/bin")
+    if cuda_bin.is_file() or (cuda_bin.with_name("nvcc")).is_file():
+        os.environ.setdefault("CUDACXX", "/usr/local/cuda/bin/nvcc")
+        os.environ["PATH"] = f"/usr/local/cuda/bin{os.pathsep}{os.environ.get('PATH', '')}"
+
     print(f"[{profile.name}] {profile.description.strip()}")
     if profile.skip_packages:
         print(f"[{profile.name}] 跳过 {len(profile.skip_packages)} 个包: "
