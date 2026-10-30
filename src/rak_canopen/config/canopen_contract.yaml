@@ -63,6 +63,10 @@ semantics:
   w3spd:   {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
   w4spd:   {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
   w1spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 0x2001 WheelSpeedFb ARRAY[4] INT16，0.01 rad/s"}
+  # [AI] 2026-10-30 轮序↔物理位置实测确认（两轮 seq 目视交叉验证，CAN-BRINGUP §7.1）：
+  #   W1=前左(倒) W2=前右(正) W3=后左(倒) W4=后右(正)
+  # 与 rak_chassis.urdf.xacro 的 wheel_sign 默认值 "-1 1 -1 1" 逐位吻合——
+  # CANopen 链路接入 ros2_control 时按 [FL,FR,RL,RR] 序映射 W1..W4，符号不再改动。
   w2spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
   w3spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
   w4spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
