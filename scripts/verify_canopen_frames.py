@@ -70,8 +70,8 @@ def main() -> int:
         print("没有解析到任何帧：确认 candump 用了 -L（带 (timestamp)）", file=sys.stderr)
         return 2
 
-    # COB-ID → (node, pdo)
-    owners = {}
+    # COB-ID → (node, pdo)；外加协议标准帧（NMT/SYNC，CiA 301 固定 COB-ID）
+    owners = {0x000: ("", "nmt"), 0x080: ("", "sync")}
     for name, node in contract.nodes.items():
         for cob_id, label in node.cob_ids().items():
             owners[cob_id] = (name, label)
@@ -88,7 +88,9 @@ def main() -> int:
         node_name, label = owner
         seen[cob_id] = seen.get(cob_id, 0) + 1
         first_payload.setdefault(cob_id, payload)
-        node = contract.nodes[node_name]
+        node = contract.nodes.get(node_name)
+        if node is None:
+            continue  # NMT/SYNC：协议标准帧，无契约对象可查
         pdo = node.find_cob(cob_id)
         if pdo is None:
             continue
@@ -122,7 +124,10 @@ def main() -> int:
     # 字节序证据：把小端与"翻转后按小端解"都算一遍，差得多说明顺序敏感。
     print("\n字节序证据（同一帧两种解释的物理量，差值大者才具备判别力）：")
     for cob_id in sorted(seen):
-        pdo = contract.nodes[owners[cob_id][0]].find_cob(cob_id)
+        node_name = owners[cob_id][0]
+        if node_name not in contract.nodes:
+            continue  # NMT/SYNC
+        pdo = contract.nodes[node_name].find_cob(cob_id)
         if pdo is None or pdo.byte_size < 2:
             continue
         payload = first_payload[cob_id]

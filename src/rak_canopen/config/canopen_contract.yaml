@@ -16,7 +16,9 @@
 #   [SPEC] docs/superpowers/specs/2026-10-29-can-v5-canopen-design.md
 #   [A21]  rak/docs/adr/0021-can-v5-canopen-on-mcus.md
 
-byte_order: little        # STM32 小端 + CANopenNode 按 OD 内存序打包。TODO(实测)：明日首帧核对
+byte_order: little        # [AI] 2026-10-30 首帧实测确认：j1state=19.3° 仅小端可解释、
+                          # SDO 应答 'R75' 字符串序、cmd_seq=1/2 主站写值回读一致。
+                          # 证据：docs/NEXT-2026-10-30.md + candump /tmp/frames.log（43395 帧）
 sync_cob_id: 0x080        # [V5] §3 / [SPEC] 端口表：Jetson 产生 SYNC
 nmt_cob_id: 0x000         # [SPEC] Jetson 发，两板收
 
