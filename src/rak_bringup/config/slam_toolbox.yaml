@@ -18,7 +18,9 @@ slam_toolbox:
     # 开机自动加载并继续延伸; 搬去新区域只需 serialize 后重启, 不再从零重来。
     # (原值: mapping = 每次全新会话)
     mode: lifelong
-    map_file_name: /home/xrak/rak/data/maps/rak_room
+    # map_file_name **不在这里写死**（AGENTS §2 第 3 条：源码里不许出现绝对家目录）。
+    # 由 slam.launch.py 的 map_file 参数注入，默认落在 $HOME/.ros/rak/maps/rak_room；
+    # 换机/换用户后不需要改这份 yaml。
     map_start_pose: [0.0, 0.0, 0.0]
 
     resolution: 0.05

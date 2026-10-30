@@ -25,18 +25,27 @@ import sys
 import threading
 from pathlib import Path
 
-COSYVOICE_ROOT = Path(os.environ.get("RAK_COSYVOICE_ROOT", "/home/xrak/rak/tools/cosyvoice"))
-MODEL_DIR = Path(os.environ.get(
-    "RAK_COSYVOICE_MODEL_DIR",
-    "/home/xrak/rak/acoustic/models/Fun-CosyVoice3-0.5B-2512",
-))
+# 仓库根：.../src/rak_speech/rak_speech/cosyvoice_backend.py → parents[3]
+_REPO = Path(__file__).resolve().parents[3]
+
+
+def _repo_path(env: str, relative: str) -> Path:
+    """环境变量 > 仓库相对路径。禁止在源码里写死家目录（AGENTS §2 第 3 条）。
+
+    相对路径是**相对仓库**而不是相对当前工作目录：换用户、换盘符、换机器都不变。
+    """
+    override = os.environ.get(env, "")
+    return Path(override).expanduser() if override else _REPO / relative
+
+
+COSYVOICE_ROOT = _repo_path("RAK_COSYVOICE_ROOT", "tools/cosyvoice")
+MODEL_DIR = _repo_path(
+    "RAK_COSYVOICE_MODEL_DIR", "acoustic/models/Fun-CosyVoice3-0.5B-2512")
 # Robot voice identity: a short neutral Chinese reference clip. Generate once
 # with the kokoro backend if missing (see scripts/make_cosyvoice_prompt.py
 # or the ROS-side bootstrap); identity carries across emotions.
-DEFAULT_PROMPT_WAV = Path(os.environ.get(
-    "RAK_COSYVOICE_PROMPT_WAV",
-    "/home/xrak/rak/acoustic/models/cosyvoice_prompt_zh.wav",
-))
+DEFAULT_PROMPT_WAV = _repo_path(
+    "RAK_COSYVOICE_PROMPT_WAV", "acoustic/models/cosyvoice_prompt_zh.wav")
 DEFAULT_INSTRUCT = "用平时稳重、清晰的语气说"
 
 

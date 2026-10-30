@@ -84,11 +84,23 @@ def generate_launch_description():
         executable="async_slam_toolbox_node",
         name="slam_toolbox",
         output="screen",
-        parameters=[os.path.join(share, "config", "slam_toolbox.yaml")],
+        parameters=[
+            os.path.join(share, "config", "slam_toolbox.yaml"),
+            # 地图落盘位置：默认 $HOME/.ros/rak/maps（ROS 惯例位置），可被
+            # map_file:=... 覆盖。写进 yaml 就等于把家目录钉死在源码里。
+            {"map_file_name": ParameterValue(
+                LaunchConfiguration("map_file"), value_type=str)},
+        ],
     )
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "map_file",
+                default_value=os.path.join(
+                    os.path.expanduser("~"), ".ros", "rak", "maps", "rak_room"),
+                description="lifelong 位姿图落盘路径（默认 $HOME/.ros/rak/maps/rak_room）",
+            ),
             DeclareLaunchArgument("lidar_z", default_value="0.1525", description="base_link -> laser_link height [m] (2026-10-14 实测)"),
             DeclareLaunchArgument(
                 "odom_source",
