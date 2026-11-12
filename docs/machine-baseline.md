@@ -180,18 +180,29 @@ S1/S2 的延迟数字必须在"没换出"的前提下测量。
 
 ## 五、服务去冗余：停了什么，为什么
 
-原则：**机器人不需要的桌面/云/调试服务全部停用**。停用（`disable --now`）而
-不是卸载，是为了可逆——需要时 `systemctl enable --now <unit>` 就回来。
+原则：**机器人不需要的桌面/云/调试服务停用，开发要用的留着**。
+停用（`disable --now`）而不是卸载，是为了可逆——需要时
+`systemctl enable --now <unit>` 就回来。
+
+### 明确保留（不要停）
+
+| 服务 | 为什么留 |
+|---|---|
+| `docker` / `docker.socket` / `containerd` | 开发环境靠容器（本机已有 `nvidia/cuda:12.6.3-base-ubuntu24.04`）。停掉等于砍掉一个开发手段 |
+| `bluetooth` | 蓝牙手柄 / BLE 调试外设 |
+| `avahi-daemon` | mDNS：开发期靠 `<host>.local` 互访，停掉后"名字解析不到"会被误当成网络故障 |
+| `netclient` | Netmaker mesh，唯一外网入口（见下） |
+
+前三类已进脚本的 `PROTECTED_UNITS`：写回禁用清单会被直接拒绝执行。
+
+### 停用清单
 
 | 服务 | 为什么停 |
 |---|---|
-| `bluetooth` | 机器人走 CAN/以太网 |
-| `avahi-daemon` | mDNS 广播，机器人不需要被"发现" |
 | `lpd` / `cups` | 网络打印 |
 | `gnome-remote-desktop` / `vino` | 与 `x11vnc` 抢 5900；README 实测 vino 重传 99.7% 帧缓冲 |
-| `upower` / `udisks2` / `colord` / `accounts-daemon` / `switcheroo-control` | 纯桌面设施 |
+| `upower` / `udisks2` / `colord` / `accounts-daemon` / `switcheroo-control` | 纯桌面设施（需要桌面时 D-Bus 会按需激活，不必手工 enable） |
 | `power-profiles-daemon` | 会把 governor 改回 `schedutil`，与锁频打架 |
-| `docker` / `docker.socket` / `containerd` | 没有任何容器在跑（`docker ps -a` 为空），纯占内存 |
 | `sssd` | LDAP 客户端，机器人不在域里 |
 | `openvpn` | 组网用 netmaker |
 | `rsync` / `iperf3` / `lttng-sessiond` | 按需手动起，不必常开 |

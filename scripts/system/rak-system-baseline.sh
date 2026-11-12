@@ -166,10 +166,13 @@ fi
 # ------------------------------------------------------------ 4. 服务去冗余
 say "4. 服务去冗余"
 DISABLE_UNITS=(
-  bluetooth.service
-  # 机器人走 CAN/以太网，不需要蓝牙
-  avahi-daemon.service
-  # mDNS 广播：机器人不需要被局域网"发现"
+  # 【不要停 bluetooth / avahi / docker —— 2026-11-13 按用户要求保留】
+  #   bluetooth      蓝牙手柄/外设、BLE 调试都可能用得上；
+  #   avahi-daemon   开发期靠 <hostname>.local 互访（orin.local 之类），
+  #                  停掉之后"名字解析不到"会被误当成网络故障；
+  #   docker         开发机要用容器跑 CUDA/交叉编译环境（本机已有
+  #                  nvidia/cuda:12.6.3-base-ubuntu24.04 镜像）。
+  # 这三者已进下面的 PROTECTED_UNITS，写回清单会被脚本拒绝。
   lpd.service
   # 网络打印
   cups.service
@@ -190,10 +193,6 @@ DISABLE_UNITS=(
   # 桌面显卡切换
   power-profiles-daemon.service
   # 会把 governor 改回 schedutil
-  docker.service
-  # 没有任何容器在跑，纯占内存
-  docker.socket
-  containerd.service
   sssd.service
   # LDAP 客户端，机器人不在域里
   openvpn.service
@@ -234,6 +233,12 @@ DISABLE_UNITS=(
 # 一次疏忽 = 机器人现场失联，而失联之后没法远程修回来 —— 这种不可逆的代价
 # 不该依赖"下次记得检查"。
 PROTECTED_UNITS=(
+  bluetooth.service            # 蓝牙外设 / BLE 调试
+  avahi-daemon.service         # mDNS：<host>.local 互访（开发期命脉）
+  avahi-daemon.socket
+  docker.service               # 容器化开发环境（CUDA/交叉编译）
+  docker.socket
+  containerd.service
   netclient.service            # netmaker mesh：DSH Web / VNC / SSH 的唯一入口
   NetworkManager.service       # 以太网 + WiFi
   wpa_supplicant.service
@@ -248,12 +253,19 @@ PROTECTED_UNITS=(
 for u in "${DISABLE_UNITS[@]}"; do
   case " ${PROTECTED_UNITS[*]} " in
     *" $u "*)
-      echo "拒绝执行：$u 在 PROTECTED_UNITS 里（命脉单元，禁用会导致远程失联）。" >&2
+      echo "拒绝执行：$u 在 PROTECTED_UNITS 里（命脉单元，禁用会让远程/开发环境失联）。" >&2
       echo "如果确实要停，先改本脚本的 PROTECTED_UNITS，并想清楚怎么把它再拉起来。" >&2
       exit 3
       ;;
   esac
-  step_do "停用 $u" systemctl disable --now "$u"
+  if [ "$MODE" = apply ]; then
+    step_do "停用 $u" systemctl disable --now "$u"
+  else
+    # --check 必须绝对只读。2026-11-13 这里曾经漏判模式：跑 --check 也会真的
+    # disable 服务（体检把机器改了，最坏的一种 bug）。现在只报告。
+    state="$(systemctl is-enabled "$u" 2>/dev/null || echo 不存在)"
+    [ "$state" = "enabled" ] && info "仍启用（apply 时会停用）: $u"
+  fi
 done
 
 # ---------------------------------------------------------- 5. 实时与内存锁

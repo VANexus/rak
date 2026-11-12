@@ -20,8 +20,11 @@
   GPU 624.75 MHz、EMC 2133 MHz。新增 `rak-clocks.service`。
 - **修掉开机一条红**：JetPack 自带 `nvpmodel.service` 在"已是 10W"时仍要求交互确认，
   systemd 下无 stdin → `status=234`。换成非交互的 `rak-nvpmodel.sh`。
-- **停用 20+ 冗余服务**（docker/containerd、bluetooth、avahi、打印、桌面设施、
-  cloud-init 四单元等），理由逐条写在基线脚本里。
+- **停用 20+ 冗余服务**（打印、桌面设施、cloud-init 四单元、rsyslog、apport、
+  lttng、openvpn 等），理由逐条写在基线脚本里。
+  **明确保留** `docker`/`containerd`（容器化开发）、`bluetooth`（外设）、
+  `avahi-daemon`（`<host>.local` 互访）——它们与 `netclient` 一起进了
+  `PROTECTED_UNITS`，写回禁用清单会被脚本拒绝。
 - `limits.d`（rtprio 95 / memlock unlimited）、journald 封顶 256 MiB、
   关闭 unattended-upgrades、启用 fstrim。
 
