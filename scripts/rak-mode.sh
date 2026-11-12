@@ -37,7 +37,24 @@ report() {
   # eye needs 4 MMAP buffers; at 1280x720 MJPEG the driver rounds each up to at
   # least the raw frame size, so ask for ~16 MiB and call the margin honest.
   if [ "$cf" -lt 16384 ]; then
-    echo "  -> CMA 不足以让 eye 申请 4 个 V4L2 MMAP 缓冲；视觉采集会失败"
+    # 2026-11-13: CmaFree 低**不等于**相机采不到。CMA 池允许页缓存临时借用，
+    # 真来 cma_alloc 时内核会把那些页迁走。区分方法就是掉一次缓存看它回不回来
+    # （本机实测：稳态 6 MB -> 掉缓存后 140 MB，且能稳住）。
+    # 所以这里先给原始值，再给判据，而不是直接断言"视觉采集会失败"。
+    local cf2
+    sync 2>/dev/null || true
+    if [ "$(id -u)" -eq 0 ]; then
+      echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    fi
+    cf2=$(awk '/CmaFree/{print $2}' /proc/meminfo)
+    if [ "$cf2" -ge 16384 ]; then
+      echo "  -> CMA 名义上低（$((cf/1024)) MiB），但掉缓存后回到 $((cf2/1024)) MiB："
+      echo "     属于页缓存借用（可迁移），相机申请缓冲时会自动腾出。不是故障。"
+    else
+      echo "  -> CMA 掉缓存后仍只有 $((cf2/1024)) MiB：有进程持有不可迁移的 DMA 缓冲。"
+      echo "     先查是不是桌面开着（scripts/rak-mode.sh desktop），再看"
+      echo "     sudo ls /sys/kernel/debug/nvmap/handles_by_pid 与 dmesg | grep -i cma"
+    fi
   else
     echo "  -> CMA 余量可用"
   fi

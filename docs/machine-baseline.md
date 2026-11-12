@@ -134,6 +134,35 @@ JetPack 自带的 `/etc/systemd/nvpmodel.sh` 在"当前档位已等于目标档�
 `rak_stereo_driver` 用 `V4L2_MEMORY_MMAP` 申请 4 个缓冲，videobuf2 从 CMA 池里切。
 桌面把池子吃干后，`VIDIOC_REQBUFS` 失败——**现象像相机坏了，实际是内存决策**。
 
+### 一个容易误判的点：CmaFree 低 ≠ 相机一定采不到
+
+2026-11-13 实测（本机，无桌面、无相机进程）：
+
+| 时刻 | CmaFree |
+|---|---|
+| 稳态（跑了半天脚本/编译/文档） | **6 MB** |
+| `sync; echo 3 > /proc/sys/vm/drop_caches` 之后 | **140 MB** |
+| 之后 30 s（没有任何新负载） | 140 MB |
+
+结论：CMA 池里的大部分**被页缓存借用**了。CMA 区域允许可移动分配（page cache、
+匿名页）临时占用，真来一个 `cma_alloc`（例如相机申请 V4L2 MMAP 缓冲）时，
+内核会把那些页迁走再腾出空间 —— 这是设计行为，不是泄漏。
+
+区分"良性借用"和"真占用"，只需一条命令：
+
+```bash
+sync; sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
+awk '/CmaFree/{print $2/1024 " MiB"}' /proc/meminfo
+```
+
+- **掉完缓存后大幅回升**（像上面的 6 → 140 MB）→ 良性，相机能申请到缓冲。
+- **掉完缓存后仍然很低** → 真有进程持着不可迁移的 DMA 缓冲。这时才去看
+  `sudo ls /sys/kernel/debug/nvmap/handles_by_pid`、`dmesg | grep -i cma`，
+  以及"是不是又有人把桌面开起来了"。
+
+`scripts/rak-mode.sh status` 的告警已按这个判据改写：它现在会先报原始值，
+再告诉你"低"是不是需要紧张的那种低。**不要看到 CmaFree 只有几 MB 就断定相机坏了。**
+
 ### 所以基线默认无头
 
 `systemctl mask gdm3 gdm`：mask 而不是 disable，因为 `gdm.service` 是静态单元，
