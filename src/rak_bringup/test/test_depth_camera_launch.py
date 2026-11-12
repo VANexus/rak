@@ -135,4 +135,12 @@ def test_gemini_profile_matches_verified_335l_capabilities():
     assert config["depth_registration"] is False
     assert config["enable_hardware_noise_removal_filter"] is True
     assert config["enable_noise_removal_filter"] is False
-    assert config["enable_sync_output_accel_gyro"] is True
+    # 2026-11-13: 断言此前写的是 True，但 gemini335l.yaml 从 ADR-0007 起就把相机 IMU
+    # 关掉了——航向权威是 Jetson 直连的 LSM6DSRTR（rak_imu_driver），相机 accel/gyro
+    # 没有任何订阅者，开着只是白烧带宽和功耗。yaml 里有明确注释说明这个决定，
+    # 测试却没跟上，于是 colcon test 长期带一条红。
+    # 这里钉死的是"三个 IMU 开关必须一致地关"，而不是某一个值：
+    # 只要有人重新打开 IMU，就必须同时改这三行，否则会得到半开的状态。
+    assert config["enable_accel"] is False
+    assert config["enable_gyro"] is False
+    assert config["enable_sync_output_accel_gyro"] is False

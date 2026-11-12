@@ -5,7 +5,6 @@
   <description>Single owner for text navigation tasks and Nav2 interruption lifecycle.</description>
   <maintainer email="xrak@todo.todo">xrak</maintainer>
   <license>Apache-2.0</license>
-  <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>rclpy</exec_depend>
   <!-- launch/ 里的 task_simulation.launch.py 用得到，缺声明会让 rosdep/单独 clone 断链 -->
   <exec_depend>launch</exec_depend>

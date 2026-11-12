@@ -208,7 +208,13 @@ def test_recognition_pipeline_runs_and_invents_nothing(tmp_path):
     import vosk
 
     vosk.SetLogLevel(-1)
-    model_dir = SpeechAsr._find_model(SpeechAsr.__new__(SpeechAsr))
+    # __new__ 绕过 __init__，_engine 不会被设置，而 _find_model 要按 _engine 分支
+    # （zipformer 走 acoustic/models，vosk 走 data/models）。这里显式给 vosk 分支。
+    # 2026-11-13：此前缺这一行，测试在新机器上直接 AttributeError —— 不是断言失败，
+    # 是测试自己崩了，所以它一直"红着但没人看"。
+    bare = SpeechAsr.__new__(SpeechAsr)
+    bare._engine = "vosk"
+    model_dir = SpeechAsr._find_model(bare)
     if not model_dir:
         print("  skip: no Vosk model present")
         return

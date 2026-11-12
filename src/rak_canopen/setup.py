@@ -20,6 +20,11 @@ setup(
         ]),
     ],
     install_requires=["setuptools", "PyYAML"],
+    # colcon test 用 pytest 收集 test/ 下的用例（test_contract.py / test_eds_gate.py）。
+    # 没有这一行 setuptools 不认 test 目录，colcon test 以 "NO TESTS RAN" + exit 5
+    # 结束 —— 看起来像测试失败，实际是**测试从来没跑过**。
+    # rak_intent / rak_lifecycle 都这么配，本包此前漏了。
+    extras_require={"test": ["pytest"]},
     zip_safe=True,
     maintainer="xrak",
     maintainer_email="xrak@todo.todo",

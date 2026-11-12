@@ -7,7 +7,6 @@
   <maintainer email="xrak@todo.todo">xrak</maintainer>
   <license>Apache-2.0</license>
 
-  <buildtool_depend>ament_python</buildtool_depend>
 
   <depend>rclpy</depend>
   <exec_depend>geometry_msgs</exec_depend>

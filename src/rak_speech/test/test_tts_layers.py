@@ -208,10 +208,23 @@ def test_node_resolves_repo_paths():
     pytest.importorskip("audio_common_msgs.msg")
     from rak_speech.tts_node import SpeechTts
 
-    qwentts = SpeechTts._resolve_repo_path("tools/qwentts.cpp")
-    assert qwentts is not None and qwentts.name == "qwentts.cpp"
-    acoustic = SpeechTts._resolve_repo_path("acoustic")
-    assert acoustic is not None and acoustic.name == "acoustic"
+    # 2026-11-13：这两个断言以前直接要求 tools/qwentts.cpp 与 acoustic/ 存在。
+    # 但 tools/ 是 **gitignored 的本地目录**（.gitignore 的 /tools/），fresh clone
+    # 或新机器上根本没有；acoustic/ 是音色资产目录，也不保证每台机器都有。
+    # 于是这条测试在干净环境里必红，而它想验证的其实是"解析逻辑能找回仓库内的
+    # 相对路径"，不是"这台机器上恰好有这些文件"。
+    # 改法：先用**一定存在**的仓库文件验证解析能力，再对可选目录做条件断言。
+    repo_root = Path(__file__).resolve().parents[2]
+    anchor = SpeechTts._resolve_repo_path("README.md")
+    assert anchor is not None and anchor.name == "README.md", "解析逻辑找不到仓库根下的 README.md"
+
+    for optional in ("tools/qwentts.cpp", "acoustic"):
+        if not (repo_root / optional).exists():
+            print(f"  skip: {optional} 不在本机（gitignored 本地资产）")
+            continue
+        found = SpeechTts._resolve_repo_path(optional)
+        assert found is not None and found.name == Path(optional).name
+
     assert SpeechTts._resolve_repo_path("no/such/thing") is None
 
 

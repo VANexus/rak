@@ -1,0 +1,22 @@
+# 自定义 rosdep 规则
+#
+# 用途：注册到 rosdep 的方式（rosdep init 之后）：
+#   sudo sh -c 'echo file:///home/xrak/rak/rosdep/rak-extra.yaml > /etc/ros/rosdep/sources.list.d/99-rak-extra.list'
+#   rosdep update
+#
+# 为什么存在：本仓有两个依赖**只存在于 PyPI，apt 里没有**——
+#   python3-vosk      离线 ASR 引擎（rak_speech 的 exec_depend）
+#   urdf_parser_py    URDF 校验（rak_description 的 test_depend）
+# rosdep 不会装 pip 包，硬留着这两个键会让每次 rosdep install 都报
+# "cannot locate rosdep definition" 并以非零退出码结束——
+# 那会让 CI/新机器的依赖安装看起来失败，实际上大部分包都装上了。
+# 这里把它们映射到 python3-pip：rosdep 负责把 pip 装上，
+# 真正的 vosk / urdf_parser_py 由 scripts/system/rak-system-baseline.sh 的
+# "pip 运行时依赖" 一步装进系统 Python（ament_python 节点就跑在系统 Python 上）。
+rosdep:
+  python3-vosk:
+    ubuntu:
+      noble: [python3-pip]
+  urdf_parser_py:
+    ubuntu:
+      noble: [python3-pip]

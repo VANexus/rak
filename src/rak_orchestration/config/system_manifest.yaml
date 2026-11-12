@@ -373,6 +373,21 @@ domains:
         enabled: false                   # 默认不随整车起；排障/调参时单独 launch 或打开本行
         provides:
           - {topic: /rak/metrics, kind: exists}
+      # slip_watch 是抗打滑 L1 检测（firmware-capability-spec §7.2）。它和
+      # rak_metrics 起在同一个 launch 文件里，且同样是 managed 节点 —— 但此前
+      # manifest 里没有它。后果不是"少一条记录"：LifecycleNode 默认停在
+      # unconfigured，没人 configure/activate 就什么都不做，节点看起来活着却
+      # 一个 topic 都不发（ADR-0020 §3 点名的"运行中、看着配好了、完全惰性"）。
+      # 测试 test_system_manifest 把它抓出来了。
+      - node: /slip_watch
+        package: rak_metrics
+        executable: slip_watch
+        mode: managed
+        owner: system_manager
+        launch: rak_metrics/rak_metrics.launch.py
+        enabled: false                   # 同 rak_metrics：随观测域一起手动开启
+        provides:
+          - {topic: /rak/slip, kind: exists}
 
   # ---------------- L5：表达 ----------------
   - name: expression

@@ -208,9 +208,19 @@
     <limit lower="0.0" upper="4.71239" effort="2.0" velocity="6.0"/>
   </joint>
 
-  <ros2_control name="rak_chassis_system" type="system">
+  <!-- ==================== 底盘段（ADR-0019） ====================
+       两块 F407 = 两个 <ros2_control> = 两个故障域：一块板掉线不再拖垮另一块的
+       控制器。两段共享同一个 CanSession（CanSessionPool 按 can_channel 复用），
+       所以 host_build_id / allow_motion / can_channel 必须**逐字段一致**，
+       不一致时 pool 会拒绝复用 —— validate_chassis_urdf.py 的 A 段钉这一条。
+
+       [AI] 2026-11-13：此前是单段 RakSystemHardware 同时声明 4 轮 + 7 轴。
+       C++ 侧的 RakChassisHardware / RakArmHardware 与 12 项单测早已落地
+       （system_interface_test.cpp 全绿），只有 URDF 还停在旧形态 —— 于是
+       validate_chassis_urdf.py 长期带一条红。拆段后与 C++ 对齐。 -->
+  <ros2_control name="rak_chassis" type="system">
     <hardware>
-      <plugin>rak_chassis/RakSystemHardware</plugin>
+      <plugin>rak_chassis/RakChassisHardware</plugin>
       <param name="host_build_id">$(arg host_build_id)</param>
       <!-- [AI] 运动许可：默认 false=永远 DISARMED；实驱必须显式 allow_motion:=true -->
       <param name="allow_motion">$(arg allow_motion)</param>
@@ -253,6 +263,18 @@
       <state_interface name="position"/>
       <state_interface name="velocity"/>
     </joint>
+  </ros2_control>
+
+  <!-- ==================== 机械臂段（ADR-0019） ====================
+       臂板（vehical_rak_edge_ai）自己的故障域。参数与底盘段逐字段一致
+       （共享 CanSession）；关节只含 7 轴臂，不含轮。 -->
+  <ros2_control name="rak_arm" type="system">
+    <hardware>
+      <plugin>rak_chassis/RakArmHardware</plugin>
+      <param name="host_build_id">$(arg host_build_id)</param>
+      <param name="allow_motion">$(arg allow_motion)</param>
+      <param name="can_channel">$(arg can_channel)</param>
+    </hardware>
 
     <!-- [AI] 7 轴臂位置接口（ADR-0012 待闭合项 #1；2026-10-14 随 ADR-0016 的
          ROS 化重建落地）。名称/行程按 docs/arm_moveit_contract.md §1（FROZEN）：

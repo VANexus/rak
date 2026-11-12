@@ -92,25 +92,34 @@ def test_system_managed_components_are_launched_as_lifecycle_nodes():
 
 
 def test_observed_components_are_not_claimed_as_lifecycle_nodes():
-    """反过来也钉：observed 的组件如果被改成 LifecycleNode，清单必须同步改 managed。"""
-    for manifest in _manifests():
-        managed_executables = {
-            component.executable
-            for domain in manifest.domains
-            for component in domain.components
-            if component.mode == "managed"
-        }
-        for launch in sorted(SRC.glob("*/launch/*.launch.py")):
-            for executable, kind in _node_actions(launch).items():
-                if kind == "LifecycleNode" and executable in managed_executables:
-                    continue
-                if kind == "LifecycleNode":
-                    assert executable in managed_executables or _is_third_party_lifecycle(
-                        executable
-                    ), (
-                        f"{launch.name} 把 {executable} 起成 LifecycleNode，"
-                        "但没有任何域把它声明为 managed —— 谁来激活它？"
-                    )
+    """反过来也钉：observed 的组件如果被改成 LifecycleNode，清单必须同步改 managed。
+
+    2026-11-13 修正：这个检查以前是**在清单循环里**做的，也就是拿
+    system_manifest_fixture.yaml（只声明 task_executor 一个 managed 组件）去校验
+    **整个 src/ 的所有 launch**，于是 agent_node / slip_watch / harness 这些只在
+    真机清单里登记的受管节点全部被误判成"没人激活"。夹具清单本来就只覆盖夹具，
+    不该拿它当全集。
+
+    正确做法：先取**所有**清单的 managed 可执行文件并集，再对每个 launch 只检查一次。
+    """
+    managed_executables = {
+        component.executable
+        for manifest in _manifests()
+        for domain in manifest.domains
+        for component in domain.components
+        if component.mode == "managed"
+    }
+    assert managed_executables, "两份清单都没有任何 managed 组件，检查会变成空转"
+    for launch in sorted(SRC.glob("*/launch/*.launch.py")):
+        for executable, kind in _node_actions(launch).items():
+            if kind != "LifecycleNode":
+                continue
+            assert executable in managed_executables or _is_third_party_lifecycle(
+                executable
+            ), (
+                f"{launch.name} 把 {executable} 起成 LifecycleNode，"
+                "但没有任何域把它声明为 managed —— 谁来激活它？"
+            )
 
 
 def _is_third_party_lifecycle(executable: str) -> bool:

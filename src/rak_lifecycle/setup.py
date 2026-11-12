@@ -11,6 +11,10 @@ setup(
         ("share/" + package_name, ["package.xml"]),
     ],
     install_requires=["setuptools", "PyYAML"],
+    # colcon test 用 pytest 收集 test/ 下的用例。没有这一行，setuptools 不认
+    # test 目录，colcon test 会以 "NO TESTS RAN" + exit code 5 结束 —— 看起来像
+    # 测试失败，其实是测试**从来没跑过**。rak_intent 早就这么配了，本包漏了。
+    extras_require={"test": ["pytest"]},
     zip_safe=True,
     maintainer="xrak",
     maintainer_email="xrak@todo.todo",

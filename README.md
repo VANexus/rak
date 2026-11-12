@@ -12,6 +12,10 @@
 点云抓取开发入口：[离线 GraspNet、RViz 与隔离仿真](docs/grasp_perception.md) ·
 [抓取验收记录](docs/grasp_validation.md)。
 
+**机器本身怎么配**（SSH 只允许密钥、功耗档位、无头化、服务精简、日志封顶）见
+[机器基线](docs/machine-baseline.md)；一条命令回到已知状态：
+`sudo scripts/system/rak-system-baseline.sh`。
+
 ## 工程布局
 
 自有 ROS 包采用 `rak_` 前缀，按职责而非拟人化名称划分。
@@ -36,6 +40,15 @@
 | `src/rak_motion_stub` | 测试转发与速度估算；不是 CAN 驱动或安全控制器 |
 | `src/rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent）、参数、udev、DDS 配置和操作脚本（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） |
 | `src/rak_agent` | （原 `brain/`）Jev / LLM 决策节点；ROS 系统 Python 内运行，模块名 `rak_agent`；语料在仓库根 `data/episodes/` |
+| `src/rak_harness` | Jev ↔ 任务执行器的**传递式仲裁缝** + 语音对话环（ADR-0010）；只产出建议性提案，永不输出速度/关节命令 |
+| `src/rak_tool_executor` | 工具提案契约的**唯一确定性执行器**（`docs/brain_arm_tools_design.md`，设计稿）；只接受白名单内、未过期的提案 |
+| `src/rak_orchestration` | 组装层**契约**部分（ADR-0026）：系统清单（故障域/所有者/存活性探针）、launch 契约、supervisor 入口；纯 x86 可建可测 |
+| `src/rak_lifecycle` | 受管生命周期基础设施（ADR-0020）：`ManagedNode` 基类、`system_manager` 编排、`rak_system` 运维 CLI |
+| `src/rak_metrics` | 全栈延迟/时延/丢帧聚合（p50/p95/p99），发布 diagnostic_msgs + 微型 HTTP 端点；兼管 rosbag 录制档 |
+| `src/rak_imu_driver` | Jetson 直连 LSM6DSRTR IMU（ADR-0002 航向权威）：`/imu/data_raw`；当前生产路径是 I2C，SPI 快路径保留未启用 |
+| `src/rak_canopen` | CANopen v5 的 **Jetson 侧契约层**（ADR-0022）：从 MCU SSOT 派生 COB-ID/PDO/速率/量化与 v4-v5 冲突门禁；不是协议栈（主站是 ros2_canopen，ADR-0024） |
+| `src/rak_road_perception` | Jetson TorchScript 路面分割（LFD-RoadSeg），可选输出 Nav2 点云观测 |
+| `src/rak_arm_pinocchio_ik` | 基于 Pinocchio 的机械臂 IK 服务（ADR-0011 的臂侧前置） |
 | `src/vendor` | 第三方雷达和 rf2o；只读，不随自有包重命名 |
 
 2026-10-09 起所有可构建包统一在 `src/` 下（ADR-0013）；完整的新旧映射见
@@ -95,50 +108,80 @@ launch 可解析当作固件兼容或安全验收。
 
 ## 构建与验证
 
-在仓库根目录、只加载 ROS 基础环境的新终端中执行。使用新的构建/安装子目录，
-避免旧包的安装产物混入验证；不删除旧构建结果。
+在仓库根目录、只加载 ROS 基础环境的新终端中执行。
+
+**推荐：用档位脚本，而不是手拼 `colcon` 参数。** 哪台机器能建什么写在
+`src/rak_orchestration/config/build_profiles.yaml`（ADR-0026），脚本读同一份数据：
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-CMAKE_BUILD_PARALLEL_LEVEL=2 colcon build \
-  --base-paths src brain --executor sequential \
-  --build-base build/architecture --install-base install/architecture \
-  --cmake-args -DCMAKE_BUILD_TYPE=Release
-source install/architecture/local_setup.bash
-python3 scripts/check_workspace.py --installed
-colcon test --build-base build/architecture --install-base install/architecture \
-  --packages-select rak_description rak_moveit_config
-colcon test-result --test-result-base build/architecture --verbose
-ROS_DOMAIN_ID=77 python3 -m pytest \
-  src/rak_task_executor/test src/rak_arm_simulation/test
-PYTHONPATH=brain python3 brain/tests/test_ai.py
-PYTHONPATH=brain python3 brain/tests/test_task_intent.py
+python3 scripts/build_workspace.py --profile jetson    # Orin 真机：全量
+python3 scripts/build_workspace.py --profile desktop   # x86 开发机：跳过 GPU/厂商 SDK
+source install/local_setup.bash
 ```
 
-ROS 集成测试需先 source `install/architecture/local_setup.bash`，并使用独立的
+脚本默认用 `--symlink-install` + 默认 `build/` `install/`，构建完自动跑
+`check_workspace.py --installed`（`--no-check` 可跳过）。**不要在 `~/` 下跑**
+（会在家目录砸出孤儿产物并把别的仓库卷进 discovery，见上文"两条容易踩的坑"）。
+
+需要隔离产物时用 `--` 透传 colcon 参数：
+
+```bash
+python3 scripts/build_workspace.py --profile jetson -- \
+  --build-base build/architecture --install-base install/architecture
+```
+
+验证：
+
+```bash
+python3 scripts/check_workspace.py --installed
+colcon test --packages-select rak_description rak_moveit_config
+colcon test-result --verbose
+ROS_DOMAIN_ID=77 python3 -m pytest src/rak_task_executor/test src/rak_arm_simulation/test
+PYTHONPATH=src/rak_agent python3 src/rak_agent/test/test_ai.py
+PYTHONPATH=src/rak_intent python3 src/rak_intent/test/test_task_intent.py
+```
+
+ROS 集成测试需先 source `install/local_setup.bash`，并使用独立的
 `ROS_DOMAIN_ID`；测试仅连接 fake action server，不访问真实 CAN 链路。
 机器人运行统一使用 Cyclone DDS 和 domain 47（`~/.bashrc`、`rak_bringup` 操作脚本
 及 Cyclone 配置保持一致）；ROS 集成测试仍隔离在 domain 77/187，避免加入机器人运行图。
-完整构建需要本机 JetPack SDK。只开发决策层可用
+
+完整构建需要本机 JetPack SDK（CUDA / TensorRT / VPI / nvJPEG）。只开发决策层可用
 `--packages-up-to rak_agent`，无需构建 GPU 包。
-首次准备决策包依赖时使用系统包管理：
-`rosdep install --from-paths brain --ignore-src -r -y`。`agent_node` 是标准 ROS
+
+依赖安装用 rosdep（系统包管理，不建 venv）：
+
+```bash
+sudo rosdep init && rosdep update          # 仅首次
+rosdep install --from-paths src --ignore-src --rosdistro jazzy -r -y
+```
+
+本仓有两个**只存在于 PyPI** 的依赖（`vosk`、`urdf_parser_py`），它们的 rosdep
+规则在 `rosdep/rak-extra.yaml`，注册方式见该文件头部注释。`agent_node` 是标准 ROS
 console entry point，直接使用 ROS 系统 Python；stub 不需要模型或 PyTorch。
-TensorRT 原生 decider 尚未接入，需先取得经验证的 ONNX engine 与 tokenizer 资产。
-导出依赖、固定版本、TensorRT profile 草案和当前内存门槛见
-[Laya TensorRT 导出准备](docs/laya_tensorrt.md)。
+TensorRT 原生 decider 已接入（`decider:=tensorrt`），engine 与 tokenizer 资产放在
+gitignored 的 `data/models/`。导出依赖、固定版本、TensorRT profile 草案和当前内存
+门槛见 [Laya TensorRT 导出准备](docs/laya_tensorrt.md)。
+
+**机器本身的基线**（SSH 只允许密钥、功耗档位、无头化、服务精简、日志封顶）不在本文，
+见 [机器基线](docs/machine-baseline.md)，一键命令
+`sudo scripts/system/rak-system-baseline.sh`。
 
 ## 启动入口
 
+所有 launch 都在 `rak_bringup`（ADR-0013 已把 `rak_sensor_bringup`、
+`rak_navigation`、`rak_chassis_bringup` 三包并入），只有夹具专用的留在各自包里。
+
 ```bash
-ros2 launch rak_sensor_bringup lidar.launch.py
-ros2 launch rak_sensor_bringup astra.launch.py
-ros2 launch rak_sensor_bringup depth_camera.launch.py  # 默认 Gemini 335L
-ros2 launch rak_sensor_bringup depth_camera.launch.py camera:=astra
-ros2 launch rak_sensor_bringup gemini335l.launch.py serial_number:=YOUR_SERIAL
-ros2 launch rak_sensor_bringup stereo.launch.py device:=/dev/video0
-ros2 launch rak_navigation slam.launch.py
-ros2 launch rak_navigation nav2.launch.py
+ros2 launch rak_bringup lidar.launch.py
+ros2 launch rak_bringup astra.launch.py
+ros2 launch rak_bringup depth_camera.launch.py  # 默认 Gemini 335L
+ros2 launch rak_bringup depth_camera.launch.py camera:=astra
+ros2 launch rak_bringup gemini335l.launch.py serial_number:=YOUR_SERIAL
+ros2 launch rak_bringup stereo.launch.py device:=/dev/video0
+ros2 launch rak_bringup slam.launch.py
+ros2 launch rak_bringup nav2.launch.py
 ros2 launch rak_task_executor task_simulation.launch.py
 ros2 run rak_task_executor task_cli
 ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim

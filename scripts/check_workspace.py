@@ -31,7 +31,7 @@ EXPECTED = {
     "rak_intent",
     "rak_canopen", "rak_interfaces", "rak_lifecycle", "rak_motion_stub", "rak_moveit_config",
     "rak_metrics", "rak_orchestration",
-    "rak_pointcloud", "rak_speech", "rak_stereo_driver",
+    "rak_pointcloud", "rak_road_perception", "rak_speech", "rak_stereo_driver",
     "rak_task_executor", "rak_tool_executor", "rak_wbc",
 }
 OLD_NAMES = {"core", "eye", "boot", "brain", "motor_stub", "astra_bridge"}

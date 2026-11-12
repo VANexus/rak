@@ -43,8 +43,15 @@ frames_*.pdf
 /tools/
 /debug/
 
-# TRAE AI IDE workspace state (IDE cache, not project source)
+# AI/IDE 工作区状态（缓存，不是项目源码）
 .trae/
+.claude/
+.superpowers/
+
+# 注意：.claude/worktrees/<name> 曾被误提交为 **gitlink**（mode 160000，子模块指针），
+# 而工作树里只是空目录 —— 于是 fresh clone 之后那个路径永远"脏"且无法 checkout。
+# 2026-11-13 已从索引移除。这类指针只会由"在 worktree 里提交"意外产生，
+# 不可能是项目源码。
 
 # Mac tar AppleDouble (sloppy tar from macOS adds these)
 ._*

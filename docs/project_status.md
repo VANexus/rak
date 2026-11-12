@@ -1,6 +1,83 @@
 # 项目总体状态
 
-更新日期：2026-10-29
+更新日期：2026-11-13
+
+## 2026-11-13 增量：新机器基线与工具链闭合（无功能变更）
+
+这一轮**没有加功能**，做的是"让这台机器从'能开机'变成'能当机器人核心'"，
+以及把长期带红的测试套件修绿。逐条都可在本机复现。
+
+### 机器侧（新增 `scripts/system/rak-system-baseline.sh`，详见 `docs/machine-baseline.md`）
+
+- **SSH 只允许公钥**：`sshd -T` 实测 `passwordauthentication no`、
+  `authenticationmethods publickey`、`permitrootlogin no`、`allowusers xrak`。
+  两把 ed25519（`rak.pub`/`xrak.pub`）；镜像自带的那把 `ssh-rsa` 已移除，
+  备份在 `~/.ssh/authorized_keys.bak-20261113`。
+  实测 `ssh -o PubkeyAuthentication=no ...` → `Permission denied (publickey)`。
+- **CMA 从 1.3 MiB 恢复到 ~49 MiB**（256 MiB 池）：gdm 停止并 mask。桌面把池子吃干后
+  `VIDIOC_REQBUFS` 失败，表现为"相机坏了"。
+- **`jetson_clocks` 锁频**：`scaling_min_freq == scaling_max_freq == 1510 MHz`，
+  GPU 624.75 MHz、EMC 2133 MHz。新增 `rak-clocks.service`。
+- **修掉开机一条红**：JetPack 自带 `nvpmodel.service` 在"已是 10W"时仍要求交互确认，
+  systemd 下无 stdin → `status=234`。换成非交互的 `rak-nvpmodel.sh`。
+- **停用 20+ 冗余服务**（docker/containerd、bluetooth、avahi、打印、桌面设施、
+  cloud-init 四单元等），理由逐条写在基线脚本里。
+- `limits.d`（rtprio 95 / memlock unlimited）、journald 封顶 256 MiB、
+  关闭 unattended-upgrades、启用 fstrim。
+
+### 仓库侧（修的都是"测试从来没跑"和"文档说 A 代码是 B"）
+
+- **`package.xml` 里 13 个包把 `ament_python` 写成 `<buildtool_depend>`** ——
+  这个键没有 rosdep 定义，导致 `rosdep install` 每次都以非零退出码结束（看起来像
+  依赖装失败，实际大部分都装上了）。`ament_python` 只应出现在
+  `<export><build_type>`。
+- **`rak_lifecycle` / `rak_canopen` 缺 `extras_require={"test": ["pytest"]}`** ——
+  `colcon test` 报 "NO TESTS RAN" + exit 5。看起来像测试失败，其实是
+  **测试从来没跑过**。补上后两个包分别跑出 46 项和 20 项。
+- **URDF 单段 vs C++ 双插件不一致**：C++ 侧 `RakChassisHardware`/`RakArmHardware`
+  与 12 项 gtest 早已落地并全绿，`rak_chassis.urdf.xacro` 却还是单段
+  `RakSystemHardware`。按 ADR-0019 拆成两段后 `validate_chassis_urdf.py` 全绿。
+- **`slip_watch` 是 managed 节点但不在清单里**：`rak_metrics.launch.py` 用 `managed()`
+  起它，清单却没有对应条目 → 没有域声明"谁激活它"。已补进 observability 域。
+  这正是 ADR-0020 §3 点名的"运行中、看着配好了、完全惰性"。
+- **`build_workspace.py` 的 CUDA 检测永远为假**：
+  `Path("/usr/local/cuda/bin").with_name("nvcc")` 得到的是 `/usr/local/cuda/nvcc`
+  （`with_name` 替换最后一段，不是追加），于是 `CUDACXX`/`PATH` 从未被设置，
+  `find_package(CUDAToolkit)` 反推出的根是 `/usr/local`，找不到 `libcudart`。
+  修正后 GPU 包正常构建。
+- **`build_workspace.py` 的门禁看不见自己刚构建的东西**：不 source 就直接跑，
+  门禁报 `package not found, searching: ['/opt/ros/jazzy']`。改为脚本自己拼
+  `AMENT_PREFIX_PATH`/`PYTHONPATH`/`LD_LIBRARY_PATH`。
+- **`rak_astra_driver` 硬编码 OrbbecSDK 1.10.18 路径**：新机器上只有 apt 的 2.9.3，
+  构建直接 FATAL。改为按优先级自动发现（`-DOrbbecSDK_DIR` → `/opt/OrbbecSDK_*` →
+  仓库历史 `tools/camera` → `/opt/ros/$ROS_DISTRO`），RUNPATH 跟着实际路径走。
+- **`rak_road_perception` 在模块顶层 `import torch`**：torch 在 JetPack 上不是必然
+  存在（apt 无 arm64 候选），顶层导入让"可选推理依赖"变成"包坏了"。改为延迟导入，
+  与本仓其余三个用 torch 的包一致。现在不装 torch 也能 `import`。
+- **测试自身的缺陷**（不是被测代码的问题）：
+  `test_system_manifest.py` 拿夹具清单（只声明 1 个 managed 组件）去校验整个 src/
+  的所有 launch，于是真机清单里的受管节点全被误判；`test_tts_layers.py` 要求
+  `tools/qwentts.cpp` 存在，而 `tools/` 是 gitignored 本地目录；`test_asr.py` 用
+  `__new__` 绕过 `__init__` 却没设 `_engine`。三处都已修正。
+- **`rak_stereo_driver` 的 uncrustify 关掉**：仓库没有任何格式化器配置
+  （CLAUDE.md 明写），现有 C++ 统一用"大括号同行"，而 ament_uncrustify 默认要 Allman。
+  这不是"代码不合规"，是"没有约定"。保留 cpplint（查可移植性/正确性，当前全绿）。
+- 清理：`.claude/worktrees/*` 曾被误提交为 **gitlink**（mode 160000，子模块指针），
+  工作树里只是空目录 → fresh clone 后永远"脏"。已从索引移除并写进 `.gitignore`；
+  `.superpowers/` 过程日志一并移除。
+
+### 实测结果（本机 Orin，2026-11-13）
+
+| 项 | 结果 |
+|---|---|
+| `build_workspace.py --profile jetson` | 30 个包构建成功 |
+| `check_workspace.py --installed` | **27 个自有包**，依赖图与 launch 引用全绿 |
+| `colcon test`（15 个包） | **216 项，0 失败，3 跳过**（此前 186 项、8 失败） |
+| `rosdep install` | EXIT=0（"All required rosdeps installed successfully"） |
+
+**仍未闭合**（不要当成已完成）：CANopen v5 真机链路（ADR-0024 主站未实机验证）、
+EKF 协方差标定、轮径/lx/ly 实测回填、臂 J2–J6 运动与限位验证、
+`rak_wbc` 的 2 项 HQP 数值测试（2026-10-29 已记录的既有失败，本轮未动）。
 
 ## 2026-10-29 增量：运行期编排与受管生命周期（ADR-0020）+ v5 事实核对（ADR-0021）
 

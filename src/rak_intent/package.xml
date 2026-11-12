@@ -7,7 +7,6 @@
   <maintainer email="xrak@todo.todo">xrak</maintainer>
   <license>Apache-2.0</license>
 
-  <buildtool_depend>ament_python</buildtool_depend>
 
   <!-- [AI] 仅 RaiWaypointPlanner（可选慢路径）用到；解析函数本身 stdlib-only -->
   <exec_depend>python3-pydantic</exec_depend>
