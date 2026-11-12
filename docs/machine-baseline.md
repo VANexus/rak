@@ -166,7 +166,14 @@ S1/S2 的延迟数字必须在"没换出"的前提下测量。
 | `sssd` | LDAP 客户端，机器人不在域里 |
 | `openvpn` | 组网用 netmaker |
 | `rsync` / `iperf3` / `lttng-sessiond` | 按需手动起，不必常开 |
-| `netclient` / `nv-power-adapter-check` / `nv-tee-supplicant` | 厂商附带，无人使用 |
+| `nv-power-adapter-check` / `nv-tee-supplicant` | 厂商附带，无人使用 |
+
+> **`netclient`（Netmaker）绝对不在停用之列。** 它是这台机器**唯一的外网入口**：
+> mesh 地址 `100.121.213.x` 承载 DSH Web 转发、VNC（`100.121.213.20:5900`）与 SSH。
+> 停掉它 = 远程失联，而机器人在现场时没有键盘可插。
+> 同理不动：`NetworkManager`、`wpa_supplicant`、`systemd-networkd`、`systemd-resolved`。
+> 2026-11-13 基线脚本一度把它误列为冗余，当场被拦下并从清单删除；脚本里现在有
+> `PROTECTED_UNITS` 硬保护 —— 把命脉单元写进禁用清单会直接报错退出。
 | `apport` | 崩溃上报往 `/var/crash` 落盘 |
 | `haveged` | 内核 6.8 自带 jitter entropy，haveged 反而拖慢启动 |
 | `rsyslog` | 日志已由 journald 承担，重复写盘 |

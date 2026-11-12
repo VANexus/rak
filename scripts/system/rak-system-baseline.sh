@@ -204,8 +204,15 @@ DISABLE_UNITS=(
   # 端口常开，按需手动 systemctl start
   lttng-sessiond.service
   # 追踪守护进程，机器人不需要
-  netclient.service
-  # NVIDIA 网络客户端
+  #
+  # 【绝对不要动 netclient.service】
+  # 它不是"NVIDIA/Netmaker 客户端"这种可停的附属品 —— 它是**这台机器唯一的
+  # 外网入口**：netmaker 提供 100.121.213.x 的 mesh 地址，DSH Web 的
+  # dsh-mesh-forward.service、VNC(100.121.213.20:5900)、SSH 全走这条路径。
+  # 停掉它 = 远程失联，而机器人在现场时你没法走过去插键盘。
+  # 2026-11-13 本脚本曾把它列进禁用清单（误判为冗余），当场被拦下并删除。
+  # 同理，下面"网络相关"一律不动：NetworkManager / wpa_supplicant / systemd-networkd
+  # / systemd-resolved / netmaker。机器人断网比省那点内存严重一万倍。
   nv-power-adapter-check.service
   nv-tee-supplicant.service
   # TEE 代理，无人使用
@@ -221,7 +228,31 @@ DISABLE_UNITS=(
   cloud-config.service
   cloud-final.service
 )
+# 命脉单元：写进 DISABLE_UNITS 会直接报错退出，而不是"静静地"把网断掉。
+# 为什么需要这道闸：2026-11-13 有人（就是写这份脚本的人）把 netclient 当成
+# "厂商附带、无人使用"塞进了上面的清单。它其实是唯一的外网入口。
+# 一次疏忽 = 机器人现场失联，而失联之后没法远程修回来 —— 这种不可逆的代价
+# 不该依赖"下次记得检查"。
+PROTECTED_UNITS=(
+  netclient.service            # netmaker mesh：DSH Web / VNC / SSH 的唯一入口
+  NetworkManager.service       # 以太网 + WiFi
+  wpa_supplicant.service
+  systemd-networkd.service
+  systemd-resolved.service     # DNS
+  ssh.service                  # 唯一的命令行入口
+  dsh-web.service              # 本会话所在的 Web 宿主
+  dsh-mesh-forward.service     # 把 Web 转发到 mesh
+  rak-can0.service             # 下位机链路
+  nvargus-daemon.service       # 相机（Argus）
+)
 for u in "${DISABLE_UNITS[@]}"; do
+  case " ${PROTECTED_UNITS[*]} " in
+    *" $u "*)
+      echo "拒绝执行：$u 在 PROTECTED_UNITS 里（命脉单元，禁用会导致远程失联）。" >&2
+      echo "如果确实要停，先改本脚本的 PROTECTED_UNITS，并想清楚怎么把它再拉起来。" >&2
+      exit 3
+      ;;
+  esac
   step_do "停用 $u" systemctl disable --now "$u"
 done
 
@@ -269,10 +300,22 @@ EOF
     info "ok: unattended-upgrades 已关闭（改为人工排期）"
   fi
 fi
-step_do "启用 fstrim 定时器（NVMe 健康）" systemctl enable --now fstrim.timer
+# fstrim 是写操作：--check 只报告，不 enable。
+if [ "$MODE" = check ]; then
+  info "fstrim.timer: $(systemctl is-enabled fstrim.timer 2>/dev/null || echo 未启用)"
+else
+  step_do "启用 fstrim 定时器（NVMe 健康）" systemctl enable --now fstrim.timer
+fi
 
 # ------------------------------------------------------- 7. 机器人运行时
 say "7. 机器人运行时（CAN / 雷达 udev / VNC）"
+if [ "$MODE" = check ]; then
+  info "rak-can0.service: $(systemctl is-enabled rak-can0.service 2>/dev/null || echo 未安装)"
+  info "can0 link: $(ip -brief link show can0 2>/dev/null | awk '{print $2, $3}')"
+  info "雷达 udev 规则: $([ -f /etc/udev/rules.d/99-wheeltec-lidar.rules ] && echo 已装 || echo 未装)"
+  info "x11vnc.service: $(systemctl is-enabled x11vnc.service 2>/dev/null || echo 未安装)"
+  info "/etc/x11vnc.pass: $([ -f /etc/x11vnc.pass ] && echo 存在 || echo 缺失)"
+fi
 if [ "$MODE" = apply ]; then
   # CAN: 仓库里的 can0-up.service 带 Orin CAN pinmux 写入（AON pinmux 重启必丢，
   # 漏写时 can0 照常 UP 但一帧收不到）。装成 rak-can0.service 并开机自启。
@@ -358,4 +401,9 @@ info "CPU governor : $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
 info "SSH          : PasswordAuthentication=$(sshd -T 2>/dev/null | grep -i '^passwordauthentication' | awk '{print $2}')"
 info "gdm          : $(systemctl is-active gdm 2>/dev/null) / display-manager=$(systemctl is-enabled gdm3 2>/dev/null)"
 echo
-echo "基线应用完成。CMA 若仍低，说明还有进程占着显存池（用 dmesg | grep -i cma 查）。"
+if [ "$MODE" = check ]; then
+  echo "体检完成（--check 未改动任何东西）。任何一项与 docs/machine-baseline.md 不一致 = 基线漂移。"
+else
+  echo "基线应用完成。CMA 若仍低，说明还有进程占着显存池（dmesg | grep -i cma 查）。"
+  echo "CAN pinmux 与 limits.d 需要重启/重新登录才生效。"
+fi
