@@ -69,17 +69,16 @@ def _launch_setup(context, *args, **kwargs):
 
     allow_motion = LaunchConfiguration("allow_motion")
     arm_writer = LaunchConfiguration("arm_motion_writer")
-    can_channel = LaunchConfiguration("can_channel")
     camera = LaunchConfiguration("camera")
     rviz = LaunchConfiguration("rviz")
     motion_backend = LaunchConfiguration("motion_backend")
     supervise = config("supervise")
-    transport = config("transport")
 
     chassis_args = {
         "allow_motion": allow_motion,
         "arm_motion_writer": arm_writer,
-        "can_channel": can_channel,
+        "can_interface": LaunchConfiguration("can_interface"),
+        "master_config": LaunchConfiguration("master_config"),
     }
     # nav/full 下 chassis_bringup 的 robot_state_publisher 已发 TF，
     # 传感器层不能再发一份（ADR-0015：一个 frame 一个发布者）。
@@ -87,14 +86,9 @@ def _launch_setup(context, *args, **kwargs):
     actions = []
 
     if stage in ("teleop", "nav", "full"):
-        # 传输二选一（ADR-0024）：两个主站**不得同时起**，同一总线双主站会把
-        # 从站踢出 Operational —— 台架跑 tools/canopen_master.py 时不要同时 launch 本文件。
-        if transport == "canopen":
-            actions.append(_include("canopen_bringup.launch.py", {
-                "allow_motion": allow_motion,
-            }))
-        else:
-            actions.append(_include("chassis_bringup.launch.py", chassis_args))
+        # 只有一条链路（CANopen v5，ADR-0024）。同一总线**不得**再起第二个主站：
+        # 台架跑 tools/canopen_master.py 时不要同时 launch 本文件。
+        actions.append(_include("chassis_bringup.launch.py", chassis_args))
 
     if stage in ("sensors", "nav", "full"):
         actions.append(_include("sensors.launch.py", {
@@ -166,13 +160,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "arm_motion_writer", default_value="jtc",
             description="臂控制器二选一：jtc / wbc / none"),
-        DeclareLaunchArgument("can_channel", default_value="can0"),
-        # 传输（ADR-0024 + 2026-10-30 修订）：下位机 v4 已整体下线（R75/A16，
-        # 无回滚分支），CanSession 对真板**无效**，只剩软件夹具用途。
-        # 台架/联调的实际主链路 = 伞形仓 tools/canopen_master.py（Orin 上运行）。
         DeclareLaunchArgument(
-            "transport", default_value="canopen", choices=["can_v4", "canopen"],
-            description="底盘控制链：canopen（真机唯一）| can_v4（仅软件夹具；真板无效）"),
+            "can_interface", default_value="can0",
+            description="SocketCAN 接口；台架（vcan0）或真机（can0）"),
+        DeclareLaunchArgument(
+            "master_config", default_value="",
+            description="ros2_canopen 主站 DCF（缺省 = rak_canopen 的 master.dcf）"),
         DeclareLaunchArgument(
             "camera", default_value="gemini335l",
             description="深度相机后端：gemini335l | astra（透传给 sensors）"),

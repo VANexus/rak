@@ -2,8 +2,8 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>rak_chassis</name>
-  <version>0.1.0</version>
-  <description>ros2_control hardware interfaces for the two F407 CAN v4 nodes (SocketCAN): RakChassisHardware (4 wheels) and RakArmHardware (6 axes + gripper). Both share one CanSession.</description>
+  <version>0.2.0</version>
+  <description>Thin CANopen bridge: ros2_control hardware interfaces (4 wheel velocity / 7 axis position) mapped onto ros2_canopen proxy-driver OD objects. Owns no CAN frames and no protocol.</description>
   <maintainer email="xrak@todo.todo">xrak</maintainer>
   <license>Apache-2.0</license>
 
@@ -11,7 +11,7 @@
   <depend>hardware_interface</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
-  <depend>rclcpp_lifecycle</depend>
+  <depend>canopen_interfaces</depend>
   <test_depend>ament_cmake_gtest</test_depend>
 
   <export>

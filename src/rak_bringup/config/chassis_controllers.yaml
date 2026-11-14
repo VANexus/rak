@@ -1,44 +1,34 @@
-# [AI] ros2_control 控制器配置（CAN v4 硬件链路）：四轮 + 7 轴臂 + 夹爪。
+# ros2_control 控制器配置（CANopen v5 薄桥链路）：四轮 + 7 轴臂 + 夹爪。
+#
+# 协议事实源 = `src/rak_canopen/config/*.json` + `canopen_contract.yaml`；
+# OD 对象映射在 `src/rak_description/urdf/rak_chassis.urdf.xacro` 的
+# <ros2_control> 段；本文件只有控制器级参数，不含任何帧级事实。
+#
 # [AI] 2026-10-14 装车实测回填：wheels_radius=0.0275（Ø5.5 cm）、
-#    sum=0.26（hw 0.1225 + ht 0.1375；轴距 24.5/轮距 27.5，外廓量法−轮径/轮宽）。
-# [AI] lyrical：type 查找段在 controller_manager 下；控制器运行参数经 spawner -p 载入。
+#      sum=0.26（hw 0.1225 + ht 0.1375；轴距 24.5/轮距 27.5）。
 controller_manager:
   ros__parameters:
-    update_rate: 100  # Hz，与 rak_chassis 100 Hz 控制周期一致
+    update_rate: 100  # Hz；命令刷新率（25 kHz 位置环在 MCU 里）
     use_sim_time: false
-    # [AI] R37 联调收尾：mock/僵尸 RSP 幽灵链路已排除（CM 载入 mock URDF 导致
-    # 限幅器假象），恢复官方限幅路径（URDF command_interface min/max ±10 rad/s）
     enforce_command_limits: true
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
-
     mecanum_drive_controller:
       type: mecanum_drive_controller/MecanumDriveController
-
-    # [AI] ADR-0007 D2 + ADR-0012 待闭合项 #1（2026-10-14 闭合）：臂走标准
-    # joint_trajectory_controller，上层（MoveIt / 示教 TUI）只发 FollowJointTrajectory，
-    # 永远不直连 CAN（ADR-0016 决策 2）。
+    # [AI] ADR-0007 D2：臂走标准 joint_trajectory_controller，上层
+    #（MoveIt / 示教 TUI）只发 FollowJointTrajectory，永远不直连链路。
     arm_controller:
       type: joint_trajectory_controller/JointTrajectoryController
-
-    # [AI] 夹爪第 7 路独立成组：无物理反馈（回读恒 0，契约 §2.3），JTC 的目标容差
-    # 对它永远不成立，故不进 arm_controller；用位置话题直接下发（~/commands）。
-    #
-    # 2026-10-28 实测修正（本机 mock_components 栈）：lyrical 已不再提供
-    # position_controllers/JointGroupPositionController —— 实测报
-    #   "Loader for controller 'gripper_controller' (type
-    #    'position_controllers/JointGroupPositionController') not found"
-    # 改用等价的 forward_command_controller/ForwardCommandController
-    # （interface_name: position，话题同为 ~/commands）；Jazzy/lyrical 两端都有该类型。
+    # [AI] 夹爪第 7 路独立成组：无物理反馈（0x2116 按契约无效），JTC 的目标
+    # 容差对它永远不成立，故不进 arm_controller；位置话题直发（~/commands）。
+    # 2026-10-28 实测：lyrical 已无 position_controllers/JointGroupPositionController，
+    # 用等价的 forward_command_controller/ForwardCommandController。
     gripper_controller:
       type: forward_command_controller/ForwardCommandController
-
-    # [AI] WBC 臂位置流入口（ADR-0011 D1 输出②）：6 定位轴的位置流控制器，话题
-    # 被 remap 到 /wbc/arm_setpoints（见 chassis_bringup arm_motion_writer:=wbc）。
-    # ⚠️ 与本文件 arm_controller(JTC) **共享同一批 position 命令接口**——同一时刻
-    # 只能激活一个（ros2_control 不做互斥保护，两个同时 active 会双写同一接口）。
-    # 由 chassis_bringup 的 arm_motion_writer 参数在启动期二选一。
+    # [AI] WBC 臂位置流入口（ADR-0011 D1 输出②）：与 arm_controller(JTC) **共享
+    # 同一批 position 命令接口**，同一时刻只能激活一个；由 chassis_bringup 的
+    # arm_motion_writer 参数二选一。
     arm_position_controller:
       type: forward_command_controller/ForwardCommandController
 
@@ -49,8 +39,7 @@ joint_state_broadcaster:
 arm_controller:
   ros__parameters:
     use_sim_time: false
-    # [AI] 名称/顺序 = docs/arm_moveit_contract.md §1（FROZEN），与 URDF
-    # <ros2_control> 一一对应；命令域是舵机指令角 rad（0..270°，Home 0/225/270/0/0/0）。
+    # [AI] 名称/顺序 = docs/arm_moveit_contract.md §1（FROZEN）。
     joints:
       - j1_base
       - j2_shoulder
@@ -65,17 +54,9 @@ arm_controller:
     state_publish_rate: 50.0
     action_monitor_rate: 20.0
     allow_partial_joints_goal: false
-    # [AI] Jazzy JTC 不再做"起点=当前状态"容差校验（validate_trajectory_msg 只查结构），
-    # 故单点 goal 可直接被接受；轨迹从**回读**（state_current_）插值到目标——回读是
-    # 固件指令回声，天然滞后一拍，可接受。刻意不用已废弃的 open_loop_control。
-    # allow_motion=false 时回读不动，goal 会因容差超时 abort（TUI 屏上给出提示）。
     constraints:
-      # [AI] 回读精度分两档（2026-10-28，机械臂板 A2 起）：
-      #  - J1_base/J2_shoulder：增量编码器电机闭环（app_joint 25 kHz 采样 + 1 kHz 定点
-      #    PI），回读是**真测量**（0.0059°/count）→ goal 容差收紧到 0.03 rad（≈1.7°）。
-      #  - J3..J6：舵机无编码器，回读=指令回声（±1° 实测），保持 0.05 rad 放宽口径。
-      # 两档都不得用于碰撞/卡死检测：J1/J2 的编码器只测电机轴位置，不含力矩
-      # （契约 §2.2）。0.03 是 TODO(measured)：台架实测位置环稳态误差后回填。
+      # [AI] J1/J2 编码器闭环 0.03 rad（≈1.7°，TODO(measured)：台架实测后回填）；
+      # J3..J6 舵机回读=指令回声（±1°），0.05 rad。都不得用于碰撞/卡死检测。
       stopped_velocity_tolerance: 0.05
       goal_time: 1.0
       j1_base: {trajectory: 0.35, goal: 0.03}
@@ -91,9 +72,8 @@ gripper_controller:
     joints: [gripper_joint]
     interface_name: position
 
-# [AI] WBC 臂位置流（ADR-0011 D1）：顺序 = 契约 §1 的 j1_base..j6_wrist_roll；
-# 值域 = 舵机指令角 rad（0..4.71239；J2 上限 4.45059 由 CM 限幅器截）。
-# 话题 /wbc/arm_setpoints 由 spawner --controller-ros-args 重映射（见 bringup）。
+# [AI] WBC 臂位置流（ADR-0011 D1）：话题 /wbc/arm_setpoints 由 spawner
+# --controller-ros-args 重映射（见 chassis_bringup arm_motion_writer:=wbc）。
 arm_position_controller:
   ros__parameters:
     use_sim_time: false
@@ -113,13 +93,10 @@ mecanum_drive_controller:
     enable_odom_tf: false
     tf_frame_prefix_enable: false
     # 引用超时：无新鲜 /reference 输入 0.5s 后自动置零（安全停轮）。
-    # [AI] R37 联测教训：鉴别期放大到 100.0s 忘记收回，导致"停止后轮子仍转 100s"。
-    # 0.5s 由 Nav2 20Hz 指令流裕度定；上层应 ≥10Hz 持续发布
     reference_timeout: 0.5
     kinematics:
-      # [AI] 2026-10-14 装车实测（取代固件 R30 台架值 32.5 mm / 150 mm）：
-      # 轮半径 27.5 mm（Ø5.5 cm）；sum = hw+ht = 0.1225+0.1375 = 0.26
-      # （轴距 24.5、轮距 27.5，量法：前后外廓30−轮径5.5、左右外廓30−轮宽2.5）
+      # [AI] 2026-10-14 装车实测（取代固件 R30 台架值）：
+      # 轮半径 27.5 mm；sum = hw+ht = 0.26（轴距 24.5、轮距 27.5）
       wheels_radius: 0.0275
       sum_of_robot_center_projection_on_X_Y_axis: 0.26
       base_frame_offset:

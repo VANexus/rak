@@ -2,8 +2,9 @@
 #
 # 分阶段接入（ADR-0002 §决策 2）：F1 轮式+IMU → F2 +雷达里程计 → F3 +视觉。
 # 当前实现是 **F2 的一半**：odom0=rf2o、imu0=Jetson LSM6DSRTR；
-# 轮式那一路（odom1=/mecanum_drive_controller/odom）**还不存在**，因为本仓 v4 主站
-# 对 v5 板子无效（ADR-0021），链路要等 P3（lely-core）。别把"配置里有槽位"当成"已接入"。
+# 轮式那一路（odom1=/mecanum_drive_controller/odom）**还没接入**：CANopen v5 薄桥
+# 已替换 v4 主机栈（ADR-0024），但轮速反馈闭环尚未在真机/台架上验收。
+# 别把"配置里有槽位"当成"已接入"。
 #
 # ⚠️ 协方差今天之前一个都没有（`grep -c covariance` = 0），全凭 robot_localization 默认值
 # —— 而 ADR-0002 明文要求"所有输入必须带真实协方差""没有协方差的里程计不要塞进 EKF"。

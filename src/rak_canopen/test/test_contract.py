@@ -19,12 +19,11 @@ from rak_canopen.contract import (
 )
 
 CONFIG = Path(__file__).resolve().parents[1] / "config"
-V4_SOURCE = Path(__file__).resolve().parents[2] / "rak_chassis" / "src" / "can_session.cpp"
 
 
 @pytest.fixture(scope="module")
 def contract():
-    return load(CONFIG, v4_source=V4_SOURCE)
+    return load(CONFIG)
 
 
 # ---------------------------------------------------------------- COB-ID 派生
@@ -160,18 +159,10 @@ def test_liveness_requires_all_three_conditions(contract):
                                    enable_bit_set=True, operational=True, window_ms=window)
 
 
-# ---------------------------------------------------------------- 混跑门禁
-def test_v4_and_v5_collide_so_must_never_share_a_bus(contract):
-    """把"禁止同总线混跑 v4/v5"（ADR-0021）变成算术，而不是口号。
-
-    v4 的 ID 从本仓 v4 后端源码里读（不抄第四份表）。
-    """
-    assert contract.v4_cob_ids, "没读到 v4 帧常量，路径不对就别宣称验证过"
-    hits = {cob for cob, _v4, _v5 in contract.collisions()}
-    assert 0x201 in hits and 0x202 in hits, sorted(hits)
-    for cob, v4_name, v5_name in contract.collisions():
-        assert v4_name.startswith("kId"), (cob, v4_name)
-        assert "." in v5_name, (cob, v5_name)
+# ---------------------------------------------------------------- COB-ID 唯一性
+def test_no_duplicate_cob_ids_inside_v5(contract):
+    """v5 自身不许撞 ID（v4 已整体删除，混跑门禁退场；剩下的风险是自身重叠）。"""
+    assert contract.duplicate_cob_ids() == []
 
 
 def test_manifest_sha_is_recorded(contract):

@@ -34,18 +34,16 @@
   <xacro:include filename="macros/materials.xacro"/>
   <xacro:include filename="macros/arm_chain.xacro"/>
 
-  <xacro:arg name="host_build_id" default="0xA0DE0002"/>
   <xacro:arg name="allow_motion" default="false"/>
-  <!-- [AI] 每轮极性（装配事实，顺序 FL FR RL RR）：+1 正常，-1 该轮命令+反馈同时取反。
-       2026-10-14 实车标定：左侧 FL/RL 的电机装向与右侧相反 —— 命令全 +（DRIVE_CMD
-       [++++]，本应直进）时左轮后滚、右轮前滚，车体原地转；表现为 W/S 变自转、
-       Q/E 变前后、A/D 三自由度全对消（轮子转车不动）。
-       注意这**不是**端口置换：[++++] 在任何置换下都不变，只有取反能解释。
-       实测确认值 -1 1 -1 1；反例 1 -1 1 -1 会让 W 变后退（已验证排除）。
-       缺省即实测值；换轮/重接线后重新标定改这里，不用重编译。 -->
-  <xacro:arg name="wheel_sign" default="-1 1 -1 1"/>
-  <!-- [AI] ADR-0016: 链路唯一实现是 CAN v4（SocketCAN），无 transport/device 参数 -->
-  <xacro:arg name="can_channel" default="can0"/>
+  <!-- [AI] 每轮极性（装配事实，顺序 FL FR RL RR，经 launch 的 wheel_sign 单参数拆开）：
+       +1 正常，-1 表示该轮命令与反馈同时取反。2026-10-14 实车标定：左侧 FL/RL 装向
+       与右侧相反（DRIVE_CMD [++++] 时左轮后滚、右轮前滚，车体原地转；W/S 变自转、
+       Q/E 变前后、A/D 三自由度全对消）。**不是**端口置换，只有取反能解释。
+       换轮/重接线后重新标定改这里（或 launch wheel_sign:=），不用重编译。 -->
+  <xacro:arg name="wheel_sign_fl" default="-1"/>
+  <xacro:arg name="wheel_sign_fr" default="1"/>
+  <xacro:arg name="wheel_sign_rl" default="-1"/>
+  <xacro:arg name="wheel_sign_rr" default="1"/>
   <!-- [AI] REP-120: base_link(轮轴心面)离地高度。2026-10-14 实测轮径 5.5 cm，
        轴心离地 = 轮半径 = 0.0275（轮关节在 base_link z=0，轮必须接地） -->
   <xacro:arg name="base_height" default="0.0275"/>
@@ -208,84 +206,118 @@
     <limit lower="0.0" upper="4.71239" effort="2.0" velocity="6.0"/>
   </joint>
 
-  <!-- ==================== 底盘段（ADR-0019） ====================
-       两块 F407 = 两个 <ros2_control> = 两个故障域：一块板掉线不再拖垮另一块的
-       控制器。两段共享同一个 CanSession（CanSessionPool 按 can_channel 复用），
-       所以 host_build_id / allow_motion / can_channel 必须**逐字段一致**，
-       不一致时 pool 会拒绝复用 —— validate_chassis_urdf.py 的 A 段钉这一条。
+  <!-- ==================== ros2_control：CANopen v5 薄桥 ====================
+       协议归 ros2_canopen（主站 + proxy driver，apt 0.3.4）；本文件只声明
+       "哪个关节 ↔ 哪个 OD 对象、怎么量化、要不要取反"。硬件插件不发 CAN 帧、
+       不实现 CANopen：它订阅 `<driver_node>/rpdo`、发布 `<driver_node>/tpdo`
+       （canopen_interfaces/msg/COData），由 ros2_canopen 负责 NMT/SYNC/PDO/SDO。
 
-       [AI] 2026-11-13：此前是单段 RakSystemHardware 同时声明 4 轮 + 7 轴。
-       C++ 侧的 RakChassisHardware / RakArmHardware 与 12 项单测早已落地
-       （system_interface_test.cpp 全绿），只有 URDF 还停在旧形态 —— 于是
-       validate_chassis_urdf.py 长期带一条红。拆段后与 C++ 对齐。 -->
+       两块 F407 = 两个 <ros2_control> = 两个故障域：一块板掉线只报该板 ERROR，
+       不拖垮另一块（read() 的失败判据按 driver_node 隔离）。
+
+       OD 对象索引/类型/量化因子的唯一来源是 `src/rak_canopen/config/*.json` +
+       `canopen_contract.yaml`；本文件是它们的**消费方**，改协议先改那边。 -->
   <ros2_control name="rak_chassis" type="system">
     <hardware>
-      <plugin>rak_chassis/RakChassisHardware</plugin>
-      <param name="host_build_id">$(arg host_build_id)</param>
-      <!-- [AI] 运动许可：默认 false=永远 DISARMED；实驱必须显式 allow_motion:=true -->
+      <plugin>rak_chassis/CanopenChassis</plugin>
+      <!-- 运动许可：默认 false=命令恒 0、cmd_flags.bit0=0；实驱必须显式 allow_motion:=true -->
       <param name="allow_motion">$(arg allow_motion)</param>
-      <!-- [AI] 每轮极性（装配事实）：命令与反馈按此取反，缺省全 1 -->
-      <param name="wheel_sign">$(arg wheel_sign)</param>
-      <!-- [AI] ADR-0016: 链路唯一实现是 SocketCAN（can_channel） -->
-      <param name="can_channel">$(arg can_channel)</param>
+      <!-- proxy driver 的节点名（bus.yaml 顶层键）→ 话题 /chassis/rpdo、/chassis/tpdo -->
+      <param name="driver_node">chassis</param>
+      <param name="feedback_timeout_ms">200</param>
+      <!-- 命令活性（[V5] §5）：cmd_seq 100 ms 内必须变化且 cmd_flags.bit0=1 -->
+      <param name="cmd_seq_object">0x2040</param>
+      <param name="cmd_flags_object">0x2041</param>
+      <param name="enable_bit">0</param>
     </hardware>
+    <!-- 轮命令 0x2000..0x2003 INT16，0.01 rad/s（counts = rad/s × 100）；
+         反馈 0x2010..0x2013 INT16，0.01 rad/s（rad/s = counts × 0.01）。
+         W1..W4 = [FL, FR, RL, RR]，2026-10-30 实测轮序（CAN-BRINGUP §7.1）。 -->
     <joint name="front_left_wheel">
-      <!-- [AI] R37 联调：给 command_interface 显式 min/max，避免 CM JointSaturationLimiter
-           在无界 [nan,nan] 下产生 NaN 指令（占位 ±10 rad/s，标定后收紧） -->
+      <param name="command_object">0x2000</param>
+      <param name="command_type">int16</param>
+      <param name="command_scale">100.0</param>
+      <param name="state_object">0x2010</param>
+      <param name="state_type">int16</param>
+      <param name="state_scale">0.01</param>
+      <param name="sign">$(arg wheel_sign_fl)</param>
+      <!-- 显式 min/max：CM 的 JointSaturationLimiter 在无界 [nan,nan] 下会产生 NaN 指令 -->
       <command_interface name="velocity">
         <param name="min">-10</param>
         <param name="max">10</param>
       </command_interface>
-      <state_interface name="position"/>
       <state_interface name="velocity"/>
     </joint>
     <joint name="front_right_wheel">
+      <param name="command_object">0x2001</param>
+      <param name="command_type">int16</param>
+      <param name="command_scale">100.0</param>
+      <param name="state_object">0x2011</param>
+      <param name="state_type">int16</param>
+      <param name="state_scale">0.01</param>
+      <param name="sign">$(arg wheel_sign_fr)</param>
       <command_interface name="velocity">
         <param name="min">-10</param>
         <param name="max">10</param>
       </command_interface>
-      <state_interface name="position"/>
       <state_interface name="velocity"/>
     </joint>
     <joint name="rear_left_wheel">
+      <param name="command_object">0x2002</param>
+      <param name="command_type">int16</param>
+      <param name="command_scale">100.0</param>
+      <param name="state_object">0x2012</param>
+      <param name="state_type">int16</param>
+      <param name="state_scale">0.01</param>
+      <param name="sign">$(arg wheel_sign_rl)</param>
       <command_interface name="velocity">
         <param name="min">-10</param>
         <param name="max">10</param>
       </command_interface>
-      <state_interface name="position"/>
       <state_interface name="velocity"/>
     </joint>
     <joint name="rear_right_wheel">
+      <param name="command_object">0x2003</param>
+      <param name="command_type">int16</param>
+      <param name="command_scale">100.0</param>
+      <param name="state_object">0x2013</param>
+      <param name="state_type">int16</param>
+      <param name="state_scale">0.01</param>
+      <param name="sign">$(arg wheel_sign_rr)</param>
       <command_interface name="velocity">
         <param name="min">-10</param>
         <param name="max">10</param>
       </command_interface>
-      <state_interface name="position"/>
       <state_interface name="velocity"/>
     </joint>
   </ros2_control>
 
   <!-- ==================== 机械臂段（ADR-0019） ====================
-       臂板（vehical_rak_arm）自己的故障域。参数与底盘段逐字段一致
-       （共享 CanSession）；关节只含 7 轴臂，不含轮。 -->
+       臂板（vehical_rak_arm）自己的故障域，driver_node=arm（node 2）。
+       命令 0x2100..0x2106 UINT16 0.1°；反馈 0x2110..0x2116，J1/J2 是 INT16、
+       J3..J6 是 UINT16（A31 起 J1/J2 有符号化）。夹爪无物理反馈 → 不导出 state。
+       名称/行程按 docs/arm_moveit_contract.md §1（FROZEN）：命令域是舵机指令角
+       （rad，0..270°，Home=0/225/270/0/0/0），**不是** rak_arm.urdf.xacro 的 q_urdf。
+       min/max 引用 properties_arm.xacro，与臂 <limit> 同一表达式。 -->
   <ros2_control name="rak_arm" type="system">
     <hardware>
-      <plugin>rak_chassis/RakArmHardware</plugin>
-      <param name="host_build_id">$(arg host_build_id)</param>
+      <plugin>rak_chassis/CanopenArm</plugin>
       <param name="allow_motion">$(arg allow_motion)</param>
-      <param name="can_channel">$(arg can_channel)</param>
+      <param name="driver_node">arm</param>
+      <param name="feedback_timeout_ms">200</param>
+      <param name="cmd_seq_object">0x2140</param>
+      <param name="cmd_flags_object">0x2141</param>
+      <param name="enable_bit">0</param>
+      <!-- 臂板健康位（0x2131 fault，非 0 抑制臂命令） -->
+      <param name="fault_object">0x2131</param>
     </hardware>
-
-    <!-- [AI] 7 轴臂位置接口（ADR-0012 待闭合项 #1；2026-10-14 随 ADR-0016 的
-         ROS 化重建落地）。名称/行程按 docs/arm_moveit_contract.md §1（FROZEN）：
-         命令域是舵机指令角（rad，0..270°，Home=0/225/270/0/0/0），**不是**
-         rak_arm.urdf.xacro 的 q_urdf（两者零位差一个换算，见该文件头注）。
-         min/max 必填：controller_manager 的 JointSaturationLimiter 靠它限幅，
-         与 Session 层饱和（负值截 0、>270° 截 270°）构成双保险。
-         [AI] 2026-10-15：这里原先是字面量 4.71239 / 4.45059（魔法数字），现改为
-         引用 properties_arm.xacro 的 ${jN_lower}/${jN_upper} —— 与上面的臂 <limit>
-         变成**同一个表达式**，有效限幅恒等于契约值，且标定改动只需动一处。 -->
     <joint name="j1_base">
+      <param name="command_object">0x2100</param>
+      <param name="command_type">uint16</param>
+      <param name="command_scale">572.9577951308232</param>
+      <param name="state_object">0x2110</param>
+      <param name="state_type">int16</param>
+      <param name="state_scale">0.0017453292519943296</param>
       <command_interface name="position">
         <param name="min">${j1_lower}</param>
         <param name="max">${j1_upper}</param>
@@ -293,6 +325,12 @@
       <state_interface name="position"/>
     </joint>
     <joint name="j2_shoulder">
+      <param name="command_object">0x2101</param>
+      <param name="command_type">uint16</param>
+      <param name="command_scale">572.9577951308232</param>
+      <param name="state_object">0x2111</param>
+      <param name="state_type">int16</param>
+      <param name="state_scale">0.0017453292519943296</param>
       <command_interface name="position">
         <param name="min">${j2_lower}</param>
         <param name="max">${j2_upper}</param>
@@ -300,6 +338,12 @@
       <state_interface name="position"/>
     </joint>
     <joint name="j3_elbow">
+      <param name="command_object">0x2102</param>
+      <param name="command_type">uint16</param>
+      <param name="command_scale">572.9577951308232</param>
+      <param name="state_object">0x2112</param>
+      <param name="state_type">uint16</param>
+      <param name="state_scale">0.0017453292519943296</param>
       <command_interface name="position">
         <param name="min">${j3_lower}</param>
         <param name="max">${j3_upper}</param>
@@ -307,6 +351,12 @@
       <state_interface name="position"/>
     </joint>
     <joint name="j4_forearm">
+      <param name="command_object">0x2103</param>
+      <param name="command_type">uint16</param>
+      <param name="command_scale">572.9577951308232</param>
+      <param name="state_object">0x2113</param>
+      <param name="state_type">uint16</param>
+      <param name="state_scale">0.0017453292519943296</param>
       <command_interface name="position">
         <param name="min">${j4_lower}</param>
         <param name="max">${j4_upper}</param>
@@ -314,6 +364,12 @@
       <state_interface name="position"/>
     </joint>
     <joint name="j5_wrist_pitch">
+      <param name="command_object">0x2104</param>
+      <param name="command_type">uint16</param>
+      <param name="command_scale">572.9577951308232</param>
+      <param name="state_object">0x2114</param>
+      <param name="state_type">uint16</param>
+      <param name="state_scale">0.0017453292519943296</param>
       <command_interface name="position">
         <param name="min">${j5_lower}</param>
         <param name="max">${j5_upper}</param>
@@ -321,16 +377,24 @@
       <state_interface name="position"/>
     </joint>
     <joint name="j6_wrist_roll">
+      <param name="command_object">0x2105</param>
+      <param name="command_type">uint16</param>
+      <param name="command_scale">572.9577951308232</param>
+      <param name="state_object">0x2115</param>
+      <param name="state_type">uint16</param>
+      <param name="state_scale">0.0017453292519943296</param>
       <command_interface name="position">
         <param name="min">${j6_lower}</param>
         <param name="max">${j6_upper}</param>
       </command_interface>
       <state_interface name="position"/>
     </joint>
-    <!-- 夹爪（第 7 路）：命令通道协议已预留，**无物理反馈通道**（回读恒 0、
-         servo_valid_mask bit6 恒无效，契约 §2.3）——故刻意没有 state_interface，
-         屏显/上层只能显示命令值。 -->
+    <!-- 夹爪（第 7 路）：命令通道 0x2106 有，物理反馈没有（0x2116 按契约无效）
+         —— 刻意不声明 state_interface，消费端只能显示命令值。 -->
     <joint name="gripper_joint">
+      <param name="command_object">0x2106</param>
+      <param name="command_type">uint16</param>
+      <param name="command_scale">572.9577951308232</param>
       <command_interface name="position">
         <param name="min">0.0</param>
         <param name="max">4.71239</param>

@@ -14,9 +14,10 @@ setup(
             # EDS 副本必须一起装：门禁比较的就是"契约派生 vs 同一份 EDS"，
             # 只装 JSON 的话安装态跑 eds_gate 必然报"缺少 EDS 副本"。
             "config/chassis.eds", "config/arm.eds",
-            # 主站与 ros2_control 映射（ADR-0024）：帧级参数只在 EDS 里，
-            # 这里只有总线级参数与对象→接口映射。
-            "config/bus.yaml", "config/canopen_controllers.yaml",
+            # 总线级参数（ADR-0024）：帧级参数只在 EDS 里。master.dcf 是
+            # 官方 dcfgen 从 bus.yaml + 两份 EDS 生成的派生件，漂移门禁见
+            # test/test_dcf_sync.py。
+            "config/bus.yaml", "config/master.dcf",
         ]),
     ],
     install_requires=["setuptools", "PyYAML"],

@@ -1,36 +1,51 @@
-# CANopen v5 总线级配置（ADR-0024）—— 主站 + 两个从站
+# CANopen v5 总线配置（ADR-0024）—— ros2_canopen `device_container` 的 bus 配置
 #
-# ⚠️ 状态：**schema 未在本机验证**（桌面机没有 ros2_canopen）。本文件的键名按
-#    ros2_canopen Jazzy 分支的 `DeviceContainer` 约定书写；上机第一件事是用
-#    `ros2 run canopen_core canopen_core_node --ros-args --params-file <本文件>`
-#    核对它是否被接受，差异写回本文件与 ADR-0024 待闭合项 #1。
+# 状态：schema 按 **上游官方形式**书写，2026-11-14 在 vcan0 上用官方
+# `canopen_fake_slaves` 实测**两台从站同时加载**（chassis + arm）。
 #
-# 为什么要有这份文件：帧级参数（COB-ID/PDO 布局/量纲）全部由 EDS 决定，
-# 这里只放**总线级**参数。把 COB-ID 抄进来就是第四份帧表（ADR-0022 的原罪）。
+# 采用官方"平铺"变体（上游 `canopen_tests/config/simple_lifecycle/bus.yml` 就是这种）：
+#   options.dcf_path —— EDS/DCF 相对路径基准（由 chassis_bringup 在启动时替换占位符）
+#   master           —— 主站驱动（Jetson = NMT master node 127）
+#   每个从站一个顶层键 —— 键名 = proxy driver 的 ROS 节点名（chassis / arm）
+#
+# 为什么不用 `defaults:` + `nodes:` 变体：那是上游另一套官方形式，但本机 apt 的
+# 官方 `dcfgen`（0.3.4）不解析嵌套（`KeyError: 'dcf'`），而平铺形式两个官方工具都吃。
+#
+# 为什么没有 COB-ID/PDO 布局：它们全部由 EDS（与 MCU SSOT JSON 同批生成）和
+# `rak_canopen` 契约层决定。把 COB-ID 抄进来就是第四份帧表（ADR-0022 的原罪）。
+
+options:
+  # 写绝对路径会被拼成 .../config//opt/... 而启动即 abort（2026-11-14 实测）
+  dcf_path: "@BUS_CONFIG_PATH@"
 
 master:
-  node_id: 127                 # [V5] §1：Jetson = NMT master，node 127
-  baudrate: 1000000            # [V5] §1：1 Mbps，CAN 2.0A / 11 bit / 不开 FD
-  # SYNC 由主站产生，2 ms（500 Hz）。这是**唯一**允许在配置里出现的周期值，
-  # 各 PDO 的实际速率由 EDS 的 transmission type 推导（contract.py 已算过）。
-  sync_period_us: 2000
-  # 主站自己是周期写入者：它的存活必须进健康聚合（ADR-0020 修订 (a)），
-  # 否则"Jetson 侧 SYNC 停了"在总线上表现为所有同步 PDO 一起消失。
-  heartbeat_producer_ms: 1000
+  node_id: 127                 # [V5] §1：Jetson = NMT master / node 127
+  driver: "ros2_canopen::LifecycleMasterDriver"
+  package: "canopen_master_driver"
+  # SYNC 周期（µs，官方 dcfgen 会写进 master.dcf 的 0x1006）。
+  # [V5] §1 定的是 2 ms = 500 Hz；TPDO1/TPDO4 的 transmission=5 靠它触发。
+  sync_period: 2000
 
-nodes:
-  - node_id: 1                 # [V5] §1：底盘
-    name: chassis
-    dcf: chassis.eds           # 与 SSOT JSON 同批生成（docs/canopen/chassis.json）
-    # 心跳消费者超时：按契约 consume_timeout_ms: 500 声明；主站侧是否真的判死待实测。
-    heartbeat_consumer_ms: 500
-    # NMT：上电停在 Pre-operational，主站 Start 后才允许 PDO（这就是链路层的
-    # configure/activate 分界，见 ADR-0020 修订 (a)）。
-    nmt_start: true
+# 底盘板（vehical_rak_motion，node 1）：4 轮 + IMU
+chassis:
+  node_id: 1
+  driver: "ros2_canopen::LifecycleProxyDriver"
+  package: "canopen_proxy_driver"
+  dcf: "chassis.eds"
+  boot_timeout_ms: 1000        # 官方参数：等 boot-up 的窗口；无板时 3 次失败后容器 abort
+  polling: true
+  period: 10                   # 反馈轮询 10 ms
+  diagnostics:
+    enable: false              # 按板判活由 rak_chassis 薄桥做，避免双份诊断
 
-  - node_id: 2                 # [V5] §1：机械臂
-    name: arm
-    dcf: arm.eds
-    heartbeat_consumer_ms: 500
-    nmt_start: true
-    # 已知缺口：arm.json 没有 identity 段，运行版本一律读 SDO 0x2F00（docs/canopen-bitfields.md §3）
+# 机械臂板（vehical_rak_arm，node 2）：J1..J6 + 夹爪
+arm:
+  node_id: 2
+  driver: "ros2_canopen::LifecycleProxyDriver"
+  package: "canopen_proxy_driver"
+  dcf: "arm.eds"
+  boot_timeout_ms: 1000
+  polling: true
+  period: 10
+  diagnostics:
+    enable: false

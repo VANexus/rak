@@ -3,7 +3,7 @@
 它**不是**协议栈，也不是驱动：生产链路的 NMT/SYNC/PDO/SDO 由 lely-core 承担（ADR-0021 已选）。
 本模块只做一件事——把 `config/<node>.json`（下位机 SSOT）+ `canopen_contract.yaml`（通信参数
 与单位）派生成**可执行的事实**：COB-ID、PDO 字节布局、速率、量化范围、活性判据、
-以及"v4 与 v5 不能同总线混跑"这条规矩的**算术证明**。
+以及 v5 内部 COB-ID 唯一性。
 
 为什么值得单独一层：ADR-0021 记录 v4 的教训是"帧表在三处复制，出过量化因子错 10 倍"。
 所以这里禁止手抄——布局只能从 JSON 算出来，单位必须带出处，名字对不上就抛异常。
@@ -160,7 +160,6 @@ class Contract:
     nodes: dict[str, NodeContract]
     sync_cob_id: int = SYNC_COB_ID
     nmt_cob_id: int = NMT_COB_ID
-    v4_cob_ids: dict[int, str] = field(default_factory=dict)
     #: 装载时用的配置目录；EDS 副本就躺在同一目录里。
     #: 必须由 load() 传进来——模块自己用 `__file__` 推目录在安装态会指到
     #: `site-packages/config/`（本机实测踩过，见 default_config_dir 的注释）。
@@ -201,17 +200,25 @@ class Contract:
             out[item.name] = raw * item.factor
         return out
 
-    # --------------------------------------------------------- 混跑门禁（算术证明）
-    def collisions(self) -> list[tuple[int, str, str]]:
-        """v4 帧表与 v5 派生 COB-ID 的交集。非空 = 同一总线上会撞 ID。"""
-        used: dict[int, str] = {}
+    # ------------------------------------------------------- COB-ID 唯一性（v5 内部）
+    def duplicate_cob_ids(self) -> list[tuple[int, str]]:
+        """同一 COB-ID 被两个 PDO（或主站 SYNC/NMT）占用 = 总线自撞。
+
+        2026-11-14：v4 已从本仓整体删除（无回滚分支、无帧常量），原来的
+        "v4/v5 混跑碰撞"算术证明随之失效 —— 现在只剩**v5 内部**唯一性这一条。
+        """
+        seen: dict[int, str] = {}
+        dupes: list[tuple[int, str]] = []
         for contract in self.nodes.values():
-            used.update(contract.cob_ids())
-        used.setdefault(self.sync_cob_id, "master.sync")
-        used.setdefault(self.nmt_cob_id, "master.nmt")
-        return sorted(
-            (cob, self.v4_cob_ids[cob], v5) for cob, v5 in used.items() if cob in self.v4_cob_ids
-        )
+            for cob, owner in contract.cob_ids().items():
+                if cob in seen:
+                    dupes.append((cob, f"{seen[cob]} vs {owner}"))
+                seen[cob] = owner
+        for cob, owner in ((self.sync_cob_id, "master.sync"), (self.nmt_cob_id, "master.nmt")):
+            if cob in seen:
+                dupes.append((cob, f"{seen[cob]} vs {owner}"))
+            seen[cob] = owner
+        return sorted(dupes)
 
 
 # ---------------------------------------------------------------- 纯函数（可单测）
@@ -300,7 +307,7 @@ def default_config_dir() -> Path:
         return Path(__file__).resolve().parents[1] / "config"
 
 
-def load(config_dir: str | Path | None = None, *, v4_source: str | Path | None = None) -> Contract:
+def load(config_dir: str | Path | None = None) -> Contract:
     root = Path(config_dir) if config_dir else default_config_dir()
     spec = yaml.safe_load((root / "canopen_contract.yaml").read_text(encoding="utf-8"))
     semantics = spec["semantics"]
@@ -364,24 +371,7 @@ def load(config_dir: str | Path | None = None, *, v4_source: str | Path | None =
     if stale:
         raise ContractError(f"canopen_contract.yaml 有清单里不存在的对象语义: {stale}")
 
-    v4: dict[int, str] = {}
-    source = v4_source or (root / spec.get("v4_id_source", ""))
-    if source and Path(source).is_file():
-        v4 = _parse_v4_ids(Path(source))
-    return Contract(nodes=nodes, v4_cob_ids=v4, root=root)
-
-
-def _parse_v4_ids(path: Path) -> dict[int, str]:
-    """从 v4 后端源码里读 `constexpr uint32_t kIdXxx = 0xNNN;`。
-
-    不再抄第四份表：v4 的 ID 事实源就是那段代码本身（回滚分支才用到）。
-    """
-    found: dict[int, str] = {}
-    for match in re.finditer(
-        r"constexpr uint32_t\s+(kId\w+)\s*=\s*(0x[0-9A-Fa-f]+)U?;", path.read_text(encoding="utf-8")
-    ):
-        found[int(match.group(2), 16)] = match.group(1)
-    return found
+    return Contract(nodes=nodes, root=root)
 
 
 def _sha(path: Path) -> str:

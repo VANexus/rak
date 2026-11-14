@@ -35,7 +35,7 @@
 | `src/rak_intent` | 共享的版本化文本→意图契约；task executor 与 speech 共同使用 |
 | `src/rak_speech` | 离线语音识别（Vosk）→ 转写 + 意图发布；板端唤醒/方位桥（`vtn_node`）与离线 TTS 播报（`tts_node`）；不自行下发目标 |
 | `src/rak_wbc` | 全身运动仲裁层（ADR-0011，骨架 + 桌面数值测试，硬件门未开） |
-| `src/rak_chassis` | F407 传输 + `ros2_control` 插件：`Session` 抽象，唯一实现 `CanSession`（SocketCAN CAN v4 唯一传输，ADR-0016）；当前导出 4 轮接口 |
+| `src/rak_chassis` | CANopen v5 **薄桥**：`ros2_control` 插件 `CanopenChassis`（4 轮）/`CanopenArm`（7 轴），只做 OD 对象↔接口、量化与 `allow_motion` 安全门；协议栈是 `ros2_canopen`，本包不碰 CAN 帧（v4 `CanSession` 已删除） |
 | `src/rak_commissioning` | 标定/调试入口：`chassis_key_test` + `chassis_test.launch.py`；不是生产运动接口 |
 | `src/rak_arm_simulation` | 软件轨迹/夹爪 Action server；无物理仿真、无硬件接口 |
 | `src/rak_moveit_config` | 旧演示配置与隔离的六轴仿真配置；没有实机轨迹执行链 |
@@ -48,7 +48,7 @@
 | `src/rak_lifecycle` | 受管生命周期基础设施（ADR-0020）：`ManagedNode` 基类、`system_manager` 编排、`rak_system` 运维 CLI |
 | `src/rak_metrics` | 全栈延迟/时延/丢帧聚合（p50/p95/p99），发布 diagnostic_msgs + 微型 HTTP 端点；兼管 rosbag 录制档 |
 | `src/rak_imu_driver` | Jetson 直连 LSM6DSRTR IMU（ADR-0002 航向权威）：`/imu/data_raw`；当前生产路径是 I2C，SPI 快路径保留未启用 |
-| `src/rak_canopen` | CANopen v5 的 **Jetson 侧契约层**（ADR-0022）：从 MCU SSOT 派生 COB-ID/PDO/速率/量化与 v4-v5 冲突门禁；不是协议栈（主站是 ros2_canopen，ADR-0024） |
+| `src/rak_canopen` | CANopen v5 的 **Jetson 侧契约层**（ADR-0022）：从 MCU SSOT 派生 COB-ID/PDO/速率/量化；持有 `bus.yaml` 与官方 `dcfgen` 生成的 `master.dcf`；不是协议栈（主站是 ros2_canopen，ADR-0024） |
 | `src/rak_road_perception` | Jetson TorchScript 路面分割（LFD-RoadSeg），可选输出 Nav2 点云观测 |
 | `src/rak_arm_pinocchio_ik` | 基于 Pinocchio 的机械臂 IK 服务（ADR-0011 的臂侧前置） |
 | `src/vendor` | 第三方雷达和 rf2o；只读，不随自有包重命名 |
@@ -64,7 +64,7 @@
 |---|---|---|
 | `~/rak` | **唯一 ROS 2 工作区**（本仓库）。所有 `colcon build`、所有 `source` 都只认它 | 本仓库 |
 | `~/ws_thirdparty` | 第三方驱动 overlay 壳：`src/OrbbecSDK_ROS2`（上游 `v2.10.6`，**从未编译**）。相机实际走 apt 的 `ros-jazzy-orbbec-camera` 2.9.3，**不要 source 这个 ws**；真要换源码版时才在它里面 `colcon build`，靠 source 顺序覆盖 apt 同名包 | 上游 clone |
-| `~/vehical_rak_motion` | STM32F407 底盘板固件工程，**不是 ROS ws**。CANopen v5 协议真源（`docs/CANOPEN-V5.md`、`docs/canopen/chassis.json`），被 `scripts/can_link_smoke.py` 等引用 | 另一仓库 |
+| `~/vehical_rak_motion` | STM32F407 底盘板固件工程，**不是 ROS ws**。CANopen v5 协议真源（`docs/CANOPEN-V5.md`、`docs/canopen/chassis.json`、`tools/canopen/gen_eds.py` 生成 EDS） | 另一仓库 |
 | `~/vehical_rak_arm` | STM32F407 机械臂板固件工程（2026-11-14 前叫 `vehical_rak_edge_ai`），node 2，**不是 ROS ws** | 另一仓库 |
 
 仓库内部另有两个**不入库**的本地目录（2026-10-14 从 `~` 归位，`.gitignore` 的 `/tools/`、`/debug/`）：
@@ -93,7 +93,7 @@
                            ├-> 暂停：取消确认 + 新鲜静止遥测
                            └-> 恢复：重发 map 目标并重新规划
 Nav2 -> MPPI Omni -> smoother -> collision monitor -> /cmd_vel -> sim/stub adapter
-CAN v4 -> F407 底盘（SocketCAN：chassis_bringup -> mecanum_drive_controller -> rak_chassis -> can0）
+CANopen v5 -> F407 底盘（chassis_bringup -> device_container 主站 -> proxy driver -> rak_chassis 薄桥 -> mecanum_drive_controller）
 六轴 MoveIt fixture -> 软件轨迹/夹爪 Action server（仅仿真测试）
 ```
 
@@ -103,8 +103,8 @@ System 1 并未被改造成任务规划器，Harness 也不直接控制执行器
 fake Nav2 和“运动估算”遥测，不代表真实里程计或底盘反馈。
 组合入口 `task_navigation.launch.py` 的 `motion_backend` 只有 `sim`/`stub` 两个值，
 默认 `sim`；真底盘经 `chassis_bringup.launch.py` → `mecanum_drive_controller` →
-CAN（ADR-0016，`can_channel` 默认 `can0`，`allow_motion` 默认 false）。不要把
-launch 可解析当作固件兼容或安全验收。
+`rak_chassis` 薄桥 → `ros2_canopen` 主站 → CANopen v5（ADR-0024，`can_interface` 默认
+`can0`，`allow_motion` 默认 false）。不要把 launch 可解析当作固件兼容或安全验收。
 
 机械臂目标仍是六个定位关节加独立夹爪。六轴 URDF/MoveIt 配置是明确隔离的测试夹具，
 旧五轴模型仍是历史 demo；真实 CAD、标定、固件映射与反馈未提供。
@@ -243,9 +243,9 @@ QoS、解码/合成速度实测与验收命令见
 - `guard()` 保留最终否决权；Jev 进程内直接调用；S2 不得扩大安全许可。
 - `brain/rak_ai/types.py` 和 episode 的 `state_text` 不变；新任务协议另行版本化。
 - CAN 为 classic CAN 2.0A 1 Mbps，禁止 `fd on`。协议以叶节点仓库为准，不能猜测六轴固件映射。
-- 底盘链路唯一传输是 CAN v4（SocketCAN `can0`，ADR-0016）；链路冒烟用
-  `python3 scripts/can_link_smoke.py can0`（10/10 通过为合格：BAT≈12500 mV、FAULT=0、
-  BUSOFF=0），物理层查 `ip -details -statistics link show can0` 与 `dmesg | grep -i can`。
+- 底盘链路只剩 CANopen v5（`ros2_canopen` 主站 + `rak_chassis` 薄桥，ADR-0024）；v4 帧栈
+  已整体删除。无下位机时的验收 = `python3 scripts/verify_canopen_vcan.py`（vcan0 + fake slave），
+  物理层查 `ip -details -statistics link show can0` 与 `dmesg | grep -i can`。
   USB v2 链路、串口协议文档（`docs/protocol/`）与直连串口工具已按 ADR-0016 删除
   （删除前快照：tag `pre-usb-removal-20261013`）。
 - collision monitor/Nav2 配置与软件测试不等于安全认证或物理急停。

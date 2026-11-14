@@ -1,17 +1,18 @@
 <library path="rak_chassis_plugin">
-  <!-- [AI] 2026-10-29 双下位机：底盘板与机械臂板拆成两个 <ros2_control> 段 =
-       两个 plugin = 两个故障域。两者共享同一个 CanSession（can_session_pool.hpp），
-       不是各开一个 socket。见 docs/architecture.md 与 ADR-0016。 -->
+  <!-- [AI] 2026-11-14 薄 CANopen 桥：本包不再碰 CAN 帧。对象索引/类型/量化全部来自
+       URDF <param>，主站是 ros2_canopen（canopen_core + canopen_proxy_driver）。
+       底盘与臂是两个 <ros2_control> 段 = 两个 plugin = 两个故障域（各自一个 proxy
+       driver 节点、各自的反馈超时）。 -->
   <class
-    name="rak_chassis/RakChassisHardware"
-    type="rak_chassis::RakChassisHardware"
+    name="rak_chassis/CanopenChassis"
+    type="rak_chassis::CanopenChassis"
     base_class_type="hardware_interface::SystemInterface">
-    <description>底盘板（C30D + 4 轮 AT8236）：0x030/0x200-202/0x220/0x032。共享 CanSession（CAN v4，SocketCAN）。</description>
+    <description>底盘 proxy driver（driver_node=chassis，node_id 1）：4 轮 velocity 命令 + velocity 反馈，OD 0x2000.. / 0x2010.. 由 URDF 参数给出。</description>
   </class>
   <class
-    name="rak_chassis/RakArmHardware"
-    type="rak_chassis::RakArmHardware"
+    name="rak_chassis/CanopenArm"
+    type="rak_chassis::CanopenArm"
     base_class_type="hardware_interface::SystemInterface">
-    <description>机械臂板（C30D + 6 舵机 + J1/J2 编码器电机）：0x031/0x210/0x211/0x221/0x222。共享 CanSession。</description>
+    <description>机械臂 proxy driver（driver_node=arm，node_id 2）：7 轴 position 命令 + 最多 6 轴 position 反馈（无反馈的轴不导出 state），OD 0x2100.. / 0x2110.. 由 URDF 参数给出。</description>
   </class>
 </library>

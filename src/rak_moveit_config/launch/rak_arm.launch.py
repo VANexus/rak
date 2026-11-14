@@ -17,7 +17,7 @@
   use_hardware:=true
       **连真机上已经在跑的那套**：不再起 controller_manager / spawner /
       robot_state_publisher —— 它们由 `rak_bringup chassis_bringup.launch.py` 起了
-      （硬件插件 rak_chassis/RakArmHardware → 共享 CanSession → SocketCAN can0 → F407）。
+      （硬件插件 rak_chassis/CanopenArm → ros2_canopen 主站 → CANopen v5 → F407）。
       MoveIt 只起 move_group（+ 可选 rviz2），靠同名的 `arm_controller`
       （joint_trajectory_controller）对接 —— 关节名与 action 名在两侧逐字一致。
       臂的 TF 由**真机的** robot_state_publisher 发布

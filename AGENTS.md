@@ -1,13 +1,13 @@
 # AGENTS.md
 
-> **CAN 协议已于 2026-10-29 换成 v5 = CANopen（下位机已生效）** —— 见 ADR-0021 与两个下位仓的
-> 线缆事实源：`../vehical_rak_motion/docs/CANOPEN-V5.md` + `docs/canopen/chassis.json`（底盘板）、
-> `../vehical_rak_arm/docs/CANOPEN-V5.md` + `docs/canopen/arm.json`（机械臂板）。本仓
-> `src/rak_chassis` 的 `CanSession`/`can_decode` 仍说 **v4 帧**，对当前在板固件（底盘 R73 /
-> 机械臂 A14）**完全无效**：板子停在 Pre-operational，不发 NMT Start 就没有任何 PDO。真机链路要等
-> P3（lely-core 主站）。现在验证下位机只能用两个下位仓里的 `tools/canopen_bringup.py`（原始
-> SocketCAN），**不要**用本仓 v4 脚本或手搓 `cansend` 去判断"下位机坏了"。
-> **禁止同一总线混跑 v4/v5**（ID 冲突）。
+> **协议只剩一套：v5 = CANopen（2026-11-14 主机侧 v4 已整体删除）** —— 下位机 2026-10-29 就切了，
+> 上位机这次跟上：`src/rak_chassis` 的 v4 `CanSession`/`can_decode`/帧表/`can_link_smoke.py` 全部删除，
+> 现在是**薄桥**（`CanopenChassis` / `CanopenArm`：只做 OD 对象 ↔ ros2_control 接口、量化、`allow_motion`
+> 安全门），协议栈 = apt 的 `ros2_canopen` 0.3.4（NMT/SYNC/PDO/SDO/心跳归它）。
+> 线缆与对象事实源仍是两个下位仓：`../vehical_rak_motion/docs/CANOPEN-V5.md` + `docs/canopen/chassis.json`
+> （底盘板）、`../vehical_rak_arm/docs/CANOPEN-V5.md` + `docs/canopen/arm.json`（机械臂板）。
+> 无下位机时的验证 = `python3 scripts/verify_canopen_vcan.py`（vcan0 + fake slave，实测记录见
+> `docs/status/canopen_vcan_2026-11-14.md`）。**真机 can0 仍未验收**；同一总线永远只能有一个主站。
 
 
 Layered embodied robot system for Jetson Orin Nano (JetPack 7.2). C++/ROS 2 (Jazzy) + a
@@ -155,14 +155,14 @@ every one has a real responsibility:
   isolated six-axis fixture `urdf/six_axis_sim.urdf.xacro`.
 - `src/rak_moveit_config`: SRDF, IK and planning configuration; six-axis fixture is simulation-only.
 - `src/rak_arm_pinocchio_ik`: pinocchio-based IK arm chain for the brain↔arm tools layer.
-- `src/rak_chassis`: (ex `rak_hardware`) F407 transport + ros2_control plugin — the `Session`
-  seam with a **single** implementation, `CanSession` (SocketCAN; ADR-0016 deleted the USB v2
-  `SerialSession` and the `transport:=usb|can` factory); 4 wheel velocity + 7 arm position
-  interfaces (arm since 2026-10-14). Protocol today is v4 frames; v5/CANopen is not wired
-  yet (see the banner above).
+- `src/rak_chassis`: (ex `rak_hardware`) **CANopen v5 薄桥** — `ros2_control` 硬件插件
+  `CanopenChassis`（4 轮 velocity）/ `CanopenArm`（7 轴 position），只做 OD 对象 ↔ 接口、
+  量化与 `allow_motion` 安全门；协议栈是 `ros2_canopen`（订阅 `<driver>/rpdo`、发布
+  `<driver>/tpdo`），本包**不碰 CAN 帧**。旧的 v4 `CanSession`/`can_decode`/Session 抽象已删除。
 - `src/rak_canopen`: CANopen v5 **Jetson-side contract layer** (ADR-0022) — derives COB-IDs,
-  PDO layout, rates, quantization and the v4/v5 collision gate from the MCU SSOT manifest.
-  Not a protocol stack; lely-core is the production master (ADR-0021).
+  PDO layout, rates, quantization and v5-internal COB-ID uniqueness from the MCU SSOT manifest;
+  owns `bus.yaml` + the `dcfgen`-generated `master.dcf`（官方生成器，漂移门禁
+  `test/test_dcf_sync.py`）。Not a protocol stack; production master is `ros2_canopen` (ADR-0024).
 - `src/rak_commissioning`: (ex `rak_drive_tui` + `rak_arm_tui` + `chassis_key_test`)
   commissioning entries: `chassis_tui`, `arm_tui`, `chassis_key_test`,
   `launch/chassis_test.launch.py`. Both TUIs are pure ROS 2 tools (actions/topics only, never
@@ -199,7 +199,7 @@ every one has a real responsibility:
 - `src/rak_motion_stub`: test relay/estimate, not a hardware driver.
 - `src/rak_bringup`: the single composition layer — all launch files (`agent`, `robot`,
   `sensors`, `task`, `task_navigation`, `harness_agent`, `chassis_bringup`,
-  `canopen_bringup`, `slam`, `nav2`, `lidar`, `astra`, `depth_camera`, `gemini335l`,
+  `slam`, `nav2`, `lidar`, `astra`, `depth_camera`, `gemini335l`,
   `grasp_camera`, `stereo`, `speech`), params,
   udev and operator scripts (absorbed `rak_sensor_bringup`, `rak_navigation`,
   `rak_chassis_bringup`).
@@ -359,8 +359,8 @@ caveats above.
 - 门禁：`colcon test --packages-select rak_bringup`（清单不变量 + **受管组件在其声明的 launch 里
   必须是 `LifecycleNode`**——漏改一个就是一个静默空转节点）；
   `ROS_DOMAIN_ID=77 python3 -m pytest src/rak_lifecycle/test`（27 项机制与编排测试）。
-- ⚠️ 清单里的 `link` 域仍是 **v4 形态**，ADR-0021 之后对 R73/A14 板子无效；P3 换 lely-core 主站时
-  整段重声明，且届时拥有者是 v5 主站的网络管理，不是本 manager。
+- 清单里的 `link` 域已是 **CANopen v5**：`/device_container`（ros2_canopen NMT 主站）是该域的
+  拥有者（observed/external），本 manager 只读状态，绝不发 NMT 转移。
 
 ## Entry points
 
@@ -469,9 +469,11 @@ ships **empty** — the file must declare `schema_version: 1` and `frame_id: map
 refuses to start. The fake-Nav2 fixture's telemetry is a command-motion estimate, not measured
 odometry.
 
-**The base driver is `rak_chassis`** (`controller_manager` → `mecanum_drive_controller` →
-`CanSession`, started by `chassis_bringup.launch.py` with `allow_motion` default false);
-the former UART host node (`rak_base_driver`) was deleted by ADR-0016.
+**The base path is `rak_chassis` (CANopen 薄桥)** — `controller_manager` →
+`mecanum_drive_controller`/`arm_controller` → `CanopenChassis`/`CanopenArm`（OD 对象量化 +
+`allow_motion` 门）→ `ros2_canopen` proxy driver → 主站 `device_container`，由
+`chassis_bringup.launch.py` 起（`allow_motion` 默认 false）。协议栈不在本仓；旧 UART 节点
+(`rak_base_driver`) 与 v4 `CanSession` 都已删除。
 **`rak_arm_simulation`** provides software-only
 six-axis trajectory/gripper Action servers for the MoveIt fixture — no physics, no hardware.
 
@@ -567,12 +569,13 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   2026-10-29 that is **v5 = CANopen**: `../vehical_rak_motion/docs/CANOPEN-V5.md` +
   `docs/canopen/chassis.json`, `../vehical_rak_arm/docs/CANOPEN-V5.md` +
   `docs/canopen/arm.json` — never this repo. The bus is classic CAN 2.0A @ 1 Mbps; never pass
-  `fd on` (the F407 bxCAN would error-frame an FD frame). The host-side v4 implementation
-  (`CanSession` in `src/rak_chassis`) is what runs today but is wire-invalid against the
-  current in-board firmware; the v4 `PROTOCOL.md` and the retired `rak_serial_link` are
-  history only. A v5 host chain does exist on paper (`rak_bringup/canopen_bringup.launch.py`,
-  ADR-0024, mutually exclusive with `chassis_bringup.launch.py`) but it is **unbuilt and
-  unverified** — never run two masters on one bus.
+  `fd on` (the F407 bxCAN would error-frame an FD frame). The host side is now **v5 only**:
+  `chassis_bringup.launch.py` starts `canopen_core/device_container_node` (NMT master node 127,
+  底盘 1 / 臂 2) with `rak_canopen` 的 `bus.yaml` + `master.dcf`，`rak_chassis` 薄桥经 proxy
+  driver 的 rpdo/tpdo 话题交换 OD 对象。v4 `PROTOCOL.md`、`CanSession`、`can_link_smoke.py`
+  与 `canopen_bringup.launch.py` 都是历史（2026-11-14 删除）。**无下位机时的验收**是
+  `scripts/verify_canopen_vcan.py`（vcan0 + fake slave）；真机 can0 未验收；同一总线永远
+  只能有一个主站（双主站会把从站踢出 Operational）。
 
 ## Gotchas
 
@@ -594,7 +597,10 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
 - Build files hardcode JetPack paths: VPI at `/opt/nvidia/vpi4`, pkg-config module
   `nvjpeg-13.2`, CUDA headers at `/usr/local/cuda-13.2/targets/sbsa-linux/include`.
   This workspace only builds on the Jetson (aarch64); do not "portable-ize" casually
-  without an x86 alternative to verify against.
+  without an x86 alternative to verify against. **CUDA 13.2 + CMake 3.28**：`FindCUDAToolkit`
+  默认找不到 CUDART，`rak_gpu` 需要额外传 `-DCUDAToolkit_ROOT=/usr/local/cuda-13.2`；
+  `rak_pointcloud`（`enable_language(CUDA)`）还需要 `-DCUDAToolkit_LIBRARY_ROOT=/usr/local/cuda-13.2`
+  并清掉该包 build 目录才生效（2026-11-14 实测）。
 - C++ is C++17 with `-Wall -Wextra -Wpedantic` in GPU/stereo packages. Stereo runs
   `ament_lint_auto` under `BUILD_TESTING`; GPU has no functional tests.
 - System 2 latency is 12–30 s per call (measured), so S2 is fire-and-forget in a thread
@@ -630,11 +636,18 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   stops and disables gdm (~1.8 -> ~2.3 GiB available, 75-160 MiB CMA back).
   GUI launchers require `desktop`; migrated sensor/navigation wrappers do not
   require DISPLAY. Autologin is off, so returning to the desktop requires login.
-- The v4 CAN link smoke test is `python3 scripts/can_link_smoke.py can0` (10/10 pass =
-  qualified back when v4 was the wire; battery ≈12500 mV, FAULT=0, BUSOFF=0). It says nothing
-  about the current v5/CANopen firmware — use the bringup tool in the sibling repos for that.
-  Physical/driver layers: `ip -details -statistics link show can0` and `dmesg | grep -i can`.
-  The old serial scripts were deleted with the USB link (ADR-0016).
+- **`master_config` 必须是 `dcfgen` 生成的主站 DCF**（带 1F80/1F81/1F85 网络表）。拿从站 EDS
+  冒充它，`device_container` 能加载但**不发 NMT reset**，proxy driver 1 s Boot Timeout 后
+  上游 retry 路径抛未捕获 `std::system_error: Command: Operation not permitted` 直接 abort
+  （2026-11-14 实测）。重生成：`scripts/gen_canopen_master_dcf.py`；漂移门禁
+  `src/rak_canopen/test/test_dcf_sync.py`。`device_container` **不是** lifecycle 节点，
+  `ros2 lifecycle set` 对它无效。从站 `dcf` 必须是相对名（绝对路径会被拼成双路径）。
+  物理层自检：`ip -details -statistics link show can0`、`dmesg | grep -i can`。
+- **驱动不激活 = 没有 `~/rpdo`**：`ros2_canopen` 的官方流程是容器加载后
+  `ros2 lifecycle set /lifecycle_manager configure` → `activate`（chassis_bringup 已按
+  6 s / 9 s 定时执行，controller_manager 延到 12 s）。另外 **0.3.4 主站不发 SYNC**，
+  而 TPDO 是 type 5（SYNC 触发）→ 台架能证明 NMT/心跳/驱动激活，但收不到 TPDO；
+  闭合路径见 ADR-0024 2026-11-14 二次修订。
 - The lidar `lidar_name` must be `N10_P` (108 B @ 460800); `N10` fails CRC. Use the udev alias
   `/dev/wheeltec_lidar`, never `/dev/ttyUSB0` (other serial adapters may also claim ttyUSB).
 - Simulation task telemetry is a command-motion estimate, not measured odometry. A
@@ -683,28 +696,19 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   cancel all three DOF at once (wheels spin, body does not move). It is **not** an ABCD
   port permutation — `[++++]` maps to itself under any permutation, so only a sign flip
   can explain it; do not go hunting in the firmware port table. The correction is the
-  `wheel_sign` hardware parameter in `src/rak_description/urdf/rak_chassis.urdf.xacro`
-  (default `-1 1 -1 1`), applied by `rak_system.cpp`, which negates that wheel's command
-  **and** feedback together so the closed loop stays self-consistent and ROS's
+  URDF per-joint `sign` parameter in `src/rak_description/urdf/rak_chassis.urdf.xacro`
+  (defaults `-1 1 -1 1` via `wheel_sign_fl/fr/rl/rr`), applied by the CANopen bridge
+  (`rak_chassis/src/canopen_bridge.cpp`), which negates that wheel's command **and**
+  feedback together so the closed loop stays self-consistent and ROS's
   "positive = rolling forward" becomes true. Override it on
-  `chassis_bringup.launch.py wheel_sign:="..."` to A/B without rebuilding; the pass logs
-  `wheel_sign = [1 -1 1 -1] (FL FR RL RR)` at startup. The code default stays `+1 1 1 1`
-  (neutral) on purpose — the layer must not hardcode one robot's wiring. Re-calibrate
-  after any wheel, motor or encoder change.
-- **A `read() lost feedback` line is usually a downstream symptom, and `cmd_stale` is not
-  a fault.** `kStateFaultMask = 0x003D` in `can_session.cpp` includes `STATE.bit3
-  cmd_stale`, which the F407 sets whenever `DRIVE_CMD` stops for 100 ms (PROTOCOL v4
-  §6.2). Historically the extra `fault_bitmap != 0` check inside `read()` pulled bit3 into
-  the feedback veto, producing the self-latching chain: no controller active → deadman →
-  `fault_bitmap=0x0008` → `read()` errors → controller_manager deactivates the hardware →
-  controllers can never load → only a full relaunch escaped. **Settled by ADR-0017
-  (2026-10-14): `read()` now vetoes on `(fault_bitmap & ~0x0008) != 0`** — cmd_stale is
-  diagnostic only (still published in `fault_bitmap`), `bat_uv`/`can_recovering` remain
-  vetoes, and `kStateFaultMask` is untouched. The healthy log shape was
-  `connected=1 handshaken=1 feedback_valid=1 faulted=0 feedback_age=2ms` with `0x0008` the
-  only nonzero field; after the fix a `lost feedback` line means something other than
-  bit3 (or `feedback_age > 120 ms`) actually failed — read the printed fields, and do not
-  re-add `fault_bitmap != 0` wholesale or edit the mask to "fix" a log line.
+  `chassis_bringup.launch.py wheel_sign:="..."` to A/B without rebuilding. **v5 未实测**：
+  该极性是 v4 时代在真车上量的，CANopen 链路上的轮序/符号要等首帧再核一次
+  （`canopen_contract.yaml` 已记 [FL,FR,RL,RR] ↔ W1..W4）。Re-calibrate after any wheel,
+  motor or encoder change.
+- **历史坑，别再复活**：v4 时代 `read()` 曾把 `fault_bitmap` 里 `cmd_stale`（bit3）也当反馈否决，
+  自锁成"控制器没激活 → 死区 → read 报错 → CM 停用硬件"。ADR-0017 定的是"只对真正的故障位否决"，
+  这条原则在 v5 桥里延续成：**每块板自己的反馈超时才会 ERROR**，`cmd_seq`/`cmd_flags` 活性由 MCU
+  判死（100 ms），主机侧不重复当故障。
 - **Never run two `chassis_bringup` instances.** Both put a node named
   `/controller_manager` on the domain, so the second launch's `spawner`s reach the first
   one's manager and die with `Failed to configure controller` / `Failed loading

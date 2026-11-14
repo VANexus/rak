@@ -146,7 +146,7 @@ ObjectType=0x7
 ;StorageLocation=PERSIST_COMM
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x80+$NODEID
+DefaultValue=$NODEID+0x80
 PDOMapping=0
 
 
@@ -1017,7 +1017,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x600+$NODEID
+DefaultValue=$NODEID+0x600
 PDOMapping=1
 
 
@@ -1027,7 +1027,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0007
 AccessType=ro
-DefaultValue=0x580+$NODEID
+DefaultValue=$NODEID+0x580
 PDOMapping=1
 
 

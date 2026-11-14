@@ -109,7 +109,6 @@ semantics:
   mode:   {unit: raw, factor: 1.0, source: "[SPEC] 0x2105 mode UINT8"}
   errcnt: {unit: count, factor: 1.0, source: "[SPEC] 0x2105 servo_errcnt UINT8"}
 
-# v4 回滚链路的 COB-ID 取自本仓代码（不再抄第三份表）：
-# contract.py 从这段路径里正则出 `constexpr uint32_t kId... = 0x...`，
-# 与派生出的 v5 COB-ID 求交集 —— 非空即"同总线混跑"，门禁直接失败。
-v4_id_source: ../rak_chassis/src/can_session.cpp
+# 2026-11-14：v4 主机栈已整体删除（本仓无 v4 代码、无回滚分支），原来"v4/v5
+# 混跑碰撞"的算术门禁随之退场；现在的唯一性判据是 v5 内部 COB-ID 不重叠
+#（contract.duplicate_cob_ids()，test_contract.py 钉）。

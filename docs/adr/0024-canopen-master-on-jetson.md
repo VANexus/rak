@@ -109,3 +109,77 @@ ADR-0021 决定两块 F407 的 CAN 层换 CANopen v5，并把 Jetson 侧主站�
   2. **底盘 ISR 占用率 41.3% > 35% 预算**（臂 18.8% 达标）——按 AGENTS §3 已"停下上报"，
      **在复测回落之前，底盘不得进入实车运动**。
 - 本文"待闭合项 #1（安装与编译验证）"仍然成立：ros2_canopen 在 Orin 上仍没有装过。
+
+### 2026-11-14：主机侧 v4 栈整体删除，本 ADR 的实现状态更新
+
+- **v4 没了（主机侧）**：`CanSession`/`can_decode`/`can_session_pool`/`Session` 抽象、
+  v4 帧表与 `scripts/can_link_smoke.py`、`canopen_bringup.launch.py` 全部删除。
+  `chassis_bringup.launch.py` 是唯一底盘链入口，起 `canopen_core/device_container_node`
+  （NMT master node 127，底盘 1 / 臂 2）+ `controller_manager`。
+- **`canopen_ros2_control/CanopenSystem` 不满足运动环**：它的 read/write 是 raw
+  RPDO/TPDO 直通（`rpdo/index|subindex|data`），不做量化、不做状态刷新，标准控制器
+  （`mecanum_drive_controller` / JTC）无法直接绑定。故 `src/rak_chassis` 改为**薄桥**
+  （`CanopenChassis` / `CanopenArm`）：订阅 `<driver>/rpdo`、发布 `<driver>/tpdo`，
+  只做 OD 对象↔`ros2_control` 接口、量化、`allow_motion` 安全门与按板反馈超时；
+  它不含任何 CAN 帧编解码，§3 的"不新造语义名"约束不变。
+- **`master_config` 语义已实测**（待闭合项 #1 部分闭合，见
+  `docs/status/canopen_vcan_2026-11-14.md`）：它必须是 **`dcfgen` 生成的主站 DCF**
+  （含 1F80/1F81/1F85 网络表）。传从站 EDS 时主站不发 NMT reset → proxy driver 1 s
+  Boot Timeout → 上游 retry 路径抛出未捕获 `std::system_error: Command: Operation
+  not permitted` 并 abort。`device_container` **不是** lifecycle 节点。
+  生成：`scripts/gen_canopen_master_dcf.py`；漂移门禁 `src/rak_canopen/test/test_dcf_sync.py`。
+- **EDS 生成器修正**：两个下位仓的 `tools/canopen/template.eds` 把 COB-ID 默认值写成
+  `0x80+$NODEID`，官方 `dcfgen`/`dcf-lint` 只接受 `$NODEID+0x80` 形式（否则直接
+  `ValueError: invalid value`）。已改模板并重新生成两份 EDS。`CountLabel` 条目保留
+  （CiA 306 合法、CANopenNode 导出器要），故 dcfgen 仍用 `-S`。
+- **仍未闭合**（不得写成"已接入"）：真机 `can0` 未验收；vcan 只证明主站/NMT/SDO；
+  PDO 实际收发、SYNC 2 ms 抖动、心跳消费（fake slave 的 `0x1017` 无默认值，不发周期心跳）、
+  SDO 写、桥的端到端（proxy driver ↔ ros2_control）全部未验。
+
+### 2026-11-14 追加：0.3.4 的 `device_container` 一个容器只挂了一个驱动
+
+`chassis_bringup.launch.py` 在 vcan0 上实测（无下位机）：主站、`bus.yaml`、`dcf_path`、
+两份 EDS 路径全部正确解析，但 `device_container_node` **只加载了 `bus.yaml` 里第一个非 master
+设备**（`arm`；把两个设备名换成 `dev_a`/`dev_b` 后同样只有 `dev_a`）。三设备配置复现同一形态，
+`load_drivers()` 之后没有任何"Loading driver failed / duplicate"日志 —— 即加载循环在第一台
+成功后就不再继续（0.3.4 apt 构建的可观察行为，master 分支源码是遍历全部设备的）。
+
+后果与处置（**未解决，勿当成双板可用**）：
+- 一个容器 = 一块板，意味着第二条 `device_container` 会再起一个 NMT 主站 —— **同一总线禁止**。
+  所以"双板 + 单主站"在当前 apt 版本上还没有可用配置。
+- 已验证的是单板形态：`bus.yaml` 只留 `chassis`（或只留 `arm`）时驱动正常加载、
+  `rak_chassis` 薄桥正常发布 tpdo、`controller_manager` 正常 configure/activate 该硬件。
+- 下一条路（未选）：从源码编 ros2_canopen（master 分支已遍历全部设备）；或给两块板各一个
+  `device_container` 并把 NMT 主站拆成独立进程（等于改上游模型）。任选其一都要另写 ADR。
+
+另：无下位机时 proxy driver 三次 Boot Timeout 后会抛 `ros2_canopen::DriverException` 让
+**整个容器进程 abort**（上游行为）。因此台架无板时 `chassis_bringup` 只能验证到"驱动加载 +
+硬件 configure/activate"，不能长跑。
+
+### 2026-11-14 二次修订：多从站、驱动激活、SYNC —— 台架实测结论
+
+1. **"一个容器只加载第一个从站"是误判，已撤回。** 之前的现象是：第一台从站 boot 失败
+   → 上游 proxy driver 三次超时后抛 `DriverException` 让**整个容器 abort**，第二台根本没轮到。
+   用官方 `canopen_fake_slaves` 同时起 node 1 / node 2（各自喂我们的 `chassis.eds` /
+   `arm.eds`）后，`device_container` 正常打印 `Found device arm` / `Found device chassis`
+   并都进入 boot 成功。**多从站没有问题**，缺的是"无板时别让容器 abort"的台架纪律。
+2. **驱动必须被官方 lifecycle 流程激活，否则不会发布 `~/rpdo`。**
+   `ros2_canopen` README 的官方步骤是：容器加载后
+   `ros2 lifecycle set /lifecycle_manager configure` → `activate`。
+   因此 `chassis_bringup.launch.py` 现在：
+   - 用 `LifecycleMasterDriver` / `LifecycleProxyDriver`（bus.yaml 已切换）；
+   - 起容器后 6 s / 9 s 分别执行上面两条官方 CLI；
+   - controller_manager 延后到 12 s 起动 —— 硬件若先激活，薄桥会在
+     `startup_grace_ms`（新增参数，默认 5000 ms）后把硬件判死，控制器永远起不来。
+   台架验证：两个 hardware 组件都 `Successful 'activate'`，
+   `joint_state_broadcaster` / `mecanum_drive_controller` / `arm_controller` 全部
+   `Configured and activated`。
+3. **SYNC 缺失（真问题，未闭合）**：`ros2_canopen` 0.3.4 的主站**不发 SYNC**
+   （源码里没有 SYNC producer；`bus.yaml` 的 `sync_period` 只被 dcfgen 写进
+   `master.dcf` 的 `0x1006`，运行期无人消费）。我们的 TPDO transmission type = 5
+   （SYNC 触发，[V5] §4），因此**没有 SYNC 就没有 TPDO**，薄桥收不到 `~/rpdo`，
+   台架只能用心跳（0x701/0x702）证明节点活着。
+   两条官方闭合路径（都需要先写 ADR，二选一）：
+   - 主站侧补齐 SYNC producer（上游能力缺口，走 issue/PR 或换 ADR-0021 原本的 lely 主站）；
+   - MCU 侧把 TPDO 改成事件定时器触发（transmission 254 + event timer），
+     这会改 [V5] 规范件，属于下位机仓的协议决策。

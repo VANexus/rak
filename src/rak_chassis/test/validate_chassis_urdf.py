@@ -102,23 +102,62 @@ def main():
     if set(rc_by_name) != {"rak_chassis", "rak_arm"}:
         return 1
     expect_plugin = {
-        "rak_chassis": "rak_chassis/RakChassisHardware",
-        "rak_arm": "rak_chassis/RakArmHardware",
+        "rak_chassis": "rak_chassis/CanopenChassis",
+        "rak_arm": "rak_chassis/CanopenArm",
     }
     for seg, want in expect_plugin.items():
         plugin = rc_by_name[seg].find("hardware/plugin")
         check(plugin is not None and plugin.text == want,
               f"{seg}: hardware plugin == {want}")
-    # 两段共享同一个 CanSession —— 总线相关参数必须逐字段一致（pool 会校验）
+    # CANopen 薄桥（ADR-0024）：两段各自绑一个 proxy driver 节点，安全门同源。
     seg_params = {
         seg: {x.get("name"): (x.text or "").strip()
               for x in rc.findall("hardware/param")}
         for seg, rc in rc_by_name.items()
     }
-    for key in ("host_build_id", "allow_motion", "can_channel"):
-        check(seg_params["rak_chassis"].get(key) == seg_params["rak_arm"].get(key),
-              f"两段的 {key} 必须一致（{seg_params['rak_chassis'].get(key)!r} vs "
-              f"{seg_params['rak_arm'].get(key)!r}）")
+    check(seg_params["rak_chassis"].get("driver_node") == "chassis"
+          and seg_params["rak_arm"].get("driver_node") == "arm",
+          f"两段的 driver_node 必须是 chassis / arm（实为 "
+          f"{seg_params['rak_chassis'].get('driver_node')!r} / "
+          f"{seg_params['rak_arm'].get('driver_node')!r}）")
+    check(seg_params["rak_chassis"].get("allow_motion")
+          == seg_params["rak_arm"].get("allow_motion"),
+          f"两段的 allow_motion 必须一致（运动许可只有一个来源，实为 "
+          f"{seg_params['rak_chassis'].get('allow_motion')!r} vs "
+          f"{seg_params['rak_arm'].get('allow_motion')!r}）")
+    for seg in ("rak_chassis", "rak_arm"):
+        for key in ("cmd_seq_object", "cmd_flags_object"):
+            check(bool(seg_params[seg].get(key)),
+                  f"{seg}: {key} 非空（[V5] §5 命令活性对象）")
+        for dead in ("host_build_id", "can_channel"):
+            check(dead not in seg_params[seg],
+                  f"{seg}: 不再有 v4 参数 {dead}")
+
+    # ---- A2：OD 对象映射（CANopen 薄桥的唯一职责）----
+    print("A2. 关节 → OD 对象映射")
+    seen_objects = {}
+    for j in rc_by_name["rak_chassis"].findall("joint") + rc_by_name["rak_arm"].findall("joint"):
+        n = j.get("name")
+        p = {x.get("name"): (x.text or "").strip() for x in j.findall("param")}
+        obj = p.get("command_object", "")
+        check(bool(obj) and p.get("command_type") in ("int16", "uint16"),
+              f"{n}: command_object/command_type 非空（{obj!r}/{p.get('command_type')!r}）")
+        check(_close(p.get("command_scale"), p.get("command_scale")) and
+              float(p.get("command_scale") or 0) != 0.0,
+              f"{n}: command_scale 非零（实为 {p.get('command_scale')!r}）")
+        if obj:
+            check(obj not in seen_objects,
+                  f"{n}: command_object {obj} 唯一（已用于 {seen_objects.get(obj)}）")
+            seen_objects[obj] = n
+        if p.get("state_object"):
+            check(bool(p.get("state_type")),
+                  f"{n}: 有 state_object 就必须有 state_type")
+            check(_close(p.get("state_scale"), p.get("state_scale")) and
+                  float(p.get("state_scale") or 0) != 0.0,
+                  f"{n}: state_scale 非零（实为 {p.get('state_scale')!r}）")
+    gripper = rc_by_name["rak_arm"].find("joint[@name=\"gripper_joint\"]")
+    check(gripper is not None and gripper.find("param[@name=\"state_object\"]") is None,
+          "gripper_joint: 无 state_object（无物理反馈通道，契约 §2.3）")
     check("mock_components" not in text,
           "全文不含 mock_components（仿真插件不得混进真机树）")
 
@@ -149,8 +188,9 @@ def main():
         si = j.findall("state_interface")
         if n in WHEELS:
             check([c.get("name") for c in ci] == ["velocity"]
-                  and sorted(s.get("name") for s in si) == ["position", "velocity"],
-                  f"{n}: 1 个 velocity 命令 + position/velocity 两个状态")
+                  and [s.get("name") for s in si] == ["velocity"],
+                  f"{n}: 1 个 velocity 命令 + velocity 状态"
+                  "（轮 position counts 未标定，不导出）")
         elif n in ARM:
             ok = (len(ci) == 1 and ci[0].get("name") == "position"
                   and len(si) == 1 and si[0].get("name") == "position")
@@ -246,7 +286,7 @@ def main():
     if _fail:
         print(f"❌ {len(_fail)} 项失败")
         return 1
-    print("ALL OK: chassis URDF 满足 RakChassisHardware + RakArmHardware 初始化契约")
+    print("ALL OK: chassis URDF 满足 CanopenChassis + CanopenArm 薄桥契约（CANopen v5）")
     return 0
 
 

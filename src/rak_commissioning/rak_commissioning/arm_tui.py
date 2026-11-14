@@ -3,7 +3,7 @@
 
 命令链（ADR-0007 统一 ros2_control）：
     arm_tui ─FollowJointTrajectory(action)─► arm_controller(JTC)
-                └─position 接口─► rak_chassis(RakArmHardware) ─Session─► can0 ─► 机械臂板
+                └─position 接口─► rak_chassis(CanopenArm) ─rpdo/tpdo─► ros2_canopen 主站 ─► 机械臂板
     arm_tui ─Float64MultiArray─► gripper_controller ─► 同上第 7 轴（夹爪）
 
 反馈 /joint_states（joint_state_broadcaster）。⚠️ 回读 = 固件 servo_get_pulse，

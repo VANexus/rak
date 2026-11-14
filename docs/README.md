@@ -85,6 +85,7 @@
 | [`status/project_status.md`](status/project_status.md) | 现行（活文档，增量追加不追改） | 2026-11-12 |
 | [`status/next_2026-10-30.md`](status/next_2026-10-30.md) | **已过期**（2026-10-30 施工单，留档） | 2026-10-30 |
 | [`status/grasp_validation.md`](status/grasp_validation.md) | 实测记录（2026-10） | 2026-10-14 |
+| [`status/canopen_vcan_2026-11-14.md`](status/canopen_vcan_2026-11-14.md) | 实测记录：无下位机时 ros2_canopen 主站的 vcan 验证 | 2026-11-14 |
 
 **Archive**
 

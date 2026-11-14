@@ -12,8 +12,13 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <!-- canopen_bringup.launch.py 引用 rak_canopen 的 bus/controllers 配置（ADR-0024） -->
+  <!-- chassis_bringup.launch.py 起 ros2_canopen 主站并读 rak_canopen 的
+       bus.yaml/master.dcf（ADR-0024）。主站是 apt 包，不是本仓代码。 -->
   <exec_depend>rak_canopen</exec_depend>
+  <exec_depend>canopen_core</exec_depend>
+  <exec_depend>canopen_master_driver</exec_depend>
+  <exec_depend>canopen_proxy_driver</exec_depend>
+  <exec_depend>ros2lifecycle</exec_depend>
   <!-- 组装契约层（清单 / 编排入口 / 档位），本包只负责硬件全栈组合（ADR-0026） -->
   <exec_depend>rak_orchestration</exec_depend>
   <!-- 传感器链（原 rak_sensor_bringup） -->
@@ -50,6 +55,8 @@
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>joint_state_broadcaster</exec_depend>
   <exec_depend>mecanum_drive_controller</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+  <exec_depend>forward_command_controller</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>rak_description</exec_depend>

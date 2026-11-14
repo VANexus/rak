@@ -19,10 +19,20 @@
   依据：`../vehical_rak_motion/docs/CANOPEN-V5.md`、`docs/status/project_status.md`。
   已就绪产物：Debug `abeea499f6a14924` / Release `58ee9eb151fe08a7`（SHA-256 前 16）。
 
-- [ ] **ros2_canopen 主站装机 + `transport:=canopen` 首跑**
-  先确认 apt 里有没有可用包；首帧核对按 ADR-0024 §5：每个 PDO 的 DLC 与契约
-  `byte_size` 一致、没有未知 COB-ID、物理量在合理范围、字节序证据回填。
-  依据：`docs/adr/0024-canopen-master-on-jetson.md` §5、
+- [x] **ros2_canopen 装机 + vcan 跑通**（2026-11-14）
+  apt 0.3.4（core/master-driver/proxy-driver/ros2-control/fake-slaves）装好；
+  `python3 scripts/verify_canopen_vcan.py` exit 0：NMT reset → boot-up → SDO 读 → NMT start，
+  `/master/sdo_read` 成功。`master_config` 必须是 `dcfgen` 生成的主站 DCF（已入档）。
+  依据：`docs/status/canopen_vcan_2026-11-14.md`、ADR-0024 修订（2026-11-14）。
+- [ ] **TPDO 触发方式与 SYNC 缺口**：`ros2_canopen` 0.3.4 主站不发 SYNC，而我们的
+  TPDO 是 transmission type 5（SYNC 触发）→ 台架收不到 `~/rpdo`（心跳能证明节点在）。
+  二选一：主站补 SYNC producer（上游/lely），或 MCU 侧改事件定时器 TPDO。先写 ADR。
+  多从站加载与 lifecycle 激活已实测通过（ADR-0024 2026-11-14 二次修订）。
+- [ ] **真机 `can0` 首帧核对**（装机后第一件事）
+  每个 PDO 的 DLC 与契约 `byte_size` 一致、没有未知 COB-ID、物理量在合理范围、
+  字节序证据回填；`0x2F00` 读回 R76/A16；SYNC 2 ms 抖动与心跳消费实测。
+  在此之前 `rak_chassis` 薄桥只有 gtest 与 URDF 契约证明，**端到端未验**。
+  依据：`docs/adr/0024-canopen-master-on-jetson.md` §5 与 2026-11-14 修订、
   `docs/adr/0022-jetson-canopen-contract-layer.md`、`docs/status/next_2026-10-30.md` §5。
 
 - [ ] **机械臂真机 J2–J6 运动 + 限位 + 运动中急停**（J1 已验，其余未验）

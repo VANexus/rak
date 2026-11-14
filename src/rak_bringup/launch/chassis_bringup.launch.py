@@ -1,61 +1,96 @@
-"""[AI] 底盘 + 臂 ros2_control 硬件链路 bringup（CAN v4 / SocketCAN 直连 F407，ADR-0016）。
+"""[AI] 底盘 + 臂 CANopen v5 控制链 bringup（ADR-0024：主站 = ros2_canopen）。
 
-启动 robot_state_publisher + controller_manager(rak_chassis) 并 spawn
+启动 robot_state_publisher + ros2_canopen 主站（device_container，NMT/SYNC/PDO
+归它）+ controller_manager（硬件插件 = `rak_chassis/CanopenChassis|CanopenArm`
+薄桥，经 proxy driver 的 rpdo/tpdo 话题交换 OD 对象），然后 spawn
 joint_state_broadcaster、mecanum_drive_controller、arm_controller(JTC) 与
-gripper_controller。上层工具（chassis_tui / arm_tui 等）只经 ROS 接口对话，
-不直连 CAN（ADR-0016 决策 2）。
+gripper_controller。上层工具只经 ROS 接口对话，不碰 CAN（ADR-0016 决策 2 保留）。
 
-臂运动写者二选一（arm_motion_writer，ADR-0011 D1：底盘/臂各有多个候选写者，
-但同一批 position 命令接口同一时刻只能有一个 active 控制器）：
-  - jtc（默认）：arm_controller = JointTrajectoryController —— MoveIt / arm_tui 的
-    FollowJointTrajectory 入口（轨迹语义，与 MoveIt 生态一致）。
-  - wbc：arm_position_controller = ForwardCommandController，话题重映射到
-    /wbc/arm_setpoints —— rak_wbc(HQP) 的位置流入口（速度级 WBC，ADR-0011）。
-  - none：只起底盘，臂接口不激活（纯导航联调 / 臂未接线时）。
-
-⚠️ MoveIt 真机档（rak_moveit_config/launch/rak_arm.launch.py 的 hardware 模式）
-**依赖 jtc**：它不起 controller_manager，直接对接同名的 `arm_controller`。
-选 wbc/none 时该真机档找不到 arm_controller，会起不来（这是预期，不是 bug）。
+臂运动写者二选一（arm_motion_writer，ADR-0011 D1）：jtc（默认）/ wbc / none，
+语义与旧 v4 文件一致；真机 MoveIt 档依赖 jtc。
 
 安全:
-- allow_motion 默认 false —— 硬件永远只发 DISARMED 零目标，臂指令在 Session 层被抑制。
-- allow_motion:=true 是显式运动许可，前提: 车轮架空 + 电池可控 + 有急停手段，
-  臂周清空（臂也会解禁）。
-- 麦轮 IK 在 mecanum_drive_controller(上位机), 轮级等比饱和在 F407。
+- allow_motion 默认 false —— 桥只发零目标，cmd_flags.bit0=0，臂命令一帧不发。
+- allow_motion:=true 是显式运动许可，前提: 车轮架空 + 电池可控 + 有急停手段。
+
+台架（无下位机）验证：can_interface:=vcan0 + canopen_fake_slaves（见
+docs/status/canopen_vcan_2026-11-14.md）。真机：can_interface:=can0（默认）。
 
 用法:
   ros2 launch rak_bringup chassis_bringup.launch.py
   ros2 launch rak_bringup chassis_bringup.launch.py allow_motion:=true
-  ros2 launch rak_bringup chassis_bringup.launch.py arm_motion_writer:=wbc   # WBC 接管臂
+  ros2 launch rak_bringup chassis_bringup.launch.py arm_motion_writer:=wbc
 """
+
+import tempfile
+from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    OpaqueFunction,
+    TimerAction,
+)
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
-def _launch_setup(context, *args, **kwargs):
-    host_build_id = LaunchConfiguration("host_build_id").perform(context)
-    allow_motion = LaunchConfiguration("allow_motion").perform(context)
-    can_channel = LaunchConfiguration("can_channel").perform(context)
-    arm_writer = LaunchConfiguration("arm_motion_writer").perform(context)
-    # [AI] 值含空格，必须整体加引号：Command 走 shlex.split，不加会被拆成 4 个参数
-    wheel_sign = LaunchConfiguration("wheel_sign").perform(context)
 
-    urdf_path = LaunchConfiguration("urdf").perform(context)
-    controllers_file = LaunchConfiguration("controllers_file").perform(context)
+def _launch_setup(context, *args, **kwargs):
+    def config(name):
+        return LaunchConfiguration(name).perform(context)
+
+    allow_motion = config("allow_motion")
+    arm_writer = config("arm_motion_writer")
+    can_interface = config("can_interface")
+    controllers_file = config("controllers_file")
+    master_config = config("master_config")
+    urdf_path = config("urdf")
+
+    sign = config("wheel_sign").split()
+    assert len(sign) == 4, f"wheel_sign 需 4 个值（FL FR RL RR），得到 {sign!r}"
+    sign_fl, sign_fr, sign_rl, sign_rr = sign
 
     robot_description = ParameterValue(
-        # [AI] Command 真正执行 xacro，参数直通 URDF 中的 $(arg ...) 占位
         Command(
-            f"xacro {urdf_path} host_build_id:={host_build_id} "
-            f"allow_motion:={allow_motion} can_channel:={can_channel} "
-            f'wheel_sign:="{wheel_sign}"'
+            f"xacro {urdf_path} allow_motion:={allow_motion} "
+            f'wheel_sign_fl:="{sign_fl}" wheel_sign_fr:="{sign_fr}" '
+            f'wheel_sign_rl:="{sign_rl}" wheel_sign_rr:="{sign_rr}"'
         ),
         value_type=str,
+    )
+
+    canopen_share = get_package_share_directory("rak_canopen")
+
+    # ---- 1) ros2_canopen 主站容器（NMT master node 127 + proxy driver ×2）----
+    # 2026-11-14 实测（vcan + fake slave，docs/status/canopen_vcan_2026-11-14.md）：
+    #  - device_container **不是** lifecycle 节点，configure/activate 无用；
+    #  - master_config 必须是 dcfgen 生成的主站 DCF（带 1F80/1F81/1F85 网络表），
+    #    传从站 EDS 会 Boot Timeout 后 abort；
+    #  - 从站 dcf 必须是相对名，dcf_path 是它们的父目录 → bus.yaml 里的
+    #    @BUS_CONFIG_PATH@ 在这里替换成安装态 config 目录。
+    canopen_config = canopen_share + "/config"
+    bus_text = Path(canopen_config + "/bus.yaml").read_text(encoding="utf-8")
+    bus_file = tempfile.NamedTemporaryFile(
+        mode="w", prefix="rak_canopen_bus_", suffix=".yaml", delete=False)
+    bus_file.write(bus_text.replace("@BUS_CONFIG_PATH@", canopen_config))
+    bus_file.close()
+
+    container_params = {
+        "bus_config": bus_file.name,
+        "can_interface_name": can_interface,
+        "master_config": master_config,
+    }
+    device_container = Node(
+        package="canopen_core",
+        executable="device_container_node",
+        name="device_container",
+        namespace="",
+        output="screen",
+        parameters=[container_params],
     )
 
     nodes = [
@@ -66,7 +101,18 @@ def _launch_setup(context, *args, **kwargs):
             output="screen",
             parameters=[{"robot_description": robot_description}],
         ),
-        Node(
+        device_container,
+        # 官方流程（ros2_canopen README）：device_container 把主站与各驱动作为
+        # lifecycle 节点加载后，由 `/lifecycle_manager` 统一 configure → activate。
+        # 这一步**不能省**：驱动不 activate 就不发布 `~/rpdo`，薄桥读不到反馈；
+        # 而 controller_manager 若先激活硬件，会在启动宽限后把硬件判死。
+        TimerAction(period=6.0, actions=[ExecuteProcess(
+            cmd=["ros2", "lifecycle", "set", "/lifecycle_manager", "configure"],
+            output="screen")]),
+        TimerAction(period=9.0, actions=[ExecuteProcess(
+            cmd=["ros2", "lifecycle", "set", "/lifecycle_manager", "activate"],
+            output="screen")]),
+        TimerAction(period=12.0, actions=[Node(
             package="controller_manager",
             executable="ros2_control_node",
             name="controller_manager",
@@ -75,7 +121,7 @@ def _launch_setup(context, *args, **kwargs):
                 controllers_file,
                 {"robot_description": robot_description},
             ],
-        ),
+        )]),
         Node(
             package="controller_manager",
             executable="spawner",
@@ -94,8 +140,6 @@ def _launch_setup(context, *args, **kwargs):
         ),
     ]
 
-    # [AI] ADR-0012 待闭合项 #1 / ADR-0011 D1：臂运动写者二选一。只占 position
-    # 接口，allow_motion=false 时命令在 Session 层被抑制（不会动）。
     if arm_writer == "jtc":
         nodes.append(
             Node(
@@ -108,9 +152,6 @@ def _launch_setup(context, *args, **kwargs):
             )
         )
     elif arm_writer == "wbc":
-        # [AI] ForwardCommandController 的入话题固定是 ~/commands，重映射到
-        # /wbc/arm_setpoints（rak_wbc 的臂位置流出口）。--controller-ros-args 传
-        # 一条完整的 ros-args（含 -r）。
         nodes.append(
             Node(
                 package="controller_manager",
@@ -118,55 +159,42 @@ def _launch_setup(context, *args, **kwargs):
                 arguments=["arm_position_controller",
                            "--controller-manager", "/controller_manager",
                            "--param-file", controllers_file,
-                           "--controller-ros-args", "-r ~/commands:=/wbc/arm_setpoints"],
+                           "--controller-ros-args",
+                           "-r", "/arm_position_controller/~/commands:=/wbc/arm_setpoints"],
                 output="screen",
             )
         )
     elif arm_writer != "none":
-        raise RuntimeError(
-            f"arm_motion_writer must be one of jtc|wbc|none, got {arm_writer!r}")
+        raise RuntimeError(f"arm_motion_writer 必须是 jtc|wbc|none，得到 {arm_writer!r}")
 
-    nodes.append(
-        Node(
-            package="controller_manager",
-            executable="spawner",
-            arguments=["gripper_controller",
-                       "--controller-manager", "/controller_manager",
-                       "--param-file", controllers_file],
-            output="screen",
-        )
-    )
     return nodes
 
 
 def generate_launch_description():
-    chassis_share = get_package_share_directory("rak_bringup")
+    description_share = get_package_share_directory("rak_description")
+    bringup_share = get_package_share_directory("rak_bringup")
+
     return LaunchDescription([
-        DeclareLaunchArgument("host_build_id", default_value="0xA0DE0002"),
         DeclareLaunchArgument(
             "allow_motion", default_value="false",
-            description="运动许可开关；false=DISARMED(只握手+遥测)"),
-        # [AI] ADR-0016: 链路唯一实现是 CAN v4（SocketCAN），无 transport/device 参数
+            description="运动许可；false=硬件只收遥测，命令恒 0"),
+        DeclareLaunchArgument("arm_motion_writer", default_value="jtc",
+                              description="臂控制器二选一：jtc / wbc / none"),
+        DeclareLaunchArgument("can_interface", default_value="can0",
+                              description="SocketCAN 接口；台架用 vcan0"),
         DeclareLaunchArgument(
-            "can_channel", default_value="can0",
-            description="SocketCAN 接口名"),
-        # [AI] 臂运动写者：jtc(JTC，MoveIt/arm_tui) | wbc(HQP 位置流) | none
-        DeclareLaunchArgument(
-            "arm_motion_writer", default_value="jtc",
-            description="臂控制器二选一：jtc=JointTrajectoryController(默认) / "
-                        "wbc=arm_position_controller 收 /wbc/arm_setpoints / none"),
-        # [AI] 每轮极性（装配事实）：2026-10-14 实车标定左侧 FL/RL 反接，
-        # 默认 -1 1 -1 1。命令与反馈按此成对取反，回环自洽。
-        DeclareLaunchArgument(
-            "wheel_sign", default_value="-1 1 -1 1",
-            description="四轮极性，空格分隔，顺序 FL FR RL RR；-1=该轮取反"),
-        DeclareLaunchArgument(
-            "urdf",
-            default_value=f"{get_package_share_directory('rak_description')}/urdf/rak_chassis.urdf.xacro",
-            description="底盘 URDF(xacro)路径"),
+            "master_config",
+            default_value=get_package_share_directory("rak_canopen") + "/config/master.dcf",
+            description="ros2_canopen 主站 DCF（官方 dcfgen 从 bus.yaml 生成，见 rak_canopen）"),
         DeclareLaunchArgument(
             "controllers_file",
-            default_value=f"{chassis_share}/config/chassis_controllers.yaml",
-            description="控制器配置文件"),
+            default_value=bringup_share + "/config/chassis_controllers.yaml",
+            description="控制器参数文件（CANopen 链路唯一一份）"),
+        DeclareLaunchArgument(
+            "urdf",
+            default_value=description_share + "/urdf/rak_chassis.urdf.xacro"),
+        DeclareLaunchArgument(
+            "wheel_sign", default_value="-1 1 -1 1",
+            description="四轮极性 FL FR RL RR；+1 正常，-1 命令与反馈同时取反"),
         OpaqueFunction(function=_launch_setup),
     ])

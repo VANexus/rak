@@ -20,10 +20,9 @@
 # （orbbec / lslidar / depth_image_proc / audio_capture / audio_play / robot_state_publisher）
 # 与 Nav2/slam 那些自带 manager 的组件 —— 它们的转移归上游，本 manager 只观测。
 #
-# ⚠️ 本文件的 `link` 域是 **v4 形态**（CanSession + 四个 ros2_control 控制器）。
-# 下位机已按 ADR-0021 切到 v5=CANopen，`rak` 侧 v4 主站对 R73/A14 板子无效；
-# P3（lely-core NMT 主站，Jetson=node 127 / 底盘=1 / 臂=2）落地时必须整段重声明 link 域，
-# 且届时该域的拥有者是 v5 主站自带的网络管理，不是本 manager（ADR-0020 §3 单一所有者）。
+# 本文件的 `link` 域 = CANopen v5（ADR-0024）：ros2_canopen `device_container` 是 NMT
+# 主站（node 127，底盘 node 1 / 臂 node 2），它也**拥有**该域的网络管理；
+# 本 manager 只观测，不发转移（ADR-0020 §3 单一所有者）。
 
 version: 1
 
@@ -50,6 +49,14 @@ domains:
     requires: [body]
     timeout_ms: 45000
     components:
+      # CANopen v5 主站（ADR-0024）：NMT/SYNC/PDO/SDO 与网络管理都归它。
+      # mode=observed + owner=external：本 manager 只读状态，绝不发 NMT 转移。
+      - node: /device_container
+        package: canopen_core
+        executable: device_container_node
+        mode: observed
+        owner: "external:ros2_canopen"
+        launch: chassis_bringup.launch.py
       - node: /controller_manager
         package: controller_manager
         executable: ros2_control_node
