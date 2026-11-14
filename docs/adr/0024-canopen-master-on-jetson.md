@@ -183,3 +183,32 @@ ADR-0021 决定两块 F407 的 CAN 层换 CANopen v5，并把 Jetson 侧主站�
    - 主站侧补齐 SYNC producer（上游能力缺口，走 issue/PR 或换 ADR-0021 原本的 lely 主站）；
    - MCU 侧把 TPDO 改成事件定时器触发（transmission 254 + event timer），
      这会改 [V5] 规范件，属于下位机仓的协议决策。
+
+### 2026-11-15 三次修订：SYNC 闭合、非 lifecycle 驱动、驱动选择回落实证路径
+
+1. **「0.3.4 主站不发 SYNC」被证伪并撤回。** 二次修订第 3 条的结论错了：
+   lely 主站**会**产 SYNC，条件只有一条——`bus.yaml` 的 `master.sync_period` 非 0
+   （dcfgen 写进 master.dcf 的 `0x1006`）。此前 vcan 抓不到 `080#`，是因为验证脚本
+   `verify_canopen_vcan.py` 的临时 bus.yaml 没写这个键，生成了 `0x1006=0` 的主站。
+   修复：脚本模板补 `sync_period: 2000`，并新增两道断言（`080#` 在场 + 实测频率
+   ≈500 Hz）。2026-11-15 在 vcan0 上实测 **500 Hz 稳定**，`[pass]` 退出码 0。
+   真机侧的「TPDO 映射」仍未验证（fake slave 的 EDS 不是我们的对象表），维持原状。
+2. **驱动回到非 lifecycle 变体（`MasterDriver` / `ProxyDriver`）。** 二次修订切到
+   `Lifecycle*` 并用 6 s / 9 s 定时 `ros2 lifecycle set /lifecycle_manager …`——那是
+   启动时序赌博：容器慢一点 CLI 就打空，且三条定时把 bringup 拉长到 12 s。非
+   lifecycle 路径下 `device_container` 在 `init()` 里自己 configure+activate 主站与
+   各驱动（`CanopenDriver::init`，driver_node.cpp），无需任何外部转移；这正是
+   `verify_canopen_vcan.py` 一直走的、且今天端到端验证过的路径。chassis_bringup 的
+   两个 lifecycle CLI 定时已删，controller_manager 提前到 6 s（硬件插件另有
+   `startup_grace_ms=5000` 兜底）。台架复测：两个 hardware 组件激活、四控制器
+   全部 `Configured and activated`，随后因 fake slave 不带我们的 TPDO 映射在
+   startup_grace 后判死——与真机语义一致，不是回归。
+3. **契约身份对象修正。** `canopen_contract.yaml` 曾列 `0x1008/0x1009/0x100A`
+   （device_name/hw_version/sw_version）——这三对象在固件上实测触发 HardFault
+   且已回退（[V5] §7 坑 4），SDO 读它们只会得到 abort。已从身份段移除，只保留
+   `0x2F00 build_tag` / `0x2F01 reset_cause`；`manifest_sw_version` 更新为固件仓
+   HEAD 的 R76 / A36，并注明「在板版本以 SDO 实读为准」。
+4. **反馈 QoS。** 薄桥对 `<driver>/rpdo`（100 Hz 状态流）的订阅从默认 RELIABLE
+   depth 10 改为 best-effort keep-last-1：控制环迟滞时 RELIABLE 会积压十几帧旧值，
+   read() 读到过期状态比丢帧更糟。命令方向（tpdo publisher）保持 RELIABLE——丢一条
+   命令就是丢一条命令。

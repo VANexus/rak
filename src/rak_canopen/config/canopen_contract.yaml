@@ -33,14 +33,16 @@ nodes:
     # 且节点处于 Operational，否则底盘 enable=0」
     liveness: {seq_objects: [cmd_seq], enable_bit: 0, window_ms: 100}
     identity_sdo:
+      # 只有这两个对象真的存在：CiA 1008/1009/100A（VISIBLE_STRING）在本移植
+      # 实测触发 HardFault，固件已回退（底盘 app_car.c R73 注记、[V5] §7 坑 4），
+      # 名称/厂商信息由 EDS [DeviceInfo] 承担。**不要**再往这里加 0x1008 系列：
+      # SDO 读它们会得到 abort，而"读不到版本"不等于"版本不对"。
       build_tag: 0x2F00   # [V5] §5「0x2F00 tag_packed（build_tag 前 4 字符小端打包，实测 52 37 33="R73"）」
       reset_cause: 0x2F01 # [V5] §5 'S'/'I'/'P'/'B'
-      device_name: 0x1008 # [SPEC] 必保对象清单
-      hw_version: 0x1009
-      sw_version: 0x100A
-      # JSON 里的 identity.sw_version 是**编译期常量**，只用于对照 SDO 实读结果；
-      # 真机判定运行版本必须读 SDO（AGENTS §5「用 build_tag 判别实际运行版本」）。
-      manifest_sw_version: R73
+      # 真机判定运行版本**必须**读 SDO 0x2F00（build_tag）：固件仓 HEAD 是 R76，
+      # 而 chassis.json 的 identity.sw_version 只是编译期常量副本（R73），
+      # 两者不一致是常态，不是故障（AGENTS §5）。
+      manifest_sw_version: R76   # 固件仓 HEAD 的 build_tag；在板版本以 SDO 实读为准
 
   arm:
     json: arm.json
@@ -50,9 +52,9 @@ nodes:
     consume_timeout_ms: 500
     liveness: {seq_objects: [cmd_seq], enable_bit: 0, window_ms: 100}
     identity_sdo:
-      build_tag: 0x2F00   # [V5] §5 同款；臂板 A14
+      build_tag: 0x2F00   # [V5] §5 同款
       reset_cause: 0x2F01
-      manifest_sw_version: A14   # arm.json 没有 identity 段，这里只留文档值对照，不做门禁
+      manifest_sw_version: A36   # 固件仓 HEAD 的 build_tag；arm.json 无 identity 段，不做门禁
 
 # 单位与量化因子。JSON 里只有 index/name/type/access/pdo，没有这些 —— 全部逐条给出处。
 # 范围/饱和值是**算出来的**（见 contract.py），不是抄的：因子 × 类型位宽。

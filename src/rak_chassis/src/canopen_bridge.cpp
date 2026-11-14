@@ -431,8 +431,12 @@ hardware_interface::CallbackReturn CanopenBridge::on_configure(
   rclcpp::NodeOptions options;
   node_ = std::make_shared<rclcpp::Node>("rak_canopen_" + driver_node_, options);
   tpdo_publisher_ = node_->create_publisher<COData>("/" + driver_node_ + "/tpdo", 10);
+  /* 反馈用 best-effort + keep-last-1：rpdo 是 100 Hz 的**状态流**，旧的被测值没有
+     价值。默认 RELIABLE/深度 10 在控制环偶尔迟滞时会积压十几帧旧值，read() 于是
+     读到过期状态（比丢帧更糟）。命令方向（tpdo publisher）保持 RELIABLE——丢一条
+     命令就是丢一条命令。 */
   rpdo_subscription_ = node_->create_subscription<COData>(
-    "/" + driver_node_ + "/rpdo", 10,
+    "/" + driver_node_ + "/rpdo", rclcpp::QoS(rclcpp::KeepLast(1)).best_effort(),
     [this](const COData::SharedPtr message) {rpdo_callback(message);});
 
   executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();

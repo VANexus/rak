@@ -1,7 +1,13 @@
 # CANopen v5 总线配置（ADR-0024）—— ros2_canopen `device_container` 的 bus 配置
 #
-# 状态：schema 按 **上游官方形式**书写，2026-11-14 在 vcan0 上用官方
-# `canopen_fake_slaves` 实测**两台从站同时加载**（chassis + arm）。
+# 状态：schema 按 **上游官方形式**书写；2026-11-14 在 vcan0 上用官方
+# `canopen_fake_slaves` 实测**两台从站同时加载**（chassis + arm），
+# 且 2026-11-15 复测 NMT/500 Hz SYNC/SDO 全通。
+#
+# 驱动选 **非 lifecycle 变体**（`MasterDriver` / `ProxyDriver`）：`device_container`
+# 在 `init()` 里直接 configure + activate 主站与各驱动，**不需要外部
+# `/lifecycle_manager` 转移**。lifecycle 变体需要 6 s/9 s 定时敲
+# `ros2 lifecycle set`，是启动时序赌博；非 lifecycle 路径在 vcan 上端到端证过。
 #
 # 采用官方"平铺"变体（上游 `canopen_tests/config/simple_lifecycle/bus.yml` 就是这种）：
 #   options.dcf_path —— EDS/DCF 相对路径基准（由 chassis_bringup 在启动时替换占位符）
@@ -20,7 +26,7 @@ options:
 
 master:
   node_id: 127                 # [V5] §1：Jetson = NMT master / node 127
-  driver: "ros2_canopen::LifecycleMasterDriver"
+  driver: "ros2_canopen::MasterDriver"
   package: "canopen_master_driver"
   # SYNC 周期（µs，官方 dcfgen 会写进 master.dcf 的 0x1006）。
   # [V5] §1 定的是 2 ms = 500 Hz；TPDO1/TPDO4 的 transmission=5 靠它触发。
@@ -29,7 +35,7 @@ master:
 # 底盘板（vehical_rak_motion，node 1）：4 轮 + IMU
 chassis:
   node_id: 1
-  driver: "ros2_canopen::LifecycleProxyDriver"
+  driver: "ros2_canopen::ProxyDriver"
   package: "canopen_proxy_driver"
   dcf: "chassis.eds"
   boot_timeout_ms: 1000        # 官方参数：等 boot-up 的窗口；无板时 3 次失败后容器 abort
@@ -41,7 +47,7 @@ chassis:
 # 机械臂板（vehical_rak_arm，node 2）：J1..J6 + 夹爪
 arm:
   node_id: 2
-  driver: "ros2_canopen::LifecycleProxyDriver"
+  driver: "ros2_canopen::ProxyDriver"
   package: "canopen_proxy_driver"
   dcf: "arm.eds"
   boot_timeout_ms: 1000

@@ -55,10 +55,12 @@ then; the 2026-10-05 docs (`TODO.md`, `docs/tutorials/construction.md`, `docs/ad
 driving 4 wheels + 7 servos" topology (2026-10-05 … 2026-10-27) is **superseded**. There are
 now **two** C30D F407 boards on one CAN bus with the Jetson (three nodes total):
 
-- **chassis board** (`vehical_rak_motion`, firmware `R64`): 4 wheels + onboard IMU.
-- **arm board** (`vehical_rak_arm`, git dir name `vehical_rak_arm`, firmware `A2`):
+- **chassis board** (`vehical_rak_motion`, firmware repo HEAD `R76`, 在板 `R73` — 2026-11-15 对账):
+  4 wheels + onboard IMU.
+- **arm board** (`vehical_rak_arm`, git dir name `vehical_rak_arm`, firmware repo HEAD `A36`, 在板 `A14`):
   **J1/J2 = MG513P30 incremental-encoder motors** (AT8236 + TIM6 25 kHz position loop,
   software zeroing) + **J3..J6 = servos**. A2 (2026-10-28) motorized J1/J2; A1 was pure-servo.
+  在板版本一律以 SDO `0x2F00` build_tag 实读为准——repo HEAD 领先在板版本是常态。
 
 **Jetson sees no wire change from this**: the `ARM_CMD` (0x110/0x111) and `SERVO_STATE`
 (0x210/0x211) frame IDs and byte layouts are unchanged — only the *board* that answers them
@@ -68,7 +70,8 @@ version stays **v4** (`NODE_INFO.PROTO==4`). `servo_valid_mask` now means: bit0/
 J1/J2 **true encoder measurement**; bit2..5 = J3..J6 **servo-pulse echo** (not physical);
 bit6 grip = no feedback.
 
-**Still unverified on hardware**: `R64` and `A2` have never been flashed/run. J1/J2
+**Still unverified on hardware**: repo-HEAD firmware (`R76` / `A36`) has never been
+flashed/run (在板的是 R73 / A14). J1/J2
 encoder polarity, gains and limits are `[AI]` placeholders — see
 `vehical_rak_arm/README.md` §6 before sending any `ARM_CMD`.
 
@@ -643,11 +646,16 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   `src/rak_canopen/test/test_dcf_sync.py`。`device_container` **不是** lifecycle 节点，
   `ros2 lifecycle set` 对它无效。从站 `dcf` 必须是相对名（绝对路径会被拼成双路径）。
   物理层自检：`ip -details -statistics link show can0`、`dmesg | grep -i can`。
-- **驱动不激活 = 没有 `~/rpdo`**：`ros2_canopen` 的官方流程是容器加载后
-  `ros2 lifecycle set /lifecycle_manager configure` → `activate`（chassis_bringup 已按
-  6 s / 9 s 定时执行，controller_manager 延到 12 s）。另外 **0.3.4 主站不发 SYNC**，
-  而 TPDO 是 type 5（SYNC 触发）→ 台架能证明 NMT/心跳/驱动激活，但收不到 TPDO；
-  闭合路径见 ADR-0024 2026-11-14 二次修订。
+- **驱动激活（2026-11-15 起）**：bus.yaml 已切**非 lifecycle** 驱动
+  （`MasterDriver` / `ProxyDriver`）——`device_container` 在 `init()` 里自己
+  configure+activate，**不需要** `ros2 lifecycle set /lifecycle_manager …`（lifecycle
+  变体的 6 s/9 s 定时转移已删；那是启动时序赌博）。controller_manager 延到 6 s 起，
+  硬件插件另有 startup_grace_ms=5000 宽限兜底。
+  **SYNC 已闭合**：0.3.4 主站**会**发 SYNC——前提是 bus.yaml 写 `sync_period: 2000`
+  （dcfgen 写进 master.dcf 的 0x1006）。2026-11-15 vcan0 实测 `080#` 稳定 500 Hz
+  （`scripts/verify_canopen_vcan.py` 已加 SYNC 帧与频率断言）。此前"主站不发 SYNC"
+  是验证脚本自己的 bus.yaml 漏了该键。TPDO（type 5，SYNC 触发）在 vcan fake slave
+  上仍未映射验证，真机首帧仍是第一个待验收项。
 - The lidar `lidar_name` must be `N10_P` (108 B @ 460800); `N10` fails CRC. Use the udev alias
   `/dev/wheeltec_lidar`, never `/dev/ttyUSB0` (other serial adapters may also claim ttyUSB).
 - Simulation task telemetry is a command-motion estimate, not measured odometry. A

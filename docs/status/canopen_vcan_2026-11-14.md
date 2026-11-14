@@ -1,6 +1,6 @@
 # vcan0 上的 ros2_canopen 主站验证（无下位机）
 
-> 状态：已验证 · 最后更新：2026-11-14
+> 状态：已验证（2026-11-15 复测闭合 SYNC） · 最后更新：2026-11-15
 
 日期：2026-11-14。环境：Jetson Orin，aarch64，ROS 2 Jazzy；apt 包 `ros-jazzy-canopen-core` /
 `canopen-master-driver` / `canopen-proxy-driver` / `canopen-base-driver` / `canopen-402-driver` /
@@ -148,3 +148,36 @@ canopen_interfaces.srv.COReadID_Response(success=True, data=0)
 - 上游参考（0.3.4）：`canopen_tests/launch/proxy_setup.launch.py` 用
   `canopen_tests/config/simple/master.dcf`（同目录 `bus.yml` 经 `generate_dcf` 生成），
   而不是从站 EDS —— 与本验证结论一致。
+
+## 2026-11-15 复测（闭合 SYNC 未验证项）
+
+`python3 scripts/verify_canopen_vcan.py`（脚本已补 `sync_period: 2000` + 两道新断言）：
+
+```text
+[ok] fake slave boot-up: 702#00
+[ok] NMT reset 000#8202 -> boot-up -> SDO config -> NMT start 000#0102
+[ok] SYNC 080# producing at 500 Hz (0x1006 = 2 ms)
+[ok] SDO read 0x4001: success=True data=0 (wire 602#4001.. -> 582#43..)
+[pass] ros2_canopen master works on vcan0 with a fake slave; no abort
+```
+
+结论：**上一轮「主站不发 SYNC」是误判**——根因是验证脚本的临时 bus.yaml 没写
+`sync_period`，dcfgen 生成的 master.dcf `0x1006=0`，lely 主站自然不产 SYNC。修复后
+`080#` 实测稳定 500 Hz，与 [V5] §3 的 2 ms 一致。ADR-0024 三次修订同步记录。
+
+同步落地（同日，ADR-0024 三次修订）：
+
+- bus.yaml 驱动切回**非 lifecycle** `MasterDriver` / `ProxyDriver`；chassis_bringup 删
+  6 s / 9 s lifecycle 定时，controller_manager 6 s 起。台架复测硬件组件与四控制器全激活。
+- 薄桥 rpdo 订阅改 best-effort keep-last-1（100 Hz 状态流不积压旧帧）。
+- `canopen_contract.yaml` 移除固件上不存在且会 HardFault 的 0x1008/0x1009/0x100A；
+  `manifest_sw_version` 更新为 R76 / A36（固件仓 HEAD），在板版本以 SDO 实读为准。
+- `src/rak_canopen/config/chassis.json` 换成与 MCU SSOT 逐字节一致（LF）的副本；
+  此前 CRLF 行尾导致 sha256 与源仓不同。
+
+仍然未闭合（与上节一致，新增第 2 条的台架范围）：
+
+- ros2_control 硬件组件在**有真实 TPDO 映射的从站**上的 read/write——fake slave 的
+  EDS 不是我们的对象表，台架只能验证到「驱动激活 + 硬件激活 + startup_grace 后判死」。
+- SDO 写路径、心跳消费者 500 ms、EMCY 降级：未测。
+- 真机 can0（R73/A14 或更新）：完全没碰。

@@ -29,7 +29,6 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    ExecuteProcess,
     OpaqueFunction,
     TimerAction,
 )
@@ -102,17 +101,13 @@ def _launch_setup(context, *args, **kwargs):
             parameters=[{"robot_description": robot_description}],
         ),
         device_container,
-        # 官方流程（ros2_canopen README）：device_container 把主站与各驱动作为
-        # lifecycle 节点加载后，由 `/lifecycle_manager` 统一 configure → activate。
-        # 这一步**不能省**：驱动不 activate 就不发布 `~/rpdo`，薄桥读不到反馈；
-        # 而 controller_manager 若先激活硬件，会在启动宽限后把硬件判死。
-        TimerAction(period=6.0, actions=[ExecuteProcess(
-            cmd=["ros2", "lifecycle", "set", "/lifecycle_manager", "configure"],
-            output="screen")]),
-        TimerAction(period=9.0, actions=[ExecuteProcess(
-            cmd=["ros2", "lifecycle", "set", "/lifecycle_manager", "activate"],
-            output="screen")]),
-        TimerAction(period=12.0, actions=[Node(
+        # bus.yaml 用**非 lifecycle** 驱动（MasterDriver / ProxyDriver）：容器在
+        # init() 里自己 configure+activate 主站与各驱动，没有 `/lifecycle_manager`
+        # 节点，也就不再需要 6 s/9 s 定时敲 `ros2 lifecycle set`（2026-11-15 移除：
+        # 定时转移是启动时序赌博，非 lifecycle 路径已在 vcan0 上端到端验证）。
+        # 等驱动的 NMT reset → boot-up → 激活跑完再起 controller_manager；硬件插件
+        # 自己还有 startup_grace_ms=5000 的宽限，两层都不靠"刚好赶上"。
+        TimerAction(period=6.0, actions=[Node(
             package="controller_manager",
             executable="ros2_control_node",
             name="controller_manager",

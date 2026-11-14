@@ -70,6 +70,8 @@ master:
   node_id: 1
   driver: "ros2_canopen::MasterDriver"
   package: "canopen_master_driver"
+  sync_period: 2000          # µs；dcfgen 写进 master.dcf 的 0x1006 → lely 产 SYNC
+
 canopen_chassis:
   node_id: %(slave_id)d
   driver: "ros2_canopen::ProxyDriver"
@@ -206,6 +208,20 @@ def main():
         if not wait_for(frames, r"582#", 5, (master,), (master_log,)):
             sys.exit("[fail] no SDO response 582#; master log: %s" % read(master_log)[-800:])
         log("[ok] NMT reset 000#8202 -> boot-up -> SDO config -> NMT start 000#0102")
+
+        # SYNC 生产者：master.dcf 的 0x1006=2000 µs 必须变成总线上的 080# 帧。
+        # 从站 TPDO 是 type 5（SYNC 触发），没有 SYNC 就没有反馈——这条是链路的前提。
+        if not wait_for(frames, r"\b080#", 10, (master,), (master_log,)):
+            sys.exit("[fail] no SYNC 080# on the wire: master.dcf 0x1006 not applied? %s"
+                     % read(master_log)[-800:])
+        t0 = time.time()
+        n_before = len(re.findall(r"\b080#", read(frames)))
+        time.sleep(2.0)
+        n_sync = len(re.findall(r"\b080#", read(frames))) - n_before
+        rate = n_sync / (time.time() - t0)
+        if not 400.0 <= rate <= 600.0:
+            sys.exit("[fail] SYNC rate %.0f Hz, want ~500 Hz (2 ms)" % rate)
+        log("[ok] SYNC 080# producing at %.0f Hz (0x1006 = 2 ms)" % rate)
 
         # The CLI sometimes needs a few seconds of DDS discovery after the
         # boot burst; retry short attempts instead of one long blocking wait.
