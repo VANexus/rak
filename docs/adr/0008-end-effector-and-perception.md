@@ -66,9 +66,9 @@ base_link
 | LSM6DSRTR（Jetson SPI） | 机体航向（EKF） | overlay 已备 |
 | USB 双目 | 视觉 | 驱动已有 |
 
-### D5. 语音归入 `docs/architecture.md` 的 **E 阶段**
+### D5. 语音归入 `docs/explanation/architecture.md` 的 **E 阶段**
 
-先以文字事件验证任务控制，再接 ASR/TTS（`docs/architecture.md` §1 已定此原则）。
+先以文字事件验证任务控制，再接 ASR/TTS（`docs/explanation/architecture.md` §1 已定此原则）。
 
 ---
 
@@ -126,5 +126,5 @@ base_link
 
 - `src/rak_description/urdf/six_axis_sim.urdf.xacro`（现成六轴骨架，数值为虚构）
 - `src/rak_description/urdf/properties.xacro`（参数化约定，含 R4.1 裁定说明）
-- `docs/architecture.md` §1（五轴 demo 禁止当实物）、§6（E 阶段：语音）
+- `docs/explanation/architecture.md` §1（五轴 demo 禁止当实物）、§6（E 阶段：语音）
 - ADR-0005（抓取栈，**范式已恢复为平行夹爪**）、ADR-0009（建模与标定）

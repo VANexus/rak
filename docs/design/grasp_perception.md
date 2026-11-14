@@ -1,5 +1,7 @@
 # 点云抓取：离线 GraspNet 与隔离仿真
 
+> 状态：提案 · 最后更新：2026-10-14
+
 ## 范围与开发位置
 
 第一阶段：Gemini 335L 真实 RGB-D → 本机 RTX 4060 离线 GraspNet → RViz 选候选 → MoveIt **规划预览**。
@@ -73,7 +75,7 @@ WSL/VPN 路径存在 IPv6 DNS 超时，脚本仅在此 Ubuntu 内为 apt 启用 
 该变量的行为见 [pip 配置文档](https://pip.pypa.io/en/stable/topics/configuration/#pip-config-file)。
 验证 `docker run --rm --gpus all nvcr.io/nvidia/pytorch:24.05-py3 nvidia-smi` 后才开始编译扩展。
 24.05 基础容器内 GPU、PointNet2/KNN CUDA 扩展、checkpoint 加载和官方样例 FP32 推理均已通过；
-具体耗时、显存、候选数与验证边界见 [grasp_validation.md](grasp_validation.md)。
+具体耗时、显存、候选数与验证边界见 [grasp_validation.md](../status/grasp_validation.md)。
 
 ### 固定第三方版本与模型
 
@@ -261,7 +263,7 @@ ROS_DOMAIN_ID=77 xvfb-run -a -s '-screen 0 1280x900x24' \
   --output /absolute/new-model-simulation-evidence
 ```
 
-验收记录见 [grasp_validation.md](grasp_validation.md)。官方样例 + 不透明瓶子、纸盒各三种姿态需要逐个保存
+验收记录见 [grasp_validation.md](../status/grasp_validation.md)。官方样例 + 不透明瓶子、纸盒各三种姿态需要逐个保存
 快照、ROI、结果、指标和截图。操作者实际重新摆放物体后采集，不能把同一场景复制六份作为验收。
 应覆盖可达、不可达、障碍碰撞、空点云、缺失标定、不同步。本机 CUDA 构建和官方场景推理已通过，
 现场瓶子/纸盒六组摆放仍待采集；不能报告实机抓取或六场景成功。

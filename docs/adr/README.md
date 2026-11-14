@@ -1,12 +1,12 @@
 # Architecture Decision Records (ADR)
 
-本目录记录**已经做出的架构决策**及其理由。与 `docs/architecture.md` 的区别：
+本目录记录**已经做出的架构决策**及其理由。与 `docs/explanation/architecture.md` 的区别：
 
 | 文档 | 回答的问题 | 时间性 |
 |---|---|---|
-| `docs/architecture.md` | 系统现在**长什么样** | 描述当前状态 |
-| `docs/project_status.md` | 现在**做到哪了** | 描述当前进度 |
-| `docs/hardware_acceptance.md` | 上车前**必须过哪些门** | 描述验收门槛 |
+| `docs/explanation/architecture.md` | 系统现在**长什么样** | 描述当前状态 |
+| `docs/status/project_status.md` | 现在**做到哪了** | 描述当前进度 |
+| `docs/reference/hardware_acceptance.md` | 上车前**必须过哪些门** | 描述验收门槛 |
 | `docs/adr/*`（本目录） | **为什么**是这样，以及否决了什么 | 不可变，只追加/取代 |
 
 ## 格式
@@ -85,3 +85,22 @@
 > （`rak_hardware` 臂接口、臂质量与底盘几何实测、Jetson 侧 Python 依赖）未闭合前不上车。
 > 任务与验收见 [`TODO.md`](../../TODO.md)。0004–0006 的结论来自 2026-10-05 的三路专项研究，
 > **有时效性**，涉及版本矩阵/许可/内存的部分在实施前应复核（各篇"参考"节列了来源）。
+
+## 勘误：旧路径与旧仓名（2026-11-14 登记，不改正文）
+
+ADR 正文不可改，但仓结构与仓名变过，读到旧名字按本表换算：
+
+| 正文里出现的旧名 | 现在的名字 |
+|---|---|
+| `docs/architecture.md` | `docs/explanation/architecture.md` |
+| `docs/CONSTRUCTION.md` | `docs/tutorials/construction.md` |
+| `docs/hardware_acceptance.md` | `docs/reference/hardware_acceptance.md` |
+| `docs/arm_moveit_contract.md` | `docs/reference/arm_moveit_contract.md` |
+| `docs/canopen-bitfields.md` | `docs/reference/canopen_bitfields.md` |
+| `docs/migration.md` | `docs/explanation/migration_2026-10.md` |
+| `docs/superpowers/specs/*` | `docs/design/*` |
+| `docs/perf/*` | `docs/reference/perf/*` |
+| `vehical_rak_chassis`（下位机底盘仓） | `vehical_rak_motion` |
+| `vehical_rak_edge_ai`（下位机机械臂仓） | `vehical_rak_arm`（2026-11-14 改名） |
+| `docs/CAN-BRINGUP-2026-10-30.md` | 从未存在过；对应内容见 `docs/status/next_2026-10-30.md` 与两块板仓的 `docs/CANOPEN-V5-DESIGN.md` |
+| `docs/protocol/*`、`src/rak_base_driver`、`SerialSession` | ADR-0016 已删除，只在 git 历史里 |

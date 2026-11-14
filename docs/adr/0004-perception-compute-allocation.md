@@ -2,7 +2,7 @@
 
 - **状态**: 已接受
 - **日期**: 2026-10-05
-- **相关**: `docs/architecture.md` §5 · `docs/CONSTRUCTION.md` §2.3 · ADR-0002 · ADR-0005 · ADR-0006 · `TODO.md` P2
+- **相关**: `docs/explanation/architecture.md` §5 · `docs/tutorials/construction.md` §2.3 · ADR-0002 · ADR-0005 · ADR-0006 · `TODO.md` P2
 
 ---
 
@@ -13,7 +13,7 @@ Orin Nano 4GB 的硬约束：
 - **统一内存**，CPU/GPU 共用 4 GB（实际可用 ~3.4 GB）。
 - **无 DLA/PVA**，**无硬件 H.264 编码器**（Orin NX 才有）→ 任何视频输出回退到软件
   `x264enc`，实测可吃 500%+ CPU。
-- 桌面（GNOME 登录态）空闲占 0.8–1.5 GB；`docs/architecture.md` §5 已定原则：
+- 桌面（GNOME 登录态）空闲占 0.8–1.5 GB；`docs/explanation/architecture.md` §5 已定原则：
   "不能默认同时常驻所有模型与 GUI"。
 - 本机是 **JetPack 7.2 / L4T 39.2.1**。
 
@@ -116,7 +116,7 @@ DeepStream 9.1 的官方配对正是 **JetPack 7.2 GA / L4T 39.2**（CUDA 13.2 /
 | 为了 Holoscan 降级到 JetPack 6.2.1 | 失去 DeepStream 9.1 与已适配的 CUDA 13.2/TRT 10.16 工具链；且本仓已按 JP 7.2 构建 |
 | DeepStream 做 RTSP 回推 | 无硬件编码器，软件 x264 吃满 CPU |
 | 全部常驻 4GB（DeepStream + Nav2 + SLAM + MoveIt2） | 预算 2.5–3.8 GB，零余量，必 OOM |
-| 把 RViz2/MoveIt GUI 放设备上 | 与相机争 CMA（`docs/CONSTRUCTION.md` §2.3），且吃内存 |
+| 把 RViz2/MoveIt GUI 放设备上 | 与相机争 CMA（`docs/tutorials/construction.md` §2.3），且吃内存 |
 
 ---
 

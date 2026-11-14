@@ -1,15 +1,17 @@
 # Hardware Acceptance Gates
 
+> 状态：现行 · 最后更新：2026-10-14
+
 > ⚠️ **拓扑与链路已变更（2026-10-05 / 2026-10-14），本文部分内容过期。**
 > 臂板烧毁后只剩**一块** F407（同时管 4 轮 + 6 舵机）；**Jetson↔F407 走 CAN v4
 > （SocketCAN `can0`）唯一链路**，USB v2 串口链路已按
-> [ADR-0016](adr/0016-retire-usb-transport.md) 删除；麦轮 IK 已移到上位机
+> [ADR-0016](../adr/0016-retire-usb-transport.md) 删除；麦轮 IK 已移到上位机
 > （`mecanum_drive_controller`）。
-> 见 [ADR-0007](adr/0007-unified-ros2-control.md)。下文 §Known Topology 的
+> 见 [ADR-0007](../adr/0007-unified-ros2-control.md)。下文 §Known Topology 的
 > "Base STM32F407 to arm STM32F407: classic CAN" 与
 > "The base MCU owns mecanum kinematics" 两句已不成立；
 > **验收流程与门槛原则仍然有效**，具体接口名以 ADR-0007/0012/0016 与
-> [`CONSTRUCTION.md`](CONSTRUCTION.md) §6 为准。
+> [`CONSTRUCTION.md`](../tutorials/construction.md) §6 为准。
 >
 > 2026-10-13 链路验收：H/L 接线对调后 `scripts/can_link_smoke.py can0` 连续两次
 > **10/10 通过**（BAT≈12500 mV、FAULT=0、BUSOFF=0）——链路冒烟已过，以下整车

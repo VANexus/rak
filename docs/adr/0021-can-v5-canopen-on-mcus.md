@@ -49,4 +49,4 @@ v4 是自研帧表 + 手写编解码：帧表在三处复制（YAML / 两端 C++
   `Session` API 不变（`set_wheel_command`/`set_arm_command`/`SessionSnapshot`）。
 - 参数标定改走 SDO（`0x2007` 轮控增益 / `0x2107` 关节配置等），不再自造串口配置协议。
 - `rak/scripts/can_*.py`（v4 冒烟/回归脚本）在 P3 前标注"仅 v4 回滚分支可用"。
-- 建 `docs/hardware_acceptance.md` 的 v5 版验收清单（速率、`cmd_en`、SRDO 超时、故障注入）。
+- 建 `docs/reference/hardware_acceptance.md` 的 v5 版验收清单（速率、`cmd_en`、SRDO 超时、故障注入）。

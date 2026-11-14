@@ -37,7 +37,7 @@ Nav2 侧现状 `[已核实]`：`controller_server` 用 `nav2_mppi_controller` + 
 
 ### D2. SLAM 保留 `slam_toolbox`（2D）
 
-- 与 2D 雷达匹配；`docs/architecture.md` §5 的"同一 TF 子坐标系只能有一个权威发布者"
+- 与 2D 雷达匹配；`docs/explanation/architecture.md` §5 的"同一 TF 子坐标系只能有一个权威发布者"
   已由 ADR-0002 的 EKF 方案承接。
 - **不引入 FAST-LIO2/LIO-SAM**：本机没有 3D 雷达。
 - 若将来加装 3D 雷达，再单独评估 —— 那是硬件变更，不是参数调整。
@@ -76,7 +76,7 @@ Isaac ROS 4.6.0+ 才加入 JetPack 7.2 / Orin 支持（此前 4.0 仅 Thor/JP7�
 - **深度相机的固有短板**：Astra 的有效距离、视场角、对反光/透明/强光表面的失效，
   都会直接变成"看不见障碍"。**2D 雷达仍是主要的安全层**，3D 是补充。
 - **需要外参标定**：深度相机相对 `base_link` 的外参错了，3D 障碍就会投到错误位置
-  （`docs/architecture.md` §7 已列"硬件 TF"为缺口）。
+  （`docs/explanation/architecture.md` §7 已列"硬件 TF"为缺口）。
 - 深度点云与雷达点云的**时间同步**需要处理，否则快速转向时出现"鬼影障碍"。
 
 ---
@@ -97,7 +97,7 @@ Isaac ROS 4.6.0+ 才加入 JetPack 7.2 / Orin 支持（此前 4.0 仅 Thor/JP7�
 
 1. **STVL 未安装**（已核实 `spatio_temporal_voxel_layer` 缺失）。
 2. **深度相机外参未标定**（相机 → `base_link`），3D 障碍会投错位置。
-3. **深度-彩色对齐未做**（`docs/architecture.md` §7）。
+3. **深度-彩色对齐未做**（`docs/explanation/architecture.md` §7）。
 4. **体素尺寸/衰减时间/分辨率需实测**，不能抄默认值。
 5. **`max_velocity: [0.25, 0.15, 0.5]` 是占位值**（`nav2_params.yaml:171` 自注 simulation-only），
    按 ADR-0007 迁移后由 `mecanum_drive_controller` 的限幅参数承担。

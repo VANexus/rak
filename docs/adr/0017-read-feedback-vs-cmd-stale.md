@@ -5,7 +5,7 @@
 - **相关**: `src/rak_chassis/src/rak_system.cpp`（`read()`）· `src/rak_chassis/src/can_session.cpp`
   （`kStateFaultMask` / `kIdDiag` STATE 解析）· `~/vehical_rak_chassis/docs/PROTOCOL.md`
   （v4，协议事实源，§5 STATE 位图 + §6.2 断流看门狗）· ADR-0012（Session 抽象）、ADR-0016（CAN 唯一链路）
-- **背景来源**: `AGENTS.md` Gotchas（2026-10-14 实测记录）· `docs/arm_moveit_contract.md` §1
+- **背景来源**: `AGENTS.md` Gotchas（2026-10-14 实测记录）· `docs/reference/arm_moveit_contract.md` §1
 
 ---
 
@@ -95,4 +95,4 @@
    应有 diagnostics/事件出口，落点待与诊断体系（`/diagnostics` 现由谁拥有）一起定。
 3. **停用后无 relaunch 的恢复路径验证**：修复后应实测
    `ros2 control set_hardware_component_state`（或 spawner 重试）能否在同进程内重新激活硬件，
-   验证结果写入 `docs/hardware_acceptance.md`；在验证前，"整体 relaunch"仍是最短恢复路径。
+   验证结果写入 `docs/reference/hardware_acceptance.md`；在验证前，"整体 relaunch"仍是最短恢复路径。

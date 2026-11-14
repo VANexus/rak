@@ -1,8 +1,10 @@
 # IPC / 进程间通信基线（2026-10-10）
 
+> 状态：现行 · 最后更新：2026-10-14
+
 > [AI] 本文是 "component 化 + IPC 优化" 的第一阶段（L1 基线）产出：用可复现的合成负载
 > 量化当前传输路径的吞吐/延迟/丢帧/CPU，并给出改造清单。工具与配置见
-> [`scripts/ipc_bench/`](../scripts/ipc_bench/README.md)。
+> [`scripts/ipc_bench/`](../../../scripts/ipc_bench/README.md)。
 
 ## 0. 环境与前提
 

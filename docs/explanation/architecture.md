@@ -1,10 +1,12 @@
 # 分层具身智能架构
 
+> 状态：现行 · 最后更新：2026-11-09
+
 状态：统一包迁移与软件任务闭环已实现。文字任务、fake Nav2
 暂停/恢复/取消以及隔离六轴动作夹具均有软件实现。CAN v4（SocketCAN）链路已通过
 冒烟验收（2026-10-13，`scripts/can_link_smoke.py can0` 10/10；USB v2 链路已按
 ADR-0016 删除），但传感器 Nav2 和整车安全验收仍未完成。README 是工程入口，当前进度汇总见
-[项目总体状态](project_status.md)。
+[项目总体状态](../status/project_status.md)。
 
 ## 1. 目标与硬件事实
 
@@ -17,7 +19,7 @@ ADR-0016 删除），但传感器 Nav2 和整车安全验收仍未完成。READM
 - 底盘有独立 IMU 做稳定，但是否提供 ROS 可消费的 IMU/协方差/时间戳还需对接。
 - 机械臂目标：六个定位关节，夹爪独立。当前旧 URDF 是五轴演示，禁止当作实物模型。
 - 语音 ASR 已接入硬件（2026-10-10：讯飞 XFM-DP 六麦阵列 → `audio_capture` →
-  `/audio` → Vosk 转写，见 `docs/microphone_array.md`）；2026-10-11 起板端
+  `/audio` → Vosk 转写，见 `docs/reference/microphone_array.md`）；2026-10-11 起板端
   唤醒/方位（`vtn_node` → `/speech/wake`）与离线 TTS 播报（`tts_node` →
   `/audio_out` → `audio_play` → USB 喇叭）也已电气链路实测；任务控制
   仍以文字事件验证，声学段需真人说话验收。
@@ -257,7 +259,7 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 
 | 阶段 | 状态与交付 | 必须通过 |
 |---|---|---|
-| A：包迁移 | 已完成，详见 `docs/migration.md` | 全工作区构建、安装检查、旧 AI 回归 |
+| A：包迁移 | 已完成，详见 `docs/explanation/migration_2026-10.md` | 全工作区构建、安装检查、旧 AI 回归 |
 | B：任务内核 | 软件实现；fake Nav2 覆盖成功、重复请求、暂停/确认/恢复、服务取消和 Action 取消 | 到达/暂停竞态、各种超时、慢规划迟到、重启等剩余竞态仍需扩测 |
 | C：Nav2 接入 | Action、waypoint 和全向参数已接入 | 有效传感器/定位环境下验证 lifecycle、碰撞监控输出和速度链；确认每种 backend 单写者 |
 | D：硬件闭环 | CAN v4 链路冒烟通过（2026-10-13：`can_link_smoke.py can0` 10/10，BAT≈12500 mV、FAULT=0、BUSOFF=0）；`rak_chassis` 四轮接口过底盘冒烟（固件 R37）；7 轴位置接口 + `arm_controller`/`gripper_controller` 已在实机带起，j1 点动 + Home 往返实动验收通过（2026-10-14：`allow_motion:=true` 下 ARM_CMD 帧级验证，0.1° 量化爬升/回落，回读跟随，无故障） | 里程计/IMU、断联/E-stop、限速与人工监督低速测试；**J2–J6 实动、运动中限位与失联停机、夹爪**（无硬件通道） |
@@ -281,4 +283,4 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
   `ip -details -statistics link show can0` 与 `dmesg | grep -i can`。
 
 这些缺口必须在对应阶段关闭；不能以构建、launch 可解析或仿真测试通过作为实车安全证明。
-具体门槛见 [硬件验收清单](hardware_acceptance.md)。
+具体门槛见 [硬件验收清单](../reference/hardware_acceptance.md)。

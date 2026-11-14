@@ -1,5 +1,7 @@
 # Rak MoveIt2 Integration — Design Spec
 
+> 状态：提案 · 最后更新：2026-10-03
+
 - **Date:** 2026-10-03
 - **Author:** yiyuhao (drafted via Claude Code brainstorming)
 - **Status:** Pending review

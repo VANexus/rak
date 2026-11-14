@@ -5,7 +5,7 @@
 - **相关**: `src/rak_wbc`（本 ADR 创建）· `src/rak_hardware` ·
   `src/rak_chassis_bringup/config/chassis_controllers.yaml` ·
   `src/rak_description/urdf/rak_arm.urdf.xacro` · `src/rak_description/urdf/properties_arm.xacro` ·
-  `docs/protocol/usb_serial_v2.md` · `docs/superpowers/specs/2026-10-08-rak-wbc-hqp-design.md` ·
+  `docs/protocol/usb_serial_v2.md` · `docs/design/2026-10-08-rak-wbc-hqp-design.md` ·
   ADR-0002 · ADR-0004 · ADR-0006 · ADR-0007 · ADR-0008 · ADR-0010
 
 ---
@@ -104,7 +104,7 @@
 4. **失败故事闭合**：HQP 求解失败 → 输出零速（停轮 + 臂保持）并计数；连续失败 →
    停止发布（`reference_timeout` 0.5 s 兜底 + 臂 lease 保持）；恢复后**不自动重新 ARM**。
 
-### D6. 验收（三级，对齐 `docs/hardware_acceptance.md` 的门槛风格）
+### D6. 验收（三级，对齐 `docs/reference/hardware_acceptance.md` 的门槛风格）
 
 1. **桌面（无 ROS、纯数值）**：约束激活、任务冲突仲裁、warm-start、降级路径、模型
    FK/J_ee 数值健全性 —— `src/rak_wbc/test`（本 ADR 已附带可运行版本）。
@@ -224,15 +224,15 @@ Harness（ADR-0010）与 HQP 之间**没有直连**，只有传递式正方向�
    100 Hz 预算（10 ms）占用 <50%。（x86 对照 0.34 ms；servo 模式与全环时序待上车复测。）
 9. **50 Hz PWM 与 100 Hz 求解的零阶保持策略**实测。
 10. **模式仲裁状态机**（JTC/伺服）细节，待真臂 MoveIt 配置就绪。
-11. **文档基线同步**：`TODO.md` P0-1/`docs/project_status.md`/`docs/architecture.md` 包表
+11. **文档基线同步**：`TODO.md` P0-1/`docs/status/project_status.md`/`docs/explanation/architecture.md` 包表
     的陈旧条目（本次已同步 `AGENTS.md`/`CLAUDE.md` 关键事实与 `architecture.md` L2 描述）。
-12. **验收脚本**（桌面/仿真/台架）与 `docs/hardware_acceptance.md` 的对接条目。
+12. **验收脚本**（桌面/仿真/台架）与 `docs/reference/hardware_acceptance.md` 的对接条目。
 
 ---
 
 ## 参考
 
-- 设计规格（逐条公式）：`docs/superpowers/specs/2026-10-08-rak-wbc-hqp-design.md`
+- 设计规格（逐条公式）：`docs/design/2026-10-08-rak-wbc-hqp-design.md`
 - `src/rak_hardware/include/rak_hardware/rak_system.hpp`、`src/rak_chassis_bringup/config/chassis_controllers.yaml`
 - `docs/protocol/usb_serial_v2.md`（100 Hz 命令、lease、臂超时保持）
 - `src/rak_description/urdf/rak_arm.urdf.xacro`、`properties_arm.xacro`、

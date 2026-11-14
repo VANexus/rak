@@ -1,5 +1,7 @@
 # rak_description MoveIt2 Integration Implementation Plan
 
+> 状态：存档 · 最后更新：2026-10-03
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Hand-write a MoveIt2 integration for the Rak robot's 5-DOF arm (base stepper yaw + 4 geared-motor joints), validated through a four-milestone chain (M1 xacro parse → M2 TF tree → M3 SRDF groups → M4 fake controller loop).
@@ -8,7 +10,7 @@
 
 **Tech Stack:** ROS 2 Jazzy, MoveIt2 (apt), xacro, KDL kinematics, OMPL (RRT*, RRTConnect), `fake_joint_driver` (MoveIt-shipped C++, no CAN), Cyclone DDS, Jetson Orin Nano (aarch64), GNOME/Xorg on `:1`.
 
-**Spec:** `docs/superpowers/specs/2026-10-03-rak-moveit2-integration-design.md` (commit `4c6f493`). Executors read BOTH this plan AND the spec.
+**Spec:** `docs/design/2026-10-03-rak-moveit2-integration-design.md` (commit `4c6f493`). Executors read BOTH this plan AND the spec.
 
 > Historical note: this 2026-10-03 plan records the then-current domain 45.
 > The project runtime now uses Cyclone DDS on domain 47; keep test-only domains
@@ -1408,7 +1410,7 @@ After implementation, the executor must verify:
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-10-03-rak-moveit2-integration.md`. Please review.
+Plan complete and saved to `docs/archive/2026-10-03-rak-moveit2-integration.md`. Please review.
 
 For this plan I recommend **Native execution** (I implement every task myself in this session), because:
 - Tasks are tightly sequenced — each task's content references the prior task's file paths

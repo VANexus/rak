@@ -1,7 +1,7 @@
 # 大脑 × 机械臂 × 工具：主动智能操作层设计
 
 > 状态：**DESIGN DRAFT**（2026-10-15）。未接受；接受时按 `docs/adr/README.md` 流程落 ADR 并把本文件状态改为"已由 ADR-xxxx 接受"。
-> 事实源：`docs/arm_moveit_contract.md`（臂契约 FROZEN）、`docs/adr/0007`（ros2_control 目标）、`docs/adr/0010`（Jev/Harness 仲裁缝）、`docs/adr/0011`（WBC）、`docs/laya_tensorrt.md`（Laya 运行时）、`src/rak_chassis` 实测（2026-10-14）。
+> 事实源：`docs/reference/arm_moveit_contract.md`（臂契约 FROZEN）、`docs/adr/0007`（ros2_control 目标）、`docs/adr/0010`（Jev/Harness 仲裁缝）、`docs/adr/0011`（WBC）、`docs/how-to/laya_tensorrt_runbook.md`（Laya 运行时）、`src/rak_chassis` 实测（2026-10-14）。
 > 语言约定：中文叙述、英文标识符。度量单位 SI。
 
 ## 0. 目标与非目标
@@ -232,7 +232,7 @@ ToolProposal(arm.reach)
 1. **语料先行**：P0 落地的操作员标注工具把 `label` 槽（现 2317 行全空）流转起来；工具事件行让"决策-动作-结果"闭环全部入 corpus。
 2. **flags 增值不动格式**：`arm_moving` / `gripper_holding` / `task_active` 等 flags 值让 `state_text` 带上操作上下文——Laya 的微调输入因此包含臂态，而历史语料保持合法（旧行为=旧 flags 子集）。
 3. **微调在仓外**：421M bf16，LoRA/PEFT（<8 GB 显存的外部 CUDA 机；本机只做推理/导出）。上游 `rai_finetune` 可用性是开放项（见 `loop.py` 注释），大概率需自写最小监督循环（choice 头 CE + act 头目标）。
-4. **回环不可跳过**：微调后 → ONNX 导出（`docs/laya_tensorrt.md` 三个坑）→ **Jetson 重建 .plan**（绑定本机）→ 重跑 §Acceptance + `test_tensorrt_decider.py` 钉值（marker 布局、空场景 token 数）→ `gate()` 阈值按标注语料重拟合。
+4. **回环不可跳过**：微调后 → ONNX 导出（`docs/how-to/laya_tensorrt_runbook.md` 三个坑）→ **Jetson 重建 .plan**（绑定本机）→ 重跑 §Acceptance + `test_tensorrt_decider.py` 钉值（marker 布局、空场景 token 数）→ `gate()` 阈值按标注语料重拟合。
 5. **标签集扩展是 v2 的事**：若主动智能 v2 需要臂动作标签进入 S1，那是新 checkpoint 版本 + 新引擎 profile（marker 数变）+ `ActionKind` breaking change——必须单独 ADR，且先有 v1 微调的增益证据再决定值不值。
 
 ## 8. 分期计划（每期有验收，不跨期冒进）

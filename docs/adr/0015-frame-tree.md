@@ -24,7 +24,7 @@
     `robot_state_publisher` 存在**同帧双发布**风险。
   - 顶层只有 `map`/`odom`，没有能表达"无界世界"的全局根系；`map` 同时被当全局系和局部系用。
 - 工作空间已有分层硬约定（ADR-0013）：消息契约冻结、上层不感知传输/传感器后端；
-  "**同一个 TF 子坐标系只能有一个权威发布者**"（`docs/architecture.md`）。
+  "**同一个 TF 子坐标系只能有一个权威发布者**"（`docs/explanation/architecture.md`）。
 
 ## 决策
 

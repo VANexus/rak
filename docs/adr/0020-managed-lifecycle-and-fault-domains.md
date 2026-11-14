@@ -4,7 +4,7 @@
 - **日期**: 2026-10-29
 - **相关**: `src/rak_lifecycle/`（本决策的实现）· `src/rak_bringup/config/system_manifest.yaml` ·
   `src/rak_bringup/launch/supervisor.launch.py` · `src/rak_bringup/launch/robot.launch.py` ·
-  `docs/architecture.md` §4/§6 · ADR-0011（运动单写者）、ADR-0013（分层与冻结契约）、
+  `docs/explanation/architecture.md` §4/§6 · ADR-0011（运动单写者）、ADR-0013（分层与冻结契约）、
   ADR-0015（每帧唯一发布者）、ADR-0017（反馈存活性判据）、ADR-0019（按板故障域隔离）
 - **背景来源**: 2026-10-29 现场核查（`~/rak` 工作树 + Orin 上 `ros2 pkg executables lifecycle` /
   `ros2 pkg list | grep -E 'lifecycle|diagnostic'` 实测输出）
@@ -32,17 +32,17 @@
    （ADR-0015 的规矩）；`AGENTS.md` 另外记着"绝不能同时跑两份 `chassis_bringup`"——
    因为第二份的 spawner 会打到第一份的 `/controller_manager` 上死掉。
    **这些约束只存在于注释和本文里，没有任何可执行的东西钉住它。**
-3. **只有关进程这一档**。想停掉一个子系统只能 `pkill`（`docs/HANDOFF-AGENT.md` §1.1
+3. **只有关进程这一档**。想停掉一个子系统只能 `pkill`（`docs/archive/handoff_agent_2026-10-09.md` §1.1
    那套方括号脱敏写法就是这个操作的产物）。停不干净会留下半死的域，重启只能整栈推倒。
-4. **没有"这台机器现在到底能不能用"的单一答案**。`docs/architecture.md` §6 阶段 C 与
+4. **没有"这台机器现在到底能不能用"的单一答案**。`docs/explanation/architecture.md` §6 阶段 C 与
    §7 至今挂着"lifecycle 与末端单写者尚未做运行验收"；操作员只能靠
    `ros2 node list` + `ros2 lifecycle get /controller_server` 手工拼一个判断。
 
 同时有三条硬约束决定了不能简单"给每个节点套个状态机"：
 
 - **4 GB 单板，资源获取很贵**：TTS CosyVoice3 推理 ~1.7 GB、历史 PyTorch 权重常驻 804 MiB
-  （`docs/CONSTRUCTION.md` §2.2 与 `AGENTS.md` 记录）。反复重启一个域不能等于反复重载模型。
-- **硬件不完美是定义性约束**：每一层必须能**独立降级**（`docs/architecture.md` §1 的
+  （`docs/tutorials/construction.md` §2.2 与 `AGENTS.md` 记录）。反复重启一个域不能等于反复重载模型。
+- **硬件不完美是定义性约束**：每一层必须能**独立降级**（`docs/explanation/architecture.md` §1 的
   2026-10-08 增补）。ADR-0019 刚把下位机按板拆成两个故障域，上位机侧却仍是一坨全有全无的进程。
 - **F407 已有独立 deadman**（`cmd_stale`，ADR-0017）：Jetson 侧的生命周期**不得**变成第二条
   运动许可路径，否则安全语义出现两个权威源。

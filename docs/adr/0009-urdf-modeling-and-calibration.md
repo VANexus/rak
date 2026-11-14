@@ -148,5 +148,5 @@ STL 网格是**视觉**的事，可以最后再补（`meshes/arm/README.md` 现�
 - `src/rak_description/urdf/six_axis_sim.urdf.xacro`（六轴骨架，数值虚构）
 - `src/rak_description/urdf/properties.xacro`（R4.1：属性必须在顶层才能 CLI 覆盖）
 - `src/rak_description/urdf/macros/inertial_macros.xacro`（惯量宏，禁止裸 inertia）
-- `docs/superpowers/specs/2026-10-03-rak-moveit2-integration-design.md` §7.2–7.3（连杆表与参数化策略）
+- `docs/design/2026-10-03-rak-moveit2-integration-design.md` §7.2–7.3（连杆表与参数化策略）
 - OpenCV chArUco + `cv2.aruco.calibrateHandEye`（eye-in-hand 的 `AX=XB`）

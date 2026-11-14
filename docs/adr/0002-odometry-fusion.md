@@ -21,7 +21,7 @@
 > wheel encoders and no IMU**, so `odom -> base_link` is [由 rf2o 提供]."
 
 即当前 `odom→base_link` 由 **rf2o（2D 激光里程计）** 提供，`slam.launch.py` 暴露了
-`odom_source:=rf2o|ekf|none` 的**接缝**，但 `docs/architecture.md` §7 明确：
+`odom_source:=rf2o|ekf|none` 的**接缝**，但 `docs/explanation/architecture.md` §7 明确：
 
 > "当前 `odom_source:=ekf` 预留选项**不会自动启动 EKF**；仍需外部提供有效 TF。"
 
@@ -46,7 +46,7 @@
 
 1. **单一权威发布者**：`odom→base_link` 只由 EKF 发布。rf2o 不再直接发 TF，改为
    发布带协方差的 `nav_msgs/Odometry` 作为 EKF 的输入之一。
-   （`docs/architecture.md` §5 已有原则："同一个 TF 子坐标系只能有一个权威发布者"。）
+   （`docs/explanation/architecture.md` §5 已有原则："同一个 TF 子坐标系只能有一个权威发布者"。）
 2. **分阶段接入，每阶段都必须实测验证后再加下一个源**：
 
    | 阶段 | 融合内容 | 前置条件 | 验收 |
@@ -60,7 +60,7 @@
    - `map→odom`：SLAM（slam_toolbox，低频、全局、消除累积漂移）
    这是 ROS 的标准两层结构，不要试图用 EKF 同时解决全局定位。
 
-4. **所有输入必须带真实协方差与时间戳**。`docs/architecture.md` §5 明确要求"感知输出需保留
+4. **所有输入必须带真实协方差与时间戳**。`docs/explanation/architecture.md` §5 明确要求"感知输出需保留
    采集时间、坐标系、有效性和数据年龄"。**没有协方差的里程计不要塞进 EKF** ——
    默认协方差会让 EKF 信任错误的源。
 
@@ -109,7 +109,7 @@
 - **调参成本高**。`robot_localization` 的协方差矩阵与 `*_config` 参数对结果影响很大，
   必须实测标定，不能抄默认值。
 - **多一层延迟与故障点**。EKF 挂了整条 `odom→base_link` 就断了；需要 watchdog。
-- **IMU 与轮式的坐标系/符号约定必须逐一对齐**（`docs/architecture.md` §5：ROS 是 x 前 y 左，
+- **IMU 与轮式的坐标系/符号约定必须逐一对齐**（`docs/explanation/architecture.md` §5：ROS 是 x 前 y 左，
   旧 `SceneState` 是相机 x 右 z 前，**在适配层显式变换**）。符号错了 EKF 会发散而不是报错。
 - **IMU 挂在 SPI 上**，与相机/雷达无争用，但 IIO→ROS 的桥接节点是新增的故障面。
 
@@ -128,11 +128,11 @@
 
 ## 待闭合项
 
-1. **`odom_source:=ekf` 目前不会启动 EKF**（`docs/architecture.md` §7）。需要真正实现这个分支：
+1. **`odom_source:=ekf` 目前不会启动 EKF**（`docs/explanation/architecture.md` §7）。需要真正实现这个分支：
    启动 `robot_localization` 节点 + 加载配置 + 确保 rf2o 改为只发 Odometry 不发 TF。
-2. **底盘遥测是否提供可用协方差未知**。`docs/architecture.md` §1："底盘有独立 IMU 做稳定，
+2. **底盘遥测是否提供可用协方差未知**。`docs/explanation/architecture.md` §1："底盘有独立 IMU 做稳定，
    但是否提供 ROS 可消费的 IMU/协方差/时间戳还需对接。"
-3. **IMU 的 IIO→ROS 桥接节点未实现**（见 `docs/CONSTRUCTION.md` §5）。
+3. **IMU 的 IIO→ROS 桥接节点未实现**（见 `docs/tutorials/construction.md` §5）。
 4. **视觉里程计节点不存在**。双目/Astra 都只有驱动，没有 VO 算法。
 5. **坐标系与符号对齐未验证**：轮式、IMU、雷达三者的 x/y 方向与 yaw 正负必须逐一对齐，
    否则 EKF 发散。这是最容易出错且最难排查的一步。
@@ -144,6 +144,6 @@
 
 - `src/rak_navigation/config/slam_toolbox.yaml`（"no wheel encoders and no IMU" 现状说明）
 - `src/rak_navigation/launch/slam.launch.py`（`odom_source` 接缝）
-- `docs/architecture.md` §5（时间/坐标系/TF 单发布者原则）、§7（EKF 未启动的缺口）
+- `docs/explanation/architecture.md` §5（时间/坐标系/TF 单发布者原则）、§7（EKF 未启动的缺口）
 - ADR-0007（当前 ros2_control 架构；轮式里程计来源 = `mecanum_drive_controller/odometry`）
 - 外部研究结论（`robot_localization` 双 EKF 架构、四源融合实践）—— 见本文档修订记录

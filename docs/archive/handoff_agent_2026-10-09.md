@@ -1,8 +1,10 @@
 # 上位机（Jetson）Agent 交接文档
 
+> 状态：存档 · 最后更新：2026-10-09
+
 > 面向后续接手的 AI Agent / 开发者。记录 2026-10-09 全天的**环境真相、已完成状态、已知坑与待办**。
-> **动手前先读完本文**，能省一整天的重复踩坑。姊妹文档：`docs/CONSTRUCTION.md`（构建规范）、
-> `docs/architecture.md`（架构）、`docs/project_status.md`（路线图）。
+> **动手前先读完本文**，能省一整天的重复踩坑。姊妹文档：`docs/tutorials/construction.md`（构建规范）、
+> `docs/explanation/architecture.md`（架构）、`docs/status/project_status.md`（路线图）。
 
 ---
 
@@ -78,7 +80,7 @@ rak_bringup 环境钩子 `env-hooks/rak_cyclonedds.{sh,dsv}` 在 source overlay 
 | 安装空间 | `install/architecture` | 非默认 install/ |
 | CYCLONEDDS_URI | rak_bringup/config/cyclonedds.xml | |
 
-### 1.3 构建（规范命令见 `docs/CONSTRUCTION.md` §3）
+### 1.3 构建（规范命令见 `docs/tutorials/construction.md` §3）
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -233,7 +235,7 @@ map ──slam_toolbox──► odom ──EKF──► base_link ──┬─ s
 | `scripts/spi_imu.py` | IMU ROS 节点（SPI 块读 1000Hz；`--probe` 只读自检） |
 | `scripts/lsm6dsr-overlay/rak-imu-spi-pinmux.dts` + `install-spi-pinmux.sh` | 40 针 SPI1 pinmux overlay（预合并进 /boot/dtb/rak_imu_spi.dtb） |
 | `data/maps/rak_room.posegraph` | lifelong 位姿图（gitignore，本地资产） |
-| `docs/CONSTRUCTION.md` | 构建规范（§3 命令） |
+| `docs/tutorials/construction.md` | 构建规范（§3 命令） |
 | `src/vendor/lslidar/.../CMakeLists.txt` | 已修（签名混用+ament 回正） |
 
 ## 6. 交接时刻的服务器快照（2026-10-10 傍晚）

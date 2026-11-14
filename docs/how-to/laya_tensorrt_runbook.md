@@ -1,5 +1,7 @@
 # Laya TensorRT Export Runbook
 
+> 状态：现行 · 最后更新：2026-10-17
+
 Status (2026-10-14): fully integrated and verified end to end on the Jetson. The
 full-model BF16 ONNX export and the TensorRT engine build both ran on 2026-10-07.
 The artifacts live under the gitignored repo-root `data/models/laya-typed-decisions/`
@@ -17,7 +19,7 @@ Runtime dependencies are the JetPack TensorRT Python binding, system `numpy`, an
 against rosdistro's python.yaml/base.yaml on 2026-10-14 — which is why `package.xml`
 does not declare it and `rosdep install` must not be expected to provide it).
 
-The wrapper [`scripts/export_laya_onnx.py`](../scripts/export_laya_onnx.py)
+The wrapper [`scripts/export_laya_onnx.py`](../../scripts/export_laya_onnx.py)
 needed two fixes that the earlier "preparation" pass did not anticipate; both
 are recorded under "Export gotchas" below.
 
@@ -116,7 +118,7 @@ avoids generic PyTorch CUDA wheels.
 The upstream exporter constructs an `Agent` with default FP32 parameters, so
 do not run it directly. The checkpoint config requests BF16 compute, while all
 206 checkpoint tensors are stored as F16. The project wrapper
-[`scripts/export_laya_onnx.py`](../scripts/export_laya_onnx.py) builds the model
+[`scripts/export_laya_onnx.py`](../../scripts/export_laya_onnx.py) builds the model
 in BF16 and copies safetensors one tensor at a time. This avoids the FP32 model
 allocation and avoids holding a second full copy of all checkpoint tensors.
 Its streaming loader passed a small BF16 conversion test; the full model export

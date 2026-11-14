@@ -1,13 +1,15 @@
 # 机器基线（Jetson Orin Nano · 机器人核心）
 
+> 状态：现行 · 最后更新：2026-11-12
+
 > 更新日期：2026-11-13
 > 适用：本仓唯一的工作区 `~/rak` 所在的那台 Orin Nano（`orin` / `orin.xrak`）。
 > 一条命令回到已知状态：`sudo scripts/system/rak-system-baseline.sh`
 
 ## 这份文档回答什么
 
-"这台机器**长什么样**"——不是"代码怎么写的"（那是 `docs/architecture.md`），
-也不是"做到哪一步了"（那是 `docs/project_status.md`）。
+"这台机器**长什么样**"——不是"代码怎么写的"（那是 `docs/explanation/architecture.md`），
+也不是"做到哪一步了"（那是 `docs/status/project_status.md`）。
 
 刷机、换板、把机器借给别人之后再拿回来，都靠这份文档把状态拉回已知基线。
 **凡是能脚本化的，都在 `scripts/system/rak-system-baseline.sh` 里；本文只解释为什么。**
@@ -307,5 +309,5 @@ CPU governor、`CmaFree`、gdm 状态。**任何一项和本文表格不一致�
 - `scripts/system/rak-system-baseline.sh` —— 本文所有配置的唯一实现
 - `scripts/rak-mode.sh` —— headless ↔ desktop 切换（CMA 的取舍开关）
 - `README.md` §Remote desktop —— VNC 的三条路由与"为什么不是 vino"
-- `docs/CONSTRUCTION.md` §2.2 —— 内存/swap/zram 的现场记录
+- `docs/tutorials/construction.md` §2.2 —— 内存/swap/zram 的现场记录
 - `CLAUDE.md` §Gotchas —— CMA 争用、`vino` vs `x11vnc` 的实测数据

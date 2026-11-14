@@ -1,10 +1,12 @@
 # 下位机通讯能力规格 —— 让上位机"不用再拆机"的一次到位清单
 
+> 状态：提案 · 最后更新：2026-11-09
+
 - **日期**: 2026-10-30
 - **状态**: 提案（待两块下位机仓签字后进固件，升 build_tag）
-- **适用**: 底盘板 `vehical_rak_motion`（R73）、机械臂板 `vehical_rak_edge_ai`（A14）
+- **适用**: 底盘板 `vehical_rak_motion`（R73）、机械臂板 `vehical_rak_arm`（A14）
 - **关联**: `docs/CANOPEN-V5.md`（协议 SSOT）· `rak/docs/adr/0024`（主站）·
-  `rak/docs/adr/0023`（时间基准）· `rak/docs/canopen-bitfields.md`（位语义）·
+  `rak/docs/adr/0023`（时间基准）· `rak/docs/reference/canopen_bitfields.md`（位语义）·
   ADR-0002（融合）/ ADR-0007（ros2_control）
 
 > **为什么现在写**：目标链路是「四路里程计（IMU / 轮式 / 雷达 / SLAM）→ EKF →

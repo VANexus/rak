@@ -1,5 +1,7 @@
 # 项目总体状态
 
+> 状态：现行 · 最后更新：2026-11-12
+
 更新日期：2026-11-13
 
 ## 2026-11-13 增量：新机器基线与工具链闭合（无功能变更）
@@ -7,7 +9,7 @@
 这一轮**没有加功能**，做的是"让这台机器从'能开机'变成'能当机器人核心'"，
 以及把长期带红的测试套件修绿。逐条都可在本机复现。
 
-### 机器侧（新增 `scripts/system/rak-system-baseline.sh`，详见 `docs/machine-baseline.md`）
+### 机器侧（新增 `scripts/system/rak-system-baseline.sh`，详见 `docs/reference/machine_baseline.md`）
 
 - **SSH 只允许公钥**：`sshd -T` 实测 `passwordauthentication no`、
   `authenticationmethods publickey`、`permitrootlogin no`、`allowusers xrak`。
@@ -251,7 +253,7 @@ EKF 协方差标定、轮径/lx/ly 实测回填、臂 J2–J6 运动与限位验
   轮几何与限速当前是占位值，实测替换前不得提速。
 - `task_navigation.launch.py` 的 `motion_backend` 只有 `sim|stub`，不证明 F407 固件
   兼容或提供安全保证；真底盘只能经 `chassis_bringup.launch.py` 走 CAN（ADR-0016）。
-- 物理底盘保持锁定，直到完成 [硬件验收门槛](hardware_acceptance.md)；六轴手臂继续只用软件夹具。
+- 物理底盘保持锁定，直到完成 [硬件验收门槛](../reference/hardware_acceptance.md)；六轴手臂继续只用软件夹具。
 
 ## 建议的下一步顺序
 
@@ -284,10 +286,10 @@ EKF 协方差标定、轮径/lx/ly 实测回填、臂 J2–J6 运动与限位验
 - **CANopen v5 主站选型**（ADR-0024）：ros2_canopen（Jazzy），配置/launch/首帧核对工具已就位；
   **未编译未实机验证**——这是下一步的第一优先级。
 - **行为层**（ADR-0025）：只出两级架构与迁移路径（BT.CPP 技能层 / SMACC2 任务层），代码未交付。
-- **下位机能力规格**：`docs/firmware-capability-spec.md`——四路里程计的职责边界、
+- **下位机能力规格**：`docs/reference/firmware_capability_spec.md`——四路里程计的职责边界、
   EKF/Nav2 的八条隐性需求、固件补齐清单（F1–F10，含电池上报/EMCY 分类/参数持久化）。
 
-**未验证清单（下次上机照 `docs/NEXT-2026-10-30.md` 逐条证伪）**：
+**未验证清单（下次上机照 `docs/status/next_2026-10-30.md` 逐条证伪）**：
 C++ lifecycle 改造未编译；ros2_canopen 未安装；managed 全栈未真机激活；字节序待首帧；
 EKF 协方差待 Allan/直行实测。
 

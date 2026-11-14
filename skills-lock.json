@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "skills": {
+    "canopen-integration": {
+      "source": "easyzoom/aix-skills",
+      "sourceType": "github",
+      "skillPath": "skills/canopen-integration/SKILL.md",
+      "computedHash": "72a45a5d9d4a41f09f6b5ca82e18e2945adc7f97e7d950a78fadb7c6f549518c"
+    },
+    "code-review": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/code-review/SKILL.md",
+      "computedHash": "ce86b40a3d1648a0018b712f0c70704e6c2316b2a9b9e915ab116916a31273dc"
+    },
+    "code-review-and-quality": {
+      "source": "addyosmani/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/code-review-and-quality/SKILL.md",
+      "computedHash": "55dfc44b9cce8f74673005d566a1af57e9c95694f1c89b964a9d12b7ae76930c"
+    },
+    "documentation-and-adrs": {
+      "source": "addyosmani/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/documentation-and-adrs/SKILL.md",
+      "computedHash": "deb39d7c8157563bc14a48f0d22003c82f4d8370b69c96efde476fe12318d188"
+    },
+    "robotics-testing": {
+      "source": "arpitg1304/robotics-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/robotics-testing/SKILL.md",
+      "computedHash": "6eea9a2a1f9410b48e73a8c18b24ce0bd43cf4702cb5424b4145c7f84c096504"
+    },
+    "ros2": {
+      "source": "arpitg1304/robotics-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ros2/SKILL.md",
+      "computedHash": "c29bb215ef5d6c2d2fb94e797aec1a5c13339fb1f0d3effef2d48cbd047cddbe"
+    },
+    "ros2-cli": {
+      "source": "picknikrobotics/moveit-pro-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ros2-cli/SKILL.md",
+      "computedHash": "d6f4de6b2fc4723cd789c6ae070f65e5c095ec9574920795f15704104762008b"
+    },
+    "stm32-baremetal": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/baremetal/stm32-baremetal/SKILL.md",
+      "computedHash": "e71c5390ae2c813a13792fdc6d804806ec45c9c24d8d7f0a403b499e568f0ad5"
+    },
+    "stm32-debug": {
+      "source": "xzhaosudo/stm32debug-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "f70dff58bf121d3c2a5d50ba75115c61c35fc0038feb98e3f051f96d0270c8bd"
+    },
+    "stm32-freertos-developer": {
+      "source": "2939387245/agent-skill_stm32-freertos",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "e70765b6b05e74bd3577b5f0e6ba15d07b651508b84640a16fc6675d0849a836"
+    },
+    "technical-writing": {
+      "source": "riekelt/technical-writer",
+      "sourceType": "github",
+      "skillPath": "plugins/technical-writer/skills/technical-writing/SKILL.md",
+      "computedHash": "1887649c89f345364dc4d0cb58f0f6fa1b4b6fd52286eecdc2823585d3109015"
+    }
+  }
+}

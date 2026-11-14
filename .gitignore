@@ -55,3 +55,9 @@ frames_*.pdf
 
 # Mac tar AppleDouble (sloppy tar from macOS adds these)
 ._*
+
+# 项目级 Agent Skills：skill 本体按 skills-lock.json 还原，不入库
+#   还原：npx skills@latest experimental_install --agent '*' -y
+#   （.claude/skills 是还原时生成的符号链接，见上面的 .claude/）
+.agents/skills/
+agent/skills/

@@ -1,18 +1,53 @@
 # AGENTS.md
 
-> **CAN 协议已于 2026-10-29 换成 v5 = CANopen（下位机已生效）** —— 见 ADR-0021 与伞形仓
-> `docs/CANOPEN-V5.md`。本仓 `src/rak_chassis` 的 `CanSession`/`can_decode` 仍说 **v4 帧**，
-> 对当前在板固件（底盘 R73 / 机械臂 A14）**完全无效**：板子停在 Pre-operational，
-> 不发 NMT Start 就没有任何 PDO。真机链路要等 P3（lely-core 主站）。
-> 现在验证下位机只能用 `tools/canopen_bringup.py`（原始 SocketCAN），**不要**用 v4 脚本
-> 或手搓 `cansend` 去判断"下位机坏了"。**禁止同一总线混跑 v4/v5**（ID 冲突）。
+> **CAN 协议已于 2026-10-29 换成 v5 = CANopen（下位机已生效）** —— 见 ADR-0021 与两个下位仓的
+> 线缆事实源：`../vehical_rak_motion/docs/CANOPEN-V5.md` + `docs/canopen/chassis.json`（底盘板）、
+> `../vehical_rak_arm/docs/CANOPEN-V5.md` + `docs/canopen/arm.json`（机械臂板）。本仓
+> `src/rak_chassis` 的 `CanSession`/`can_decode` 仍说 **v4 帧**，对当前在板固件（底盘 R73 /
+> 机械臂 A14）**完全无效**：板子停在 Pre-operational，不发 NMT Start 就没有任何 PDO。真机链路要等
+> P3（lely-core 主站）。现在验证下位机只能用两个下位仓里的 `tools/canopen_bringup.py`（原始
+> SocketCAN），**不要**用本仓 v4 脚本或手搓 `cansend` 去判断"下位机坏了"。
+> **禁止同一总线混跑 v4/v5**（ID 冲突）。
 
 
 Layered embodied robot system for Jetson Orin Nano (JetPack 7.2). C++/ROS 2 (Jazzy) + a
-plain-Python decision layer. `README.md` is the primary design doc — read it before
-changing behavior; it records decisions that are not obvious from the code. `CLAUDE.md`
-is the parallel instruction file (Claude Code) and goes deeper on architecture; keep
-repository-wide guidance in sync between the two.
+plain-Python decision layer. `README.md` is the engineering entry point and this file is the
+single agent-instruction source — there is no second instruction file; read `## Orientation`
+first, then the topology section, before changing behavior.
+
+## Orientation
+
+Layered embodied-robot workspace for Jetson Orin Nano / ROS 2 Jazzy: perception + decision on
+the Orin, real-time control on **two** STM32F407 leaf nodes (chassis + arm; see the topology
+changes below — the "one F407" phase is history again).
+Read these before changing behavior — they record decisions the code does not show:
+
+- `README.md` — engineering entry point (Chinese): layout, build, launch entries, hardware.
+- `docs/explanation/architecture.md` — package boundaries, target runtime architecture, acceptance stages,
+  and an explicit list of gaps that are **not** closed.
+- `docs/status/project_status.md` — what is actually done vs. only claimed (dated; read the date).
+- `docs/tutorials/construction.md` — assembly order and deployment checklist; host-side board changes.
+- `docs/adr/` — **immutable** architecture decisions (why, and what was rejected). Index in
+  `docs/adr/README.md`. `ADR-0007` is the current control architecture and **supersedes ADR-0001**.
+  `ADR-0016` (2026-10-14) removed the USB v2 link — CAN is the only transport (`CanSession`),
+  and tools talk to drivers only through topic/action/service. `ADR-0010` defines the
+  Jev↔Harness arbitration seam and the reserved "呼吸感" expression interface; the seam is
+  **design-only** — `src/rak_harness` exists (2026-10-15 it also hosts the P1 agentic tool
+  loop), but the arbitration path itself still needs its ADR.
+- `docs/adr/0022-jetson-canopen-contract-layer.md` — how the **Jetson** side binds to CANopen v5: protocol stack = lely-core (ADR-0021), this repo only *derives* COB-IDs / PDO layout / rates / quantization from the MCU SSOT (`src/rak_canopen/`) and gate-checks that v4 and v5 never share a bus.
+- `docs/reference/hardware_acceptance.md` — gates that must pass before any physical base/arm test.
+- `docs/design/brain_arm_tools.md` — **DESIGN DRAFT** (2026-10-15, not accepted): tool-proposal
+  contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption (no CLI/MCP external
+  control surface), phasing P0–P5. Needs an ADR before implementation.
+- `docs/explanation/migration_2026-10.md` — the 2026-10-04 unified `rak_` package rename (old name → new name table).
+- `TODO.md` — prioritized roadmap (P0–P3). Tasks only; rationale lives in the ADRs.
+- `docs/README.md` — docs index + writing rules (Diátaxis layout, status line, numbering).
+
+**Trust hierarchy when docs disagree.** This file is the current lead on topology (updated
+2026-11-14); the sections below keep the historical reasoning. The 2026-10-04 docs
+(`README.md`, `docs/explanation/architecture.md`, `docs/status/project_status.md`) describe the code as it stood
+then; the 2026-10-05 docs (`TODO.md`, `docs/tutorials/construction.md`, `docs/adr/0007`) describe the
+**accepted target** after the first hardware change. Do not treat an old status line as current.
 
 ## Topology: dual-board again since 2026-10-28 — read this first
 
@@ -21,7 +56,7 @@ driving 4 wheels + 7 servos" topology (2026-10-05 … 2026-10-27) is **supersede
 now **two** C30D F407 boards on one CAN bus with the Jetson (three nodes total):
 
 - **chassis board** (`vehical_rak_motion`, firmware `R64`): 4 wheels + onboard IMU.
-- **arm board** (`vehical_rak_edge_ai`, git dir name `vehical_rak_arm`, firmware `A2`):
+- **arm board** (`vehical_rak_arm`, git dir name `vehical_rak_arm`, firmware `A2`):
   **J1/J2 = MG513P30 incremental-encoder motors** (AT8236 + TIM6 25 kHz position loop,
   software zeroing) + **J3..J6 = servos**. A2 (2026-10-28) motorized J1/J2; A1 was pure-servo.
 
@@ -35,7 +70,7 @@ bit6 grip = no feedback.
 
 **Still unverified on hardware**: `R64` and `A2` have never been flashed/run. J1/J2
 encoder polarity, gains and limits are `[AI]` placeholders — see
-`vehical_rak_edge_ai/README.md` §6 before sending any `ARM_CMD`.
+`vehical_rak_arm/README.md` §6 before sending any `ARM_CMD`.
 
 **2026-10-09 (ADR-0012): CAN v4 is the primary link** (SN65HVD230 transceiver, protocol v4 in
 the leaf repo). **ADR-0016 (2026-10-14) then deleted the USB v2 transport entirely**: CAN v4
@@ -43,10 +78,10 @@ is now the *only* transport, and `Session` (`src/rak_chassis`) has a single impl
 `CanSession`. Upper layers never see the link. **2026-10-09 (ADR-0013): the workspace was
 regrouped by subsystem** — `brain/` moved to `src/rak_agent`, CAN v3 stack retired (local
 `attic/` archive deleted 2026-10-10 — the code lives only in git history). On 2026-10-29 the
-two remaining v3 leftovers were also removed: the `rak_can_driver` package (deleted) and the
-never-committed `rak_base_driver` dir. `scripts/check_workspace.py`'s `EXPECTED` is now **22**
-owned packages (v3 `rak_can_driver` gone; upstream meanwhile added `rak_harness` and
-`rak_tool_executor`).
+two remaining v3 leftovers were also removed: the `rak_can_driver` package (deleted) and a
+never-committed `rak_base_driver` dir; **ADR-0016 had already deleted `rak_base_driver`
+itself** together with `SerialSession`. `scripts/check_workspace.py`'s `EXPECTED` is now **27**
+owned packages.
 
 - `docs/adr/*` are immutable (append/supersede only), indexed by `docs/adr/README.md`.
   **ADR-0007 supersedes ADR-0001**; the valid set is 0002 + 0003 (v4 layer) + 0004–0015.
@@ -63,13 +98,13 @@ owned packages (v3 `rak_can_driver` gone; upstream meanwhile added `rak_harness`
   The **DESIGN DRAFT** for the brain↔arm/tools operation layer (versioned tool-proposal
   contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption — no CLI/MCP external
   control surface, phasing P0–P5) is
-  `docs/brain_arm_tools_design.md` (2026-10-15, **not accepted** — needs an ADR; do not
+  `docs/design/brain_arm_tools.md` (2026-10-15, **not accepted** — needs an ADR; do not
   implement it as if it were one).
 - ADR-0007's target — whole robot on `ros2_control`, host-side mecanum IK — is **partially
   implemented as of 2026-10-14**: `src/rak_chassis` (ex `rak_hardware`, renamed by ADR-0013)
   exports 4 wheel velocity interfaces (F407 chassis smoke test, firmware R37) **plus 7 arm
   position command interfaces** (6 joints + gripper, command domain = servo command angle,
-  contract `docs/arm_moveit_contract.md` §1), with `arm_controller`
+  contract `docs/reference/arm_moveit_contract.md` §1), with `arm_controller`
   (JointTrajectoryController) and `gripper_controller` spawned by
   `chassis_bringup.launch.py`. Verified 2026-10-14 on the live F407: first with
   `allow_motion:=false` (arm feedback syncs from the firmware echo, all 4 controllers
@@ -94,38 +129,56 @@ owned packages (v3 `rak_can_driver` gone; upstream meanwhile added `rak_harness`
   (retrievable at commit `4f34795` and earlier). The live CAN path is the `CanSession`
   backend inside `src/rak_chassis`.
 - Docs disagree by date, not correctness. The 2026-10-04 set (`README.md`,
-  `docs/architecture.md`, `docs/project_status.md`) describes the code as it stands;
-  `TODO.md`, `docs/CONSTRUCTION.md` and `docs/adr/0007` describe the accepted target.
+  `docs/explanation/architecture.md`, `docs/status/project_status.md`) describes the code as it stands;
+  `TODO.md`, `docs/tutorials/construction.md` and `docs/adr/0007` describe the accepted target.
   Do not read a 10-04 status line as current, and do not implement the target as if the
   code already supported it.
 
 ## Layout
 
 The 2026-10-09 subsystem regroup (ADR-0013) supersedes the 2026-10-04 package layout.
-Read `docs/architecture.md` and `docs/migration.md` (dated mapping tables) before moving
-package boundaries. 18 buildable packages, every one with a real responsibility:
+Read `docs/explanation/architecture.md` and `docs/explanation/migration_2026-10.md` (dated mapping tables) before moving
+package boundaries. `scripts/check_workspace.py`'s `EXPECTED` holds **27** owned packages;
+every one has a real responsibility:
 
 - `src/rak_interfaces`: messages/actions/services only, no GPU/model dependencies.
 - `src/rak_gpu`: JetPack library, exported target `rak_gpu::gpu`, namespace `rak::gpu`.
 - `src/rak_stereo_driver`: plugin `rak::stereo_driver::CaptureNode`, executable `stereo_node`.
 - `src/rak_astra_driver`: tested depth camera adapter, executable `astra_node`.
 - `src/rak_pointcloud`: GPU point cloud node (`gpu_pointcloud_node`).
+- `src/rak_imu_driver`: Jetson-direct LSM6DSRTR IMU over SPI1 → `sensor_msgs/Imu` on
+  `/imu/data_raw` (heading authority, ADR-0002).
+- `src/rak_road_perception`: TorchScript road segmentation (+ optional Nav2 point-cloud
+  observations).
+- `src/rak_grasp_perception`: RGB-D snapshots, offline grasp candidates, planning visualization.
 - `src/rak_description`: geometry and visualization — legacy five-axis demo plus the
   isolated six-axis fixture `urdf/six_axis_sim.urdf.xacro`.
 - `src/rak_moveit_config`: SRDF, IK and planning configuration; six-axis fixture is simulation-only.
-- `src/rak_chassis`: (ex `rak_hardware`) F407 transport + ros2_control plugin — `Session`
-  abstraction with `SerialSession` (USB v2, frozen backup) and `CanSession` (SocketCAN CAN v4,
-  primary), `transport:=usb|can` factory (ADR-0012); 4 wheel velocity + 7 arm position
-  interfaces (arm since 2026-10-14).
-- `src/rak_base_driver`: USB v2 protocol codec + UART v1 host driver node; the codec is
-  shared by commissioning tools. Node hardware disabled by default; its node fate stays
-  open per ADR-0007 待闭合项 #7.
+- `src/rak_arm_pinocchio_ik`: pinocchio-based IK arm chain for the brain↔arm tools layer.
+- `src/rak_chassis`: (ex `rak_hardware`) F407 transport + ros2_control plugin — the `Session`
+  seam with a **single** implementation, `CanSession` (SocketCAN; ADR-0016 deleted the USB v2
+  `SerialSession` and the `transport:=usb|can` factory); 4 wheel velocity + 7 arm position
+  interfaces (arm since 2026-10-14). Protocol today is v4 frames; v5/CANopen is not wired
+  yet (see the banner above).
+- `src/rak_canopen`: CANopen v5 **Jetson-side contract layer** (ADR-0022) — derives COB-IDs,
+  PDO layout, rates, quantization and the v4/v5 collision gate from the MCU SSOT manifest.
+  Not a protocol stack; lely-core is the production master (ADR-0021).
 - `src/rak_commissioning`: (ex `rak_drive_tui` + `rak_arm_tui` + `chassis_key_test`)
   commissioning entries: `chassis_tui`, `arm_tui`, `chassis_key_test`,
   `launch/chassis_test.launch.py`. Both TUIs are pure ROS 2 tools (actions/topics only, never
   touch CAN directly — `check_workspace.py` forbids this package depending on `rak_chassis`).
   Not production motion interfaces.
 - `src/rak_arm_simulation`: software-only six-axis trajectory/gripper action fixture.
+- `src/rak_lifecycle`: managed-lifecycle infrastructure (ADR-0020): fault-domain manifest,
+  `ManagedNode` base, `system_manager`, `rak_system` CLI.
+- `src/rak_orchestration`: assembly **contract** layer — manifest, launch contracts,
+  supervisor entry; buildable/testable on a plain x86 desktop.
+- `src/rak_metrics`: latency/age/drop aggregator (p50/p95/p99) as `diagnostic_msgs` + a small
+  HTTP endpoint; also owns the rosbag record profile.
+- `src/rak_harness`: Jev↔executor arbitration seam + voice dialogue loop (ADR-0010) —
+  advisory proposals only, never velocity or joint commands.
+- `src/rak_tool_executor`: the single deterministic executor for the versioned tool-proposal
+  contract (`docs/design/brain_arm_tools.md`, still a DESIGN DRAFT).
 - `src/rak_task_executor`: sole owner of text-navigation task and Nav2 goal lifecycle;
   depends on `rak_intent`, never on `rak_agent`.
 - `src/rak_intent`: shared versioned text→intent contract (stdlib-only at import time);
@@ -137,15 +190,17 @@ package boundaries. 18 buildable packages, every one with a real responsibility:
   Audio in is `audio_common_msgs/AudioData` on `/audio` (`source:=topic`, published by
   `audio_capture` in `rak_bringup speech.launch.py`) or a direct `arecord` device; the
   six-mic array's measured facts, the board protocol and the decode/synthesis speed budget
-  live in `docs/microphone_array.md`.
+  live in `docs/reference/microphone_array.md`.
 - `src/rak_wbc`: velocity-level whole-body arbitration (ADR-0011): ament_python standalone
   node `wbc_node` — single regular motion writer for base + arm; skeleton + desktop numeric
   tests exist, hardware wiring gated by the ADR's closed items. Fixtures/smoke:
   `fake_arm_stream` (command-echo arm fixture) and `scripts/wbc_shadow_smoke.sh`
   (shadow contract smoke; remaps the base output — no actuator is commanded).
 - `src/rak_motion_stub`: test relay/estimate, not a hardware driver.
-- `src/rak_bringup`: the single composition layer — all launch files (lidar/astra/stereo/
-  gemini335l, slam, nav2, task_navigation, agent, base_uart, chassis_bringup), params,
+- `src/rak_bringup`: the single composition layer — all launch files (`agent`, `robot`,
+  `sensors`, `task`, `task_navigation`, `harness_agent`, `chassis_bringup`,
+  `canopen_bringup`, `slam`, `nav2`, `lidar`, `astra`, `depth_camera`, `gemini335l`,
+  `grasp_camera`, `stereo`, `speech`), params,
   udev and operator scripts (absorbed `rak_sensor_bringup`, `rak_navigation`,
   `rak_chassis_bringup`).
 - `src/rak_agent`: (ex `brain/`) the decision layer, ROS package `rak_agent`, module
@@ -173,9 +228,14 @@ system templates plus agent/IDE caches):
   the apt package `ros-jazzy-orbbec-camera` 2.9.3, so **do not source this ws**: building
   inside it is only for deliberately shadowing the apt package of the same name via source
   order. Renamed from `~/orbbec_ros2_ws` on 2026-10-14.
-- `~/vehical_rak_chassis` — STM32 F407 firmware project, **not a ROS ws**. Frozen source of
-  truth for the CAN v4 protocol (referenced by `scripts/can_link_smoke.py` and
-  `docs/adr/0016`); do not move or absorb it.
+- `~/vehical_rak_motion` — STM32 F407 **chassis board** firmware project (4 wheels + IMU),
+  **not a ROS ws**. Carries the v5 wire truth: `docs/CANOPEN-V5.md` +
+  `docs/canopen/chassis.json`, plus `tools/canopen_bringup.py` (raw SocketCAN) for on-board
+  verification. Do not move or absorb it. The v4 `PROTOCOL.md` there is now history.
+- `~/vehical_rak_arm` — STM32 F407 **arm board** firmware project (J1..J6 + gripper), not a
+  ROS ws. Renamed 2026-11-14 from `vehical_rak_edge_ai`; same v5 layout
+  (`docs/CANOPEN-V5.md` + `docs/canopen/arm.json` + `tools/canopen_bringup.py`).
+  `vehical_rak_chassis` is a **dead name** — that repo no longer exists.
 
 Two gitignored local directories live *inside* the repo (moved out of `~` on 2026-10-14;
 `.gitignore` carries `/tools/` and `/debug/`, root-anchored so they cannot swallow a nested
@@ -203,10 +263,11 @@ source /opt/ros/jazzy/setup.bash
 colcon build --base-paths src --executor sequential --build-base build/architecture --install-base install/architecture --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/architecture/local_setup.bash
 python3 scripts/check_workspace.py --installed
+python3 scripts/check_docs.py                 # docs link/index/status-line gate
 colcon test --build-base build/architecture --install-base install/architecture --packages-select rak_description rak_moveit_config
 colcon test-result --test-result-base build/architecture --verbose
 ROS_DOMAIN_ID=77 python3 -m pytest src/rak_task_executor/test src/rak_arm_simulation/test
-ROS_DOMAIN_ID=77 PYTHONPATH=src/rak_base_driver:$PYTHONPATH python3 -m pytest src/rak_base_driver/test
+ROS_DOMAIN_ID=77 python3 -m pytest src/rak_lifecycle/test
 ros2 run rak_stereo_driver stereo_node
 ros2 launch rak_bringup lidar.launch.py
 ros2 launch rak_bringup speech.launch.py  # array: capture -> ASR, board wake -> /speech/wake, /speech/say -> speaker
@@ -236,7 +297,7 @@ Each command above has a known, unrelated way to fail:
 - **A full build needs three host deps** that may be absent: `/opt/OrbbecSDK_v1.10.18`
   (`rak_astra_driver`), `libpcap-dev` (vendor `lslidar_driver`), and
   `ros-jazzy-camera-info-manager` (`rak_stereo_driver`). Until they exist, build with
-  `--packages-skip rak_astra_driver lslidar_driver rak_stereo_driver` — the other 18
+  `--packages-skip rak_astra_driver lslidar_driver rak_stereo_driver` — the remaining
   packages still build. Their absence also makes `stereo_node` / `lidar.launch.py` fail
   with "package not found", and leaves a partial install entry, so sourcing prints
   `not found: .../local_setup.bash` (harmless).
@@ -249,20 +310,22 @@ Each command above has a known, unrelated way to fail:
   fix the structure (package.xml deps, launch references, frozen boundaries), never the
   assertion. Historical note: before the 2026-10-09 regroup it failed on its own stale
   EXPECTED set; that debt is gone.
-- **`PYTHONPATH=src/rak_base_driver` replaces ROS's own PYTHONPATH** →
+- **`PYTHONPATH=src/rak_agent` replaces ROS's own PYTHONPATH** →
   `ModuleNotFoundError: No module named 'rclpy'`. Append `:$PYTHONPATH`; putting
   `src/...` first also makes pytest test your edits without a rebuild.
-- **`test_protocol.py` duplicates are a pytest hazard**: `rak_base_driver` has one, and the
-  retired CAN v3 stack (git history only since 2026-10-10) had another. Two in one pytest
-  run → `ImportPathMismatchError`, even with `--import-mode=importlib`. Run one package per
-  invocation, or `colcon test --packages-select`, which isolates them.
+- **`test_protocol.py` duplicate basenames are a pytest hazard** (two files with the same
+  basename in one run → `ImportPathMismatchError`, even with `--import-mode=importlib`).
+  Run one package per invocation, or `colcon test --packages-select`, which isolates them.
 - **ROS pytest needs the install overlay sourced** — `rak_interfaces` exists only there.
   `ROS_DOMAIN_ID=77` keeps it off runtime domain 47, which `~/.bashrc` pins for the operator.
   `colcon test` on `rak_moveit_config` fails `legacy_srdf` until `python3-defusedxml`
   (a declared `test_depend`) is installed.
-- `rak_agent` requires the Ubuntu `python3-pydantic` system package. The implementation
-  supports Ubuntu's Pydantic 1 API; `package.xml` declares it for rosdep. The TensorRT
-  binding is supplied by JetPack, while the model engine and tokenizer are not yet integrated.
+- `rak_agent` requires the Ubuntu `python3-pydantic` system package. The TensorRT binding is
+  supplied by JetPack; the engine + tokenizer are integrated and serve both the CLI loop and
+  the node (`decider:=tensorrt`).
+- Docs are gated too: `python3 scripts/check_docs.py` fails on a broken relative link, a doc
+  missing from `docs/README.md`, a missing `> 状态：` line, or an ADR missing from
+  `docs/adr/README.md`. It link-checks this file, `README.md` and `TODO.md` as well.
 
 `rak_agent` runs under the sourced ROS system Python. ROS integration tests must keep the
 install overlay on `PYTHONPATH` and use an isolated `ROS_DOMAIN_ID`; plain decision tests
@@ -273,7 +336,7 @@ Text navigation smoke test: source `install/architecture/local_setup.bash`, then
 `ros2 run rak_task_executor task_cli`. This fixture uses fake Nav2 and explicitly estimated
 base telemetry; it does not use sensors or represent physical feedback. For sensor-backed
 Nav2 composition use `ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim`.
-Current progress and acceptance gaps are tracked in `docs/project_status.md`.
+Current progress and acceptance gaps are tracked in `docs/status/project_status.md`.
 
 Build `rak_interfaces` before `rak_agent`, and `rak_gpu` before `rak_stereo_driver`;
 colcon knows the order from package manifests. Treat `colcon build` +
@@ -299,15 +362,137 @@ caveats above.
 - ⚠️ 清单里的 `link` 域仍是 **v4 形态**，ADR-0021 之后对 R73/A14 板子无效；P3 换 lely-core 主站时
   整段重声明，且届时拥有者是 v5 主站的网络管理，不是本 manager。
 
+## Entry points
+
+```bash
+ros2 launch rak_bringup lidar.launch.py
+ros2 launch rak_bringup astra.launch.py
+ros2 launch rak_bringup stereo.launch.py device:=/dev/video0
+ros2 launch rak_bringup chassis_bringup.launch.py    # ros2_control chassis chain (allow_motion default false)
+ros2 launch rak_bringup slam.launch.py [odom_source:=rf2o|ekf|none]
+ros2 launch rak_bringup nav2.launch.py               # includes lidar + SLAM + motion stub
+ros2 launch rak_bringup robot.launch.py stage:=sensors|teleop|nav|full   # one command, stage-selected
+ros2 launch rak_bringup supervisor.launch.py        # fault-domain orchestrator over the real manifest
+ros2 launch rak_bringup supervisor.launch.py profile:=fixture   # software fixtures only, touches no hardware
+ros2 run rak_lifecycle rak_system status             # per-domain state + reasons + data ages
+ros2 launch rak_task_executor task_simulation.launch.py   # fake Nav2 + estimated telemetry
+ros2 run rak_task_executor task_cli                  # "go to <waypoint alias>", pause/resume/cancel
+ros2 launch rak_bringup task_navigation.launch.py motion_backend:=sim   # default sim
+ros2 launch rak_moveit_config demo.launch.py         # legacy five-axis demo
+ros2 launch rak_commissioning chassis_test.launch.py # 键盘速度源（默认 /cmd_vel_unstamped）
+ros2 launch rak_moveit_config six_axis_sim.launch.py # six-axis fixture
+ros2 launch rak_description view_urdf.launch.py
+ros2 launch rak_bringup agent.launch.py decider:=stub sim:=true
+ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
+ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=tensorrt  # engine under data/models/
+PYTHONPATH=src/rak_agent python3 src/rak_agent/test/test_tensorrt_decider.py  # needs the engine; skips if absent
+ros2 run rak_stereo_driver stereo_node
+ros2 launch rak_bringup speech.launch.py    # array: capture->ASR, board wake->/speech/wake, /speech/say->speaker
+sudo scripts/rak-mode.sh status | headless | desktop   # board memory/DMA mode
+```
+
+These are independent entries — do not start them all. `nav2.launch.py` already contains
+lidar + SLAM; the arm demo's static `world → base_link` cannot be merged with the mobile
+base TF. Never run two Nav2 instances or two `/cmd_vel` end adapters. `task_navigation.launch.py`
+offers only `motion_backend:=sim|stub`; the real chassis comes up through
+`chassis_bringup.launch.py` → `mecanum_drive_controller` → CAN (ADR-0016), and a parsed
+launch is not firmware compatibility. Operator
+launchers live in `src/rak_bringup/scripts/run_*.sh` and share `environment.sh` (they resolve
+the repo from their own path, default DDS Cyclone, domain 47, logs to `/tmp/*_run.log`); see
+that directory's `README.md`.
+
+## Architecture
+
+**`rak_gpu`** (`src/rak_gpu/include/rak_gpu/*.hpp`, namespace `rak::gpu`) is the shared
+foundation and the idiomatic pattern for new C++ code: `CUDA_CHECK` / `CU_CHECK` /
+`VPI_CHECK` macros that throw with file:line (never leak raw status codes), and RAII
+wrappers — `CudaStream`/`StreamPool`/`GpuTimer` (`cuda.hpp`), `DeviceBuffer`/`PinnedBuffer`
+(move-only, templated), `TrtEngine` (`trt.hpp`: load `.plan`, `build_from_onnx`, `infer`),
+`VpiStream`/`VpiImage`/`VpiRectifier` (`vpi_res.hpp`).
+
+**`rak_stereo_driver`** (`src/rak_stereo_driver/src/capture_node.cpp`) is the reference
+implementation and the subtle part:
+- V4L2 MJPEG capture of a side-by-side frame (1280×720 @ 30 Hz), decoded with
+  `NVJPEG_BACKEND_GPU_HYBRID` straight into a GPU BGR buffer.
+- **Two threads, two CUDA streams, ping-pong double buffering.** `nvjpegDecode` blocks the
+  CPU ~10 ms, so it runs on a dedicated decode thread; the main thread does grab (~33 ms) +
+  copy + publish. Grab > decode, so frame N decodes while N+1 is being grabbed.
+- The main thread copies each eye half to host with `cudaMemcpy2DAsync` into **pinned**
+  buffers, then publishes `bgr8` on `eye/left/image_raw` / `eye/right/image_raw` (topic
+  names, `device`, `sbs_width/height`, `fps`, `frame_id` are node parameters). Matching
+  `camera_info` publishers exist but nothing publishes to them yet — the topic names
+  predate the rename and are intentionally unchanged.
+- Disables `V4L2_CID_EXPOSURE_DYNAMIC_FRAMERATE` (0x009a0903) at init: some USB cameras
+  silently drop to ~20 fps in low light with it on. Keep that.
+- Images currently cross to host memory as `sensor_msgs/Image`; the cross-node GPU
+  zero-copy pipeline is a goal, not a current fact.
+
+**`rak_agent`** (`src/rak_agent/rak_agent/`, ex `brain/`) is the decision layer, built as the
+`ament_python` ROS
+package `rak_agent` and run with a standard console entry point. All entry points share one policy,
+`system1.resolve()`:
+- `system1.py` — fast path. `guard()` is the deterministic geometric veto (real authority);
+  `gate()` only picks the escalation tier. `StubDecider` is the supported ROS backend;
+  the legacy PyTorch `LayaDecider` is not used by `agent_node`.
+- `system2.py` — slow path behind a `Consultant` protocol: `StubConsultant`,
+  `RaiConsultant` (drives RAI's LLM plumbing directly, LangGraph underneath).
+- `node.py` — ROS edge. Subscribes `/perception/tracked_objects` (BEST_EFFORT, keep-last-1:
+  newest frame only, a backlog is worse than a gap), publishes `/brain/decision` (RELIABLE,
+  depth 10: the consumer is an actuator). Params include `sim`, `decider`, `consultant`,
+  `scenario`, `rate`, `force_s2`, `max_state_age`, `max_s2_in_flight`,
+  `scene`, `flags`, `frame_id`, `out`.
+- `task_intent.py` — moved out in ADR-0013 to the shared `rak_intent` package (consumed by
+  `rak_task_executor` and `rak_speech`); a **separate** path from `resolve()`.
+- `loop.py` — no-ROS tick loop (`sense → guard → decide → escalate → act → log`), writes
+  JSONL episodes to `<repo>/data/episodes/` (ADR-0013). `body.py` — `Body` protocol + `MockBody`
+  scenarios. `types.py` — the frozen S1/S2 contract.
+- `agent_node` is a standard `console_scripts` entry point. Runtime dependencies are
+  installed as ROS/system packages; the node does not switch interpreters.
+
+**`rak_harness`** (ADR-0010) is the Jev↔executor arbitration seam plus the voice dialogue loop;
+the package `src/rak_harness` exists and as of 2026-10-15 also hosts the **P1 agentic tool loop**
+(Claude Agent SDK in a subprocess, `voice_path:=agent|dialogue|auto`). Its target role: task
+context, tool whitelist, budget, timeouts, event summaries and failure recovery, talking to a
+cloud LLM through a **separate `anthropic` client** pointed at
+`https://api.deepseek.com/anthropic` (key from `ANTHROPIC_API_KEY`, never
+`src/rak_agent/config.toml`). It emits structured proposals only (waypoint alias / plan
+revision / clarification / no-op) and never velocity or joint commands. The arbitration path
+itself is still **design-only / needs its ADR** — do not treat it as accepted behaviour.
+
+**`rak_task_executor`** owns the single navigation-task lifecycle: `/task/execute` (Action),
+`/task/control` (Service), `/task/status` (status), driving Nav2 `NavigateToPose`. Pause is
+only reported after Nav2 cancellation is confirmed **and** fresh repeated stationary telemetry
+arrives; resume re-submits the semantic map goal (no replaying old velocities). Its default
+parser is local; optional RAI planning may only choose a configured waypoint alias and never
+emits velocity or joint commands. Production waypoints live in `config/waypoints.yaml`, which
+ships **empty** — the file must declare `schema_version: 1` and `frame_id: map` or the node
+refuses to start. The fake-Nav2 fixture's telemetry is a command-motion estimate, not measured
+odometry.
+
+**The base driver is `rak_chassis`** (`controller_manager` → `mecanum_drive_controller` →
+`CanSession`, started by `chassis_bringup.launch.py` with `allow_motion` default false);
+the former UART host node (`rak_base_driver`) was deleted by ADR-0016.
+**`rak_arm_simulation`** provides software-only
+six-axis trajectory/gripper Action servers for the MoveIt fixture — no physics, no hardware.
+
+**`rak_navigation` was absorbed into `rak_bringup`** (ADR-0013) — its launch files chain the
+de-facto bringup:
+`lidar → laser_filters → rf2o → slam_toolbox (/map, map→odom) → nav2 → /cmd_vel → cmd_vel_stub → /cmd_vel_raw`.
+The stub forwards Nav2's unicycle `Twist` verbatim. `odom_source` is the seam for odometry
+sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you must supply
+`odom→base_footprint` yourself, and set rf2o `publish_tf: false` when you do, or both publish it).
+
 ## Constraints that are easy to break
 
 - **Layering rules (ADR-0013) — the workspace contract.** Modules talk only through frozen
   message contracts (`rak_interfaces` + standard ROS msgs); changing a message is a breaking
   change requiring synchronized consumers. Upper layers never branch on the transport backend
-  (ADR-0012 `transport:=usb|can`) or on a sensor SDK — same-need sensors publish the same
+  (CAN is the only one since ADR-0016) or on a sensor SDK — same-need sensors publish the same
   message set and switch via launch args. rclpy nodes are always `setup.py` entry points,
   never bare scripts. `rak_agent` (the decision layer) must not gain dependents beyond
-  `rak_bringup`; `check_workspace.py` enforces all of this — fix the structure, not the assert.
+  `rak_bringup`; task-intent parsing lives in the shared `rak_intent` package, never
+  re-implemented per consumer. `check_workspace.py` enforces all of this — fix the structure,
+  not the assert.
 - **System 1 (Laya) is a direct function call.** Never route it through an orchestration
   framework or a cross-process boundary. The RAI harness belongs only on the System 2
   slow path.
@@ -317,25 +502,39 @@ caveats above.
   path (→ LOW → escalate), not an exception.
 - **`src/rak_agent/rak_agent/types.py` is frozen once episodes exist.** `state_text` is stored
   verbatim in `data/episodes/*.jsonl` (repo root, ADR-0013); regenerating it silently corrupts
-  the finetune corpus. There is deliberately no training pipeline here.
+  the finetune corpus. There is deliberately no training pipeline here. `SceneState` uses
+  camera x-right/z-forward; ROS body convention is x-forward/y-left — transform explicitly in
+  the adapter, never by rewriting the frozen semantics. New task protocols get their own
+  version.
 - `--decider stub` is the default and stays runnable without a model. The target System 1
   runtime is in-process TensorRT from JetPack; do not add a model service or generic
   CUDA/PyTorch wheel dependency. The TensorRT backend is integrated (`decider:=tensorrt`
   in the node, `--decider tensorrt` in the CLI loop): one factory in
   `src/rak_agent/rak_agent/system1.py` (`make_decider`), engine + tokenizer under the
   gitignored repo-root `data/models/laya-typed-decisions/` (override with
-  `RAK_LAYA_MODEL_DIR` or `-p decider_model_dir:=`), runbook `docs/laya_tensorrt.md`.
+  `RAK_LAYA_MODEL_DIR` or `-p decider_model_dir:=`), runbook `docs/how-to/laya_tensorrt_runbook.md`.
 - `rak_task_executor` is the only task/goal lifecycle owner. Pause is not reported until
   Nav2 cancellation is confirmed and fresh repeated stationary telemetry arrives; resume
   submits the semantic map goal again. Its default parser is local; optional RAI planning
   may only choose a configured waypoint alias and never issues velocity/joint commands.
   It consumes the shared `rak_intent` contract — never parse logic private to the executor.
-- `BaseUartNode` defaults to no port, no hardware access, zero speed limits and DISARMED.
-  The bringup launch currently supplies `/dev/wheel_motor`, but `hardware_enable=false`
-  means the node does not open it. All three finite positive speed limits are required
-  before ARM; zero is not pass-through. UART v1 is a proposed host protocol; this repository
-  has no matching F407 firmware. PTY tests do not prove device compatibility.
-  Never change defaults to ARM as a shortcut.
+- **The chassis hardware interface stays motion-gated by default.** `chassis_bringup.launch.py`
+  keeps `allow_motion:=false` (the hardware only handshakes, reports telemetry and sends zero
+  targets); command-interface limits are enforced by `controller_manager`
+  (`enforce_command_limits: true`), and the wheel geometry / limits in
+  `chassis_controllers.yaml` are unsigned placeholders. Never relax a default to allow motion
+  as a shortcut. A launch argument is not firmware compatibility.
+- **One lifecycle owner per component (ADR-0020 §3).** Nav2's six servers belong to
+  `nav2_lifecycle_manager`, `slam_toolbox` belongs to the event dance in `slam.launch.py`,
+  controllers belong to their spawners, and only `rak_*` nodes converted to `ManagedNode`
+  belong to `rak_lifecycle/system_manager`. `system_manager` never sends a transition to a
+  component it does not own — it only reads state. A second owner produces a node that is
+  running, configured-looking and completely inert.
+- **Activation is not a motion permission (ADR-0020 §6).** `allow_motion` (default false) stays
+  the only way anything reaches the actuators; bringing a domain up must never change that.
+  When v5 lands (ADR-0021), NMT `Pre-operational → Operational` is the link layer's own gate
+  and the `cmd_seq`/`cmd_flags.bit0` 100 ms deadman stays in the MCU — neither is a substitute
+  for `allow_motion`, and neither may be driven by the orchestrator.
 - The retired **CAN v3 `serial_link_node`** (git history only since 2026-10-10, was
   `attic/rak_serial_link`) opens hardware unconditionally: its `port` parameter defaults to
   `/dev/wheel_motor` at 921600 and is opened in `__init__` with no `allow_hardware` gate.
@@ -350,8 +549,30 @@ caveats above.
 - **Jev does not reach the task executor directly (ADR-0010).** The only new consumer of
   `/brain/decision` is the Harness node, and it is context only — never authority. Jev's path to
   execution is transitive (`/brain/decision` → Harness → `/harness/proposal` →
-  `rak_task_executor`); the executor must not subscribe to `/brain/decision`, and Harness emits
-  structured goals only — never velocity or joint commands.
+  `rak_task_executor`), which accepts a proposal only if `task_id`/`revision` match,
+  `expires_at` is in the future, and the waypoint is in the configured allow-list. The executor
+  must not subscribe to `/brain/decision`, and Harness emits structured goals only — never
+  velocity or joint commands.
+- **ROS message type identity includes the package name**: `rak_interfaces/msg/Decision` does
+  not interoperate with the old `core/msg/Decision`. External nodes must be rebuilt; old
+  rosbags need explicit type migration.
+- **The target arm is standard six axes plus a servo gripper** and an eye-in-hand camera
+  (ADR-0008). The real six-axis model is measured (2026-10-08); the five-axis URDF is a demo
+  and `six_axis_sim.urdf.xacro` is test-only — do not present either as the real hardware, and
+  do not invent calibration for the unmeasured parts (masses, gripper mapping, eye-in-hand
+  extrinsics). Do not configure a real `ros2_control` arm hardware plugin before the Arm Unlock
+  Gates in `docs/reference/hardware_acceptance.md` pass. `src/vendor/**` is third-party:
+  read-only, do not reformat or "fix" it.
+- **CAN protocol ownership.** The wire format's source of truth is the leaf-node repos — since
+  2026-10-29 that is **v5 = CANopen**: `../vehical_rak_motion/docs/CANOPEN-V5.md` +
+  `docs/canopen/chassis.json`, `../vehical_rak_arm/docs/CANOPEN-V5.md` +
+  `docs/canopen/arm.json` — never this repo. The bus is classic CAN 2.0A @ 1 Mbps; never pass
+  `fd on` (the F407 bxCAN would error-frame an FD frame). The host-side v4 implementation
+  (`CanSession` in `src/rak_chassis`) is what runs today but is wire-invalid against the
+  current in-board firmware; the v4 `PROTOCOL.md` and the retired `rak_serial_link` are
+  history only. A v5 host chain does exist on paper (`rak_bringup/canopen_bringup.launch.py`,
+  ADR-0024, mutually exclusive with `chassis_bringup.launch.py`) but it is **unbuilt and
+  unverified** — never run two masters on one bus.
 
 ## Gotchas
 
@@ -362,6 +583,13 @@ caveats above.
 - Jazzy 里几个与常见文档不同的名字：`DiagnosticArray` 的字段是 `status`（不是 `statuses`）、
   `DiagnosticStatus` 只有 `OK/WARN/ERROR/STALE`（没有 `STOP`/`STAT`）、`TRANSITION_*` 常量挂在
   `lifecycle_msgs.msg.Transition` 上（`TransitionDescription` 是个消息类型）。这三处本仓都实际踩过。
+- `diagnostic_updater` is installed but its **Python** side has no `TopicMonitor`; use
+  `TopicDiagnostic`/`FrequencyStatus`/`TimeStampStatus`. `diagnostic_aggregator` is **not**
+  installed, so `/rak/system_state` is aggregated by `rak_lifecycle` itself (accepted cost,
+  ADR-0020 §后果).
+- `ros2 lifecycle set` on a node nobody activates is not a CLI bug: `LifecycleNode`s start
+  `unconfigured` and do nothing until configured. Check `ros2 lifecycle get <node>` before
+  concluding a node is broken.
 
 - Build files hardcode JetPack paths: VPI at `/opt/nvidia/vpi4`, pkg-config module
   `nvjpeg-13.2`, CUDA headers at `/usr/local/cuda-13.2/targets/sbsa-linux/include`.
@@ -372,12 +600,14 @@ caveats above.
 - System 2 latency is 12–30 s per call (measured), so S2 is fire-and-forget in a thread
   and replies are checked on a later tick. Currently `_drain()` only records replies;
   it does not execute them. The S1 callback also precedes safety resolution, so the
-  prototype is not an independent real-time safety path. See architecture.md.
+  prototype is not an independent real-time safety path. See
+  `docs/explanation/architecture.md`.
 - `data/`, `build/`, `install/`, `log/` are gitignored. Stray
   `frames_*.gv` / `frames_*.pdf` at the root are debugging artifacts, not deliverables.
 - **`colcon build` only ever runs from the repo root** (`--base-paths src`). Run it from `~`
   and it drops orphan `~/build` / `~/install` / `~/log` in the home directory *and* drags
-  `~/ws_thirdparty` and `~/vehical_rak_chassis` into package discovery — that is exactly how
+  `~/ws_thirdparty`, `~/vehical_rak_motion` and `~/vehical_rak_arm` into package discovery —
+  that is exactly how
   the 2026-10-10 stray artifacts happened (they were deleted; `events.log` there named
   `OrbbecSDK-Samples` and `lslidar_driver` from foreign trees). Home must never hold colcon
   output; if `~` grows a `build/`, it is a mistake, not a workspace.
@@ -400,18 +630,23 @@ caveats above.
   stops and disables gdm (~1.8 -> ~2.3 GiB available, 75-160 MiB CMA back).
   GUI launchers require `desktop`; migrated sensor/navigation wrappers do not
   require DISPLAY. Autologin is off, so returning to the desktop requires login.
-- `scripts/serial_100hz.py` is the PTY-only UART v1 test. `scripts/serial_link_test.py`
-  is refusal-only for the retired CRC-8 physical-port utility; keep it that way.
+- The v4 CAN link smoke test is `python3 scripts/can_link_smoke.py can0` (10/10 pass =
+  qualified back when v4 was the wire; battery ≈12500 mV, FAULT=0, BUSOFF=0). It says nothing
+  about the current v5/CANopen firmware — use the bringup tool in the sibling repos for that.
+  Physical/driver layers: `ip -details -statistics link show can0` and `dmesg | grep -i can`.
+  The old serial scripts were deleted with the USB link (ADR-0016).
+- The lidar `lidar_name` must be `N10_P` (108 B @ 460800); `N10` fails CRC. Use the udev alias
+  `/dev/wheeltec_lidar`, never `/dev/ttyUSB0` (other serial adapters may also claim ttyUSB).
 - Simulation task telemetry is a command-motion estimate, not measured odometry. A
   successful software pause/resume test is not hardware acceptance; see
-  `docs/hardware_acceptance.md`.
+  `docs/reference/hardware_acceptance.md`.
 - **`nvpmodel` is already at mode 0 = 10 W, this board's *highest* mode** (the only other
   modes are `7W_AI` and `7W_CPU`), so there is nothing to raise. `nvpmodel.service` runs
   at boot, but `jetson-clocks.service` is enabled and has **not** run (inactive, no
   journal entries): the governor is `schedutil` and CPU clock floats 729–1510 MHz. Do not
   assume clocks are locked, and never compare benchmarks across power/clock states — the
   ~158 ms/predict figure and eye's 30 fps are 10 W-mode numbers.
-- **Memory is zram + swap now** (`docs/CONSTRUCTION.md` §2.2, not in git): 1.7 G zram plus
+- **Memory is zram + swap now** (`docs/tutorials/construction.md` §2.2, not in git): 1.7 G zram plus
   a 4 G swapfile. `free` looks less alarming than it should, and swap/zram are not
   real-time guarantees; whether zram helps on a 4 GB board is contested (TODO P2-1) —
   measure `si/so` and p99 latency rather than reverting from documentation.
@@ -439,7 +674,7 @@ caveats above.
 - The legacy PyTorch/Laya fp16 parity run compared executed actions and safety tiers over
   90 states. It does not qualify TensorRT: the engine's own acceptance (token layout exact,
   numerics within bf16, argmax identical, same `Decision` contract) is recorded in
-  `docs/laya_tensorrt.md` §Acceptance and pinned by
+  `docs/how-to/laya_tensorrt_runbook.md` §Acceptance and pinned by
   `src/rak_agent/test/test_tensorrt_decider.py`; a *new* engine needs that pass again.
 - **The left wheels (FL/RL) are wired inverted — measured 2026-10-14.** `DRIVE_CMD`
   `[++++]` (all four commanded identical, i.e. what a straight line looks like on the
@@ -495,3 +730,28 @@ caveats above.
   qwentts 内容层常驻约 1.2–1.5GB 内存（Q4_K_M 权重 + 448MB KV + codec），跑之前同样先
   headless。agent loop 的 SDK 必须 `permission_mode="bypassPermissions"`：ark-code-latest 在
   acceptEdits 下会自行脑补"等弹窗放行"而拒绝调用运动工具；权威始终在执行器侧，不变。
+
+## Docs
+
+`docs/` is Diátaxis-shaped since 2026-11-14 — `tutorials/`（照着跑一遍）、`how-to/`（完成一件事）、
+`reference/`（字段与门限的事实）、`explanation/`（为什么这样设计）、`design/`（未落地的草案）、
+`status/`（带日期的进度）、`archive/`（只读旧快照）、`adr/`（**不可变**，只许修正链接与状态行）。
+每份文档前 12 行必须有 `> 状态：…` 行，并且收录进 `docs/README.md` 的索引；新增文档两份一起改，
+否则门禁失败。决策类内容先写 ADR，不要塞进 `explanation/`。门禁：
+`python3 scripts/check_docs.py`（链接可达 + 索引覆盖 + 状态行 + ADR 索引，同时链接检查
+`README.md`、本文件与 `TODO.md`）。
+
+## Project skills
+
+Project-level Agent Skills live in `.agents/skills/` (installed with
+`npx skills@latest add <owner/repo@skill> --agent '*' -y`, recorded in `skills-lock.json`,
+symlinked into the agent dirs). Installed set as of 2026-11-14: `documentation-and-adrs`,
+`technical-writing`, `code-review`, `code-review-and-quality`, `ros2`, `ros2-cli`,
+`robotics-testing`, `canopen-integration`, `stm32-freertos-developer`, `stm32-baremetal`,
+`stm32-debug`. The skill payload itself is **not in git** (`.agents/skills/` is ignored,
+`stm32-debug` alone is 2.9 MB of vendor SVD); restore it from the lockfile with
+`npx skills@latest experimental_install --agent '*' -y`, and commit `skills-lock.json`
+whenever the set changes. Use `documentation-and-adrs` + `technical-writing` for docs/ADR work,
+`canopen-integration` + the `stm32-*` skills for firmware work, and
+`code-review` / `code-review-and-quality` before merging. Nothing here auto-runs — an agent
+has to load a skill explicitly; installing one changes no behaviour by itself.

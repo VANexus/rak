@@ -1,14 +1,16 @@
 # Rak 真实六轴机械臂 MoveIt2 设计
 
+> 状态：提案 · 最后更新：2026-10-07
+
 - **日期：** 2026-10-07
 - **作者：** yiyuhao
 - **状态：** Pending review
 - **范围：** `rak` 仓内 MoveIt2 对真实 6 轴机械臂的描述、规划与（仿真先行）执行链
 - **前置文档：**
-  - `docs/superpowers/specs/2026-10-03-rak-moveit2-integration-design.md`（5 轴旧版，保留作历史，被本文取代）
+  - `docs/design/2026-10-03-rak-moveit2-integration-design.md`（5 轴旧版，保留作历史，被本文取代）
   - `docs/adr/0007-unified-ros2-control.md`（执行层目标架构）
   - `docs/adr/0008-end-effector-and-perception.md`（眼在手相机，本文不展开）
-  - `docs/hardware_acceptance.md`（Arm Unlock Gates，真机执行的前置门禁）
+  - `docs/reference/hardware_acceptance.md`（Arm Unlock Gates，真机执行的前置门禁）
 
 ---
 
@@ -18,7 +20,7 @@
 
 > 标准六轴：底座 360° 旋转 + 大臂上下 + 肘关节上下 + 小臂自旋 + 腕俯仰 + 腕圆周。
 
-执行分两阶段：**阶段 A** 用 mock `ros2_control` 纯软件走通"规划 → FollowJointTrajectory → 仿真执行"全链；**阶段 B** 等 ADR-0007 的 `rak_hardware` SystemInterface 落地后，仅替换 controllers 配置即接真机（且必须先过 `docs/hardware_acceptance.md` 的 Arm Unlock Gates）。
+执行分两阶段：**阶段 A** 用 mock `ros2_control` 纯软件走通"规划 → FollowJointTrajectory → 仿真执行"全链；**阶段 B** 等 ADR-0007 的 `rak_hardware` SystemInterface 落地后，仅替换 controllers 配置即接真机（且必须先过 `docs/reference/hardware_acceptance.md` 的 Arm Unlock Gates）。
 
 夹爪（第 7 路 PWM 舵机开合）**不进 MoveIt 规划**，由独立的 gripper 接口控制，本文只保留 SRDF 占位组。
 
@@ -202,7 +204,7 @@ src/rak_moveit_config/
 2. **零位标定完成**：每个关节的机械零位 ↔ 指令角度映射，回填 URDF origin 与 SRDF `group_state`。
 3. **J1/J4/J6 连续性实测**（D1 风险闭合）。
 4. 关节速度/加速度限位实测回填 `rak_arm_joint_limits.yaml`。
-5. Arm Unlock Gates（`docs/hardware_acceptance.md`）通过。
+5. Arm Unlock Gates（`docs/reference/hardware_acceptance.md`）通过。
 6. 切换动作 = 只改 launch 参数：hardware plugin `mock_components/GenericSystem` → `rak_hardware/RakSystem`，controllers 换 `rak_arm_controllers.yaml`。
 
 ---

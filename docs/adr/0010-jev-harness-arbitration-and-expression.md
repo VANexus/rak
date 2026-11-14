@@ -2,7 +2,7 @@
 
 - **状态**: 已接受（2026-10-07 用户确认：Harness 走标准 ROS 2 包 + 独立节点）
 - **日期**: 2026-10-07
-- **相关**: `brain/rak_ai/task_intent.py` · `brain/rak_ai/system1.py` · `brain/rak_ai/system2.py` · `brain/rak_ai/node.py` · `brain/rak_ai/tensorrt_decider.py` · `src/rak_task_executor/rak_task_executor/node.py` · `src/rak_interfaces/msg/Decision.msg` · `src/rak_speech/rak_speech/asr_node.py` · `docs/architecture.md` §2/§4/§6/§7 · `docs/hardware_acceptance.md` · ADR-0007 · ADR-0008
+- **相关**: `brain/rak_ai/task_intent.py` · `brain/rak_ai/system1.py` · `brain/rak_ai/system2.py` · `brain/rak_ai/node.py` · `brain/rak_ai/tensorrt_decider.py` · `src/rak_task_executor/rak_task_executor/node.py` · `src/rak_interfaces/msg/Decision.msg` · `src/rak_speech/rak_speech/asr_node.py` · `docs/explanation/architecture.md` §2/§4/§6/§7 · `docs/reference/hardware_acceptance.md` · ADR-0007 · ADR-0008
 
 ---
 
@@ -10,7 +10,7 @@
 
 `README.md` 把工程目标写成一句话：**Jev 快速选择，云端 LLM + Harness 理解任务**。
 但到今天为止，这句话的后半句在代码里没有对应物 —— `Harness` 只出现在散文中
-（`docs/architecture.md:107,114,218,230`），没有类、没有节点、没有话题。
+（`docs/explanation/architecture.md:107,114,218,230`），没有类、没有节点、没有话题。
 本文要回答的是：**在既有冻结契约与单一生命周期所有者的前提下，Harness 该长成什么样，
 以及它与 Jev（本机 System 1）如何共享仲裁。**
 
@@ -18,7 +18,7 @@
 
 - **Jev 已就绪**：`brain/rak_ai/tensorrt_decider.py` 的 `TensorRtDecider.decide()` 在
   `rak_agent` 进程内直接调用（`brain/rak_ai/node.py:107` `_make_decider`，`decider:=tensorrt`），
-  单次 ~58 ms。引擎与 ONNX 资产见 `docs/laya_tensorrt.md`。它离域、未标定，
+  单次 ~58 ms。引擎与 ONNX 资产见 `docs/how-to/laya_tensorrt_runbook.md`。它离域、未标定，
   在真实场景里**恒为 LOW 置信度**（p≈0.22），因此**按设计每 tick 都升级**。
 - **安全权威只有 `guard()`**：`brain/rak_ai/system1.py` 里 `guard()`（任一实体 `0<z<0.6`
   且 `|x|<0.5` 即否决）是唯一可授权停车的组件；`gate()`（`HIGH_P=0.70`/`HIGH_MARGIN=0.30`/
@@ -38,7 +38,7 @@
   但只有 `brain/rak_ai/node.py:42` 的发布侧 —— S1 决策今天到不了执行器。
 - **`src/rak_speech`**：Vosk ASR 发布 `/speech/transcript` 与 `/speech/intent`(JSON)。
   **全仓无 TTS**；`brain/config.toml [tts]` 指向 ElevenLabs、`voice=""`、未被使用。
-- **`command_id` / `expires_at` 不存在于代码**，只在 `docs/architecture.md:136-139` 的提案表里。
+- **`command_id` / `expires_at` 不存在于代码**，只在 `docs/explanation/architecture.md:136-139` 的提案表里。
 - **已装 / 未装**：`vosk` 已装；`anthropic` / `openai` / `rai` / `langgraph` **均未装**。
   运行时是 ROS 系统 Python 3.12。
 
@@ -51,9 +51,9 @@
 4. System 1 保持**进程内直接函数调用**；快路径无编排框架、无跨进程。
 5. `rak_task_executor` 是唯一生命周期所有者；不得加第二个 Nav2 或竞争性 `/cmd_vel` 写者。
 6. LLM key 只来自环境变量；`brain/config.toml` **永不**存 key。
-7. 硬件锁定（`docs/hardware_acceptance.md`），本轮无真实底盘/机械臂动作。
-8. `docs/architecture.md` §2 规则 7：未实现能力**先定义设计与验收**，不为「看起来完整」创建空包。
-9. `docs/architecture.md` §4：**只有独立部署或资源隔离确有必要时才新增进程**。
+7. 硬件锁定（`docs/reference/hardware_acceptance.md`），本轮无真实底盘/机械臂动作。
+8. `docs/explanation/architecture.md` §2 规则 7：未实现能力**先定义设计与验收**，不为「看起来完整」创建空包。
+9. `docs/explanation/architecture.md` §4：**只有独立部署或资源隔离确有必要时才新增进程**。
 
 ### 问题
 
@@ -111,7 +111,7 @@ perception ─▶ rak_agent: Jev(S1, 进程内) ─▶ /brain/decision ─┐（
   "只发 NO_OP"的 stub。运行时仍是 ROS 系统 Python，**不加 venv、不切解释器**。
 
 **为什么是包而不是 `brain/rak_ai` 里的模块**（本条为 2026-10-07 用户裁定，覆盖设计稿初议）：
-`docs/architecture.md` §2 规则 2 明确"包是构建、依赖、部署和测试边界"。`anthropic` SDK 及其
+`docs/explanation/architecture.md` §2 规则 2 明确"包是构建、依赖、部署和测试边界"。`anthropic` SDK 及其
 HTTP/重试栈是一个**与 ROS 认知原型不同的依赖与部署边界**，且需要一个**独立崩溃域**
 （SDK 的未捕获异常/内存不得污染 58 ms 的 S1 进程）。这同时满足 §4 的"资源隔离确有必要时新增进程"。
 规则 7（"不为看起来完整建空包"）不被违反：本文先定义设计与验收，**实现时才创建包**，
@@ -125,7 +125,7 @@ HTTP/重试栈是一个**与 ROS 认知原型不同的依赖与部署边界**，
   keep-last-N），用于事件摘要、澄清触发与 `rationale` 生成。Harness **不得**据此直接产生运动。
   `Decision.msg` **不改字段**（新增字段会动到既有消息契约，且本决策不要求）。
 - **`rak_task_executor` 不订阅 `/brain/decision`**。理由：
-  1. `guard()` 的实时否决属于**命令出口**（`docs/architecture.md` §4「安全许可应落实到命令出口」），
+  1. `guard()` 的实时否决属于**命令出口**（`docs/explanation/architecture.md` §4「安全许可应落实到命令出口」），
      不属于任务状态机；执行器不写 `/cmd_vel`，让它消费 stop 只会制造"有安全"的错觉。
   2. 执行器已有 `/task/control` 与超时/失败进入 `SAFETY_HOLD` 的**唯一**输入面；
      再加一个能改任务状态的输入源 = 第二套仲裁。
@@ -195,7 +195,7 @@ KIND_REQUEST_CLARIFICATION=3 # 请求澄清，交给人
   revision 已被更新的结果；执行器再按 D2 条件二次拒绝。
 - **预算 / 失败恢复**：每任务云调用上限（配置，默认小值，如 3）+ 全局速率限制；
   预算耗尽/超时/异常 → 发 `KIND_NO_OP` 或 `KIND_REQUEST_CLARIFICATION`，
-  **绝不伪造成成功**（对齐 `docs/architecture.md`「超时进入失败或安全阻断，不伪报」）。
+  **绝不伪造成成功**（对齐 `docs/explanation/architecture.md`「超时进入失败或安全阻断，不伪报」）。
 - **缺失依赖**：未装 `anthropic` 时 `harness_node` 以明确日志降级为"只发 NO_OP"的 stub。
 
 ### D4. 「呼吸感」表达接口：预留 + stub，本轮无真实动作
@@ -218,7 +218,7 @@ KIND_REQUEST_CLARIFICATION=3 # 请求澄清，交给人
     ORIENT_ATTENTION, IDLE_POSTURE, SPEAK}`、`ttl_sec`、`text`（仅 SPEAK）、`reason`、
     `requires_idle_resources=True`。
   - `ExpressionGate.allowed(intent) -> bool`：**只有**同时满足才为真 ——
-    (a) 对应执行器的硬件验收门已过（查 `docs/hardware_acceptance.md` 状态）；
+    (a) 对应执行器的硬件验收门已过（查 `docs/reference/hardware_acceptance.md` 状态）；
     (b) 资源空闲（无活动导航/抓取控制流持有该资源）；
     (c) 有效许可（如底盘未 ARM、无人工接管冲突）。
   - `ExpressionSink` Protocol + `NoOpExpressionSink`：**本轮唯一实现恒 no-op**，
@@ -317,8 +317,8 @@ KIND_REQUEST_CLARIFICATION=3 # 请求澄清，交给人
 - `src/rak_task_executor/rak_task_executor/node.py`（唯一生命周期所有者）、
   `src/rak_interfaces/msg/Decision.msg`、`src/rak_interfaces/action/ExecuteTask.action`
 - `src/rak_speech/rak_speech/asr_node.py`（ASR 现状；无 TTS）
-- `docs/architecture.md` §2（包设计原则）、§4（认知侧 / 对话与表达侧）、§6（E 阶段）、§7（未解决问题）
-- `docs/laya_tensorrt.md`（Jev 引擎资产与验收）、`docs/hardware_acceptance.md`（硬件门）
+- `docs/explanation/architecture.md` §2（包设计原则）、§4（认知侧 / 对话与表达侧）、§6（E 阶段）、§7（未解决问题）
+- `docs/how-to/laya_tensorrt_runbook.md`（Jev 引擎资产与验收）、`docs/reference/hardware_acceptance.md`（硬件门）
 - ADR-0007（统一 `ros2_control`）、ADR-0008（末端与感知套件）
 - Anthropic Messages API tool use：<https://docs.anthropic.com/en/docs/build-with-claude/tool-use>
 - DeepSeek Anthropic 兼容端点：<https://api.deepseek.com/anthropic>（模型 id 待实测）

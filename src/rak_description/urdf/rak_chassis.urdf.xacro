@@ -266,7 +266,7 @@
   </ros2_control>
 
   <!-- ==================== 机械臂段（ADR-0019） ====================
-       臂板（vehical_rak_edge_ai）自己的故障域。参数与底盘段逐字段一致
+       臂板（vehical_rak_arm）自己的故障域。参数与底盘段逐字段一致
        （共享 CanSession）；关节只含 7 轴臂，不含轮。 -->
   <ros2_control name="rak_arm" type="system">
     <hardware>

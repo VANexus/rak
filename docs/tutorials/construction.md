@@ -1,10 +1,12 @@
 # CONSTRUCTION — 从零构建与部署
 
+> 状态：现行 · 最后更新：2026-10-14
+
 本文回答：**要把这套系统从空板子搭到能跑，按什么顺序做什么。**
 
 与其它文档的分工：
-`README.md` 是工程入口（有哪些包、怎么构建）· `docs/architecture.md` 是系统结构 ·
-`docs/adr/` 是决策理由 · `docs/hardware_acceptance.md` 是上车门槛 ·
+`README.md` 是工程入口（有哪些包、怎么构建）· `docs/explanation/architecture.md` 是系统结构 ·
+`docs/adr/` 是决策理由 · `docs/reference/hardware_acceptance.md` 是上车门槛 ·
 **本文是装配顺序与部署检查单**。
 
 > 阅读约定：标 **[已实现]** 的是仓库里已有代码/脚本；标 **[待实现]** 的是设计已定但代码未落地；
@@ -186,7 +188,7 @@ ros2 control list_controllers                # joint_state_broadcaster / mecanum
   MCU 收到 4 个轮速目标后，若任一超限则**四个同乘一个系数**，不得逐轴截断 —— 否则斜走变直走。
   控制器上的 `linear.x/y`、`angular.z` 限幅只作第一道防线，**不保证方向**。
 
-上车顺序**严格按** [`hardware_acceptance.md`](hardware_acceptance.md)：链路冒烟
+上车顺序**严格按** [`hardware_acceptance.md`](../reference/hardware_acceptance.md)：链路冒烟
 （`python3 scripts/can_link_smoke.py can0`）→ 只读遥测握手 →
 拔链路/超时/E-stop 撤销 → 轮子离地单轴低速 → 软件暂停与物理急停分开测 → 最后围栏地面测试。
 
@@ -226,7 +228,7 @@ ros2 run rak_agent agent_node --ros-args -p sim:=true -p decider:=stub
 - [ ] 底盘：链路冒烟通过（`python3 scripts/can_link_smoke.py can0`，10/10，BAT≈12500 mV / FAULT=0 / BUSOFF=0）；DISARMED 下只读遥测正常、零故障
 - [ ] 限速与轮几何占位值已实测替换（`chassis_controllers.yaml`），`allow_motion:=true` 前确认轮子离地
 - [ ] 物理急停独立于 Jetson/ROS/网络验证过
-- [ ] `docs/hardware_acceptance.md` 的 §Before Connecting a Physical Base 逐条签核
+- [ ] `docs/reference/hardware_acceptance.md` 的 §Before Connecting a Physical Base 逐条签核
 
 ---
 

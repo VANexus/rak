@@ -87,7 +87,7 @@
 
 1. ADR-0012 待闭合项 #1（7 轴 `ARM_COMMAND` 位置接口 + arm controller + 夹爪轴）未闭合，
    本篇删除 `servo_tui` 使它从"缺实现"升级为"缺实现且缺工具"。
-2. `docs/hardware_acceptance.md` 的第 1 步原为 `scripts/serial_100hz.py`（PTY-only UART 回归），
+2. `docs/reference/hardware_acceptance.md` 的第 1 步原为 `scripts/serial_100hz.py`（PTY-only UART 回归），
    已随本篇删除，需改写为 CAN 冒烟步骤。
-3. README / `docs/architecture.md` / `docs/CONSTRUCTION.md` / `docs/project_status.md` /
-   `docs/HANDOFF-AGENT.md` 中的 USB 与 `motion_backend:=hardware` 描述需与本篇同步。
+3. README / `docs/explanation/architecture.md` / `docs/tutorials/construction.md` / `docs/status/project_status.md` /
+   `docs/archive/handoff_agent_2026-10-09.md` 中的 USB 与 `motion_backend:=hardware` 描述需与本篇同步。

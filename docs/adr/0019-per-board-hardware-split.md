@@ -3,7 +3,7 @@
 - **状态**: 已接受（2026-10-29）
 - **日期**: 2026-10-29
 - **相关**: `src/rak_chassis/src/rak_system.cpp` · `src/rak_chassis/src/can_session_pool.cpp` ·
-  `src/rak_description/urdf/rak_chassis.urdf.xacro` · `docs/architecture.md` §3 ·
+  `src/rak_description/urdf/rak_chassis.urdf.xacro` · `docs/explanation/architecture.md` §3 ·
   ADR-0012（Session 抽象）、ADR-0016（CAN 唯一链路）、ADR-0017（反馈存活性判据）
 - **背景来源**: 2026-10-28 恢复双板架构后的现场核查；`docs/CAN-BRINGUP` 系列记录
 
@@ -32,7 +32,7 @@
 
 反方向是好的（臂掉线只让 `arm_ready_` 保持 false，四轮不受影响），也就是**隔离是单向的**。
 此外：`can_channel` 之类的总线参数只能配一份；包描述写的是 "Wheel-only"；
-`docs/architecture.md` 还写着"臂接口待加"——三者都与实现脱节。
+`docs/explanation/architecture.md` 还写着"臂接口待加"——三者都与实现脱节。
 
 ## 决策
 

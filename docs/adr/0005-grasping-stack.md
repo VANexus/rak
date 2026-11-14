@@ -73,7 +73,7 @@ MinkowskiEngine"时才上。
   但**没有任何已公开的 4 GB Orin Nano 部署**（公开的都是 8 GB Nano / 16 GB NX / AGX）。
 - 点云本身很小（20–40 K 点），**跨机传点云/图像 + 回传掩码**在局域网上 100–300 ms，
   对"抓取"这个任务速率完全够。
-- 与 `brain/` 的约束一致：S2 延迟 12–30 s，**本就不能进实时环**（`docs/architecture.md` §4）。
+- 与 `brain/` 的约束一致：S2 延迟 12–30 s，**本就不能进实时环**（`docs/explanation/architecture.md` §4）。
 
 ---
 
@@ -110,7 +110,7 @@ MinkowskiEngine"时才上。
 
 1. **`pcl_ros` 未安装**（`ros-jazzy-pcl-ros` 2.6.5 已为 Jazzy 发布）。
 2. **点云管线不存在**：`rak_astra_driver` 只有驱动，无体素/聚类/法线链路（TODO P2-3）。
-3. **相机标定与深度-彩色对齐未做**（`docs/architecture.md` §7 已列为缺口）。
+3. **相机标定与深度-彩色对齐未做**（`docs/explanation/architecture.md` §7 已列为缺口）。
 4. **臂的几何/限位是占位值** —— 抓取位姿的工作空间过滤在拿到真实参数前只能"跑通不报错"。
 5. **超远物体建模的策略待定**：研究结论建议"Nav2 + 预建图先接近（纯定位模式），
    再局部稠密建模（RTAB-Map/OctoMap，~0.05 m），用完丢弃"，不常驻大场景稠密图。

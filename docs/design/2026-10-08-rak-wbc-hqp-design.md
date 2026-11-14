@@ -1,5 +1,7 @@
 # Rak 全身运动仲裁层（WBC/HQP）设计规格
 
+> 状态：提案 · 最后更新：2026-10-08
+
 - **日期：** 2026-10-08
 - **作者：** yiyuhao
 - **状态：** 已接受（ADR-0011）；骨架与桌面数值测试已建，硬件接入前置见 §10
@@ -9,7 +11,7 @@
   - `docs/adr/0007-unified-ros2-control.md`（执行层目标架构）
   - `docs/protocol/usb_serial_v2.md`（100 Hz 命令、lease、臂超时保持；**已按 ADR-0016 删除**，快照 tag `pre-usb-removal-20261013`）
   - `src/rak_description/urdf/properties_arm.xacro`（臂实测标定，单点定义）
-  - `docs/superpowers/specs/2026-10-07-rak-arm-moveit2-design.md`（臂规划链，不重叠）
+  - `docs/design/2026-10-07-rak-arm-moveit2-design.md`（臂规划链，不重叠）
 
 ---
 

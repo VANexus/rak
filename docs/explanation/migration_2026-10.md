@@ -1,5 +1,7 @@
 # 统一包迁移说明
 
+> 状态：现行 · 最后更新：2026-10-17
+
 本次采用统一迁移，不提供旧包兼容别名。算法、话题名、节点默认名、
 QoS、消息字段和 `brain/rak_ai/types.py` 的序列化格式保持不变。
 
@@ -150,7 +152,7 @@ E-stop、碰撞停止距离或固件互操作验收。
 本次收尾重新构建 17 个包，安装态 checker 检查 14 个自有包和 13 个 launch；
 CTest 21 项、任务/机械臂 pytest 4 项、UART pytest 13 项以及两组 brain 测试通过。
 硬件 backend 的安装态解析和模式映射通过，但未启动导航运行时或连接设备。
-最新能力和未关闭的验收项见[项目总体状态](project_status.md)。
+最新能力和未关闭的验收项见[项目总体状态](../status/project_status.md)。
 
 ## 工作空间按子系统归堆（2026-10-09，ADR-0013）
 
@@ -196,7 +198,7 @@ CTest 21 项、任务/机械臂 pytest 4 项、UART pytest 13 项以及两组 br
 
 ### 关节名（MoveIt 侧 → 真机契约）
 
-| 旧（MoveIt 侧，已废弃） | 新（= `docs/arm_moveit_contract.md` §1，**FROZEN**） |
+| 旧（MoveIt 侧，已废弃） | 新（= `docs/reference/arm_moveit_contract.md` §1，**FROZEN**） |
 | --- | --- |
 | `base_yaw_joint` | `j1_base` |
 | `shoulder_pitch_joint` | `j2_shoulder` |

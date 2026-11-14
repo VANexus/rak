@@ -107,4 +107,4 @@
    后者需要夹具档（`supervisor.launch.py profile:=fixture`）在 CI 里跑。
 3. `tolerate_absent` 的清单是经验值，缺一次实测：哪些 apt 包在 Jetson 镜像里是默认有的。
 
-> 本节的执行顺序、命令与判据见 [`docs/NEXT-2026-10-30.md`](../NEXT-2026-10-30.md) §2 结构门禁（含 desktop 档验收）。
+> 本节的执行顺序、命令与判据见 [`docs/status/next_2026-10-30.md`](../status/next_2026-10-30.md) §2 结构门禁（含 desktop 档验收）。

@@ -2,10 +2,10 @@
 
 - **状态**: 已接受（2026-10-10）
 - **日期**: 2026-10-10
-- **相关**: `docs/cameras.md`（契约细节与实测数据）· `src/rak_bringup/launch/depth_camera.launch.py`
+- **相关**: `docs/reference/cameras.md`（契约细节与实测数据）· `src/rak_bringup/launch/depth_camera.launch.py`
   （后端选择入口）· `src/rak_bringup/launch/astra.launch.py` · `src/rak_bringup/launch/gemini335l.launch.py` ·
   `src/rak_astra_driver` · ADR-0006（3D 避障）· ADR-0008（末端/感知）· ADR-0015（坐标系：`camera_link` 挂载与外参）
-- **说明**: 本记录原文件此前缺失，2026-10-11 依据 `docs/cameras.md` 与工程会话记录补录，正文不改动既有约定。
+- **说明**: 本记录原文件此前缺失，2026-10-11 依据 `docs/reference/cameras.md` 与工程会话记录补录，正文不改动既有约定。
 
 ---
 
@@ -49,7 +49,7 @@
 - **负面**：
   - 两个后端长期并存（Astra 需 SDK v1.10.18，本机未装则该后端不可构建，见 AGENTS 构建注意）；
   - "彩色可选"要求消费者真正做缺失处理，而不是默认彩色总在；
-  - 契约只约束话题与帧，不约束编码/时间戳/配准——这些仍需逐后端实测记忆（`docs/cameras.md`）。
+  - 契约只约束话题与帧，不约束编码/时间戳/配准——这些仍需逐后端实测记忆（`docs/reference/cameras.md`）。
 
 ## 被否决的方案
 
@@ -62,7 +62,7 @@
 
 ## 待闭合项
 
-1. `docs/cameras.md` 仍以旧包名 `rak_sensor_bringup` 记述（该包已并入 `rak_bringup`，ADR-0013）——
+1. `docs/reference/cameras.md` 仍以旧包名 `rak_sensor_bringup` 记述（该包已并入 `rak_bringup`，ADR-0013）——
    路径/包名需更新。
 2. `base_link→camera_link` 外参未实测（TODO P1-6）；深度—彩色配准是否启用的结论未落到运行时断言。
 3. 契约验证器（话题/编码/CameraInfo 存在性检查）尚未落地为脚本。

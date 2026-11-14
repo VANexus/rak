@@ -4,7 +4,7 @@
 - 日期: 2026-10-29
 - 相关: `src/rak_canopen/`（契约层）· `src/rak_bringup/launch/canopen_bringup.launch.py` ·
   `src/rak_canopen/config/bus.yaml` · `scripts/verify_canopen_frames.py` ·
-  `docs/canopen-bitfields.md` · ADR-0021（下位机换 CANopen）· ADR-0022（契约层）
+  `docs/reference/canopen_bitfields.md` · ADR-0021（下位机换 CANopen）· ADR-0022（契约层）
 
 ## 背景
 
@@ -92,7 +92,7 @@ ADR-0021 决定两块 F407 的 CAN 层换 CANopen v5，并把 Jetson 侧主站�
    超时后把节点判死并触发降级，需实测。
 6. **SRDO（CiA 304）**：未接。在此之前所有文档措辞为"具备走向 SIL2 的通信基础"。
 
-> 本节的执行顺序、命令与判据见 [`docs/NEXT-2026-10-30.md`](../NEXT-2026-10-30.md) §5 CANopen 安装与首帧。
+> 本节的执行顺序、命令与判据见 [`docs/status/next_2026-10-30.md`](../status/next_2026-10-30.md) §5 CANopen 安装与首帧。
 
 ### 2026-10-30(a)：v4 整体下线，台架临时主站上线，三条实测事实入档
 

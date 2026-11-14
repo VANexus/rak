@@ -1,5 +1,7 @@
 # 讯飞 XFM-DP 六麦克风阵列 —— 实测记录(2026-10-10)
 
+> 状态：现行 · 最后更新：2026-10-30
+
 `src/rak_speech`、`src/rak_bringup/launch/speech.launch.py` 依赖的事实都在这里。
 换阵列或换板子时,先重跑本文命令再改代码。
 

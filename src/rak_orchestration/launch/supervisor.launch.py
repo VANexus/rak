@@ -23,7 +23,7 @@
 
 `profile:=fixture` 用 `system_manifest_fixture.yaml` + 软件夹具（fake navigation /
 fake joint controllers）：域结构、所有权与判据形状和真机一致，用来在没有硬件的环境里
-端到端验证编排本身。fake telemetry 是命令运动估算，不是实测（`docs/hardware_acceptance.md`）。
+端到端验证编排本身。fake telemetry 是命令运动估算，不是实测（`docs/reference/hardware_acceptance.md`）。
 """
 
 import os

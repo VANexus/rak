@@ -1,5 +1,7 @@
 # RGB-D Camera Backends
 
+> 状态：现行 · 最后更新：2026-10-07
+
 `rak_sensor_bringup` owns the selectable RGB-D camera entry point. It starts one
 backend at a time and keeps camera SDKs out of navigation and perception
 consumers.

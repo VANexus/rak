@@ -1,5 +1,7 @@
 # CANopen v5 位域与身份表（R73 / A14）
 
+> 状态：现行 · 最后更新：2026-11-09
+
 > 本文件回答一个此前没有答案的问题：`imu_evt`、`state`、`fault` 这些整数字段
 > **每一位到底是什么意思**。没有它，上层只能把状态字当"非零即故障"看，
 > 既无法定位，也无法体面降级。
@@ -48,7 +50,7 @@
 
 ### 2.1 `0x2130 state`（uint16，TPDO4，10 Hz）
 
-`arm_state_bitmap()`（`vehical_rak_edge_ai/Core/Src/app_arm.c:145`）：
+`arm_state_bitmap()`（`vehical_rak_arm/Core/Src/app_arm.c:145`）：
 
 | 位 | 掩码 | 语义 | 备注 |
 | --- | --- | --- | --- |
@@ -75,7 +77,7 @@
 
 ### 2.4 `0x2122 imu_evt`（uint8）
 
-与底盘同表（`vehical_rak_edge_ai/Core/Inc/app_imu.h:48-52`），其中
+与底盘同表（`vehical_rak_arm/Core/Inc/app_imu.h:48-52`），其中
 **`SLIP` 恒 0**（打滑判定在底盘板）。
 
 ### 2.5 `0x2155 joint_zeroed`（uint8）
@@ -90,7 +92,7 @@
 | 底盘 | `0x2F01 reset_cause` | `'S'` 软复位 / `'I'` 上电 / `'P'` 看门狗 / `'B'` 掉电 | 有 |
 | 机械臂 | `0x2F00 / 0x2F01` | 同上（A14） | **有对象，但 `arm.json` 缺 `identity` 段** |
 
-**缺口说明（不在本仓修复）**：`vehical_rak_edge_ai/docs/canopen/arm.json` 没有
+**缺口说明（不在本仓修复）**：`vehical_rak_arm/docs/canopen/arm.json` 没有
 `identity` 段（底盘那份有 `device_name/hw_version/sw_version`）。补它要改 SSOT JSON
 并重生成 EDS 与 `OD.c/h`，那条链在 MCU 仓的 `tools/canopen/`，本仓只能标出来。
 **在此之前，Judge 运行版本一律读 SDO `0x2F00`，不读 `arm.json` 的元数据。**

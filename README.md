@@ -4,16 +4,18 @@
 目标是 Jev（本地 TensorRT 决策模型，接入待完成）快速选择、云端 LLM + Harness 理解任务，
 通过 Nav2、MoveIt2 和 F407 控制底盘与机械臂，而不是让模型直接控制电机。
 
-设计入口：[项目总体状态](docs/project_status.md) · [整体架构](docs/architecture.md) ·
-[统一迁移说明](docs/migration.md) · [硬件验收门槛](docs/hardware_acceptance.md) ·
-**当前施工单：[2026-10-30 明天继续](docs/NEXT-2026-10-30.md)**。
+**文档索引：[docs/README.md](docs/README.md)**（先看这里，按"要做什么"查文档）。
+
+设计入口：[项目总体状态](docs/status/project_status.md) · [整体架构](docs/explanation/architecture.md) ·
+[统一迁移说明](docs/explanation/migration_2026-10.md) · [硬件验收门槛](docs/reference/hardware_acceptance.md) ·
+**当前工作队列：[TODO.md](TODO.md)**（2026-10-30 施工单已过期，留在 [status/](docs/status/next_2026-10-30.md)）。
 包重命名不代表硬件已工程化；下面明确区分现有功能和后续规划。
 
-点云抓取开发入口：[离线 GraspNet、RViz 与隔离仿真](docs/grasp_perception.md) ·
-[抓取验收记录](docs/grasp_validation.md)。
+点云抓取开发入口：[离线 GraspNet、RViz 与隔离仿真](docs/design/grasp_perception.md) ·
+[抓取验收记录](docs/status/grasp_validation.md)。
 
 **机器本身怎么配**（SSH 只允许密钥、功耗档位、无头化、服务精简、日志封顶）见
-[机器基线](docs/machine-baseline.md)；一条命令回到已知状态：
+[机器基线](docs/reference/machine_baseline.md)；一条命令回到已知状态：
 `sudo scripts/system/rak-system-baseline.sh`。
 
 ## 工程布局
@@ -41,7 +43,7 @@
 | `src/rak_bringup` | 唯一组装层：全部 launch（雷达/相机/slam/nav2/chassis_bringup/agent）、参数、udev、DDS 配置和操作脚本（ADR-0013 吸收 sensor_bringup/navigation/chassis_bringup） |
 | `src/rak_agent` | （原 `brain/`）Jev / LLM 决策节点；ROS 系统 Python 内运行，模块名 `rak_agent`；语料在仓库根 `data/episodes/` |
 | `src/rak_harness` | Jev ↔ 任务执行器的**传递式仲裁缝** + 语音对话环（ADR-0010）；只产出建议性提案，永不输出速度/关节命令 |
-| `src/rak_tool_executor` | 工具提案契约的**唯一确定性执行器**（`docs/brain_arm_tools_design.md`，设计稿）；只接受白名单内、未过期的提案 |
+| `src/rak_tool_executor` | 工具提案契约的**唯一确定性执行器**（`docs/design/brain_arm_tools.md`，设计稿）；只接受白名单内、未过期的提案 |
 | `src/rak_orchestration` | 组装层**契约**部分（ADR-0026）：系统清单（故障域/所有者/存活性探针）、launch 契约、supervisor 入口；纯 x86 可建可测 |
 | `src/rak_lifecycle` | 受管生命周期基础设施（ADR-0020）：`ManagedNode` 基类、`system_manager` 编排、`rak_system` 运维 CLI |
 | `src/rak_metrics` | 全栈延迟/时延/丢帧聚合（p50/p95/p99），发布 diagnostic_msgs + 微型 HTTP 端点；兼管 rosbag 录制档 |
@@ -52,7 +54,7 @@
 | `src/vendor` | 第三方雷达和 rf2o；只读，不随自有包重命名 |
 
 2026-10-09 起所有可构建包统一在 `src/` 下（ADR-0013）；完整的新旧映射见
-`docs/migration.md`。
+`docs/explanation/migration_2026-10.md`。
 
 ### 机器目录布局（`~` 下该有什么）
 
@@ -62,7 +64,8 @@
 |---|---|---|
 | `~/rak` | **唯一 ROS 2 工作区**（本仓库）。所有 `colcon build`、所有 `source` 都只认它 | 本仓库 |
 | `~/ws_thirdparty` | 第三方驱动 overlay 壳：`src/OrbbecSDK_ROS2`（上游 `v2.10.6`，**从未编译**）。相机实际走 apt 的 `ros-jazzy-orbbec-camera` 2.9.3，**不要 source 这个 ws**；真要换源码版时才在它里面 `colcon build`，靠 source 顺序覆盖 apt 同名包 | 上游 clone |
-| `~/vehical_rak_chassis` | STM32 F407 固件工程，**不是 ROS ws**。CAN v4 协议真源，被 `scripts/can_link_smoke.py`、`docs/adr/0016` 引用，不能挪 | 另一仓库 |
+| `~/vehical_rak_motion` | STM32F407 底盘板固件工程，**不是 ROS ws**。CANopen v5 协议真源（`docs/CANOPEN-V5.md`、`docs/canopen/chassis.json`），被 `scripts/can_link_smoke.py` 等引用 | 另一仓库 |
+| `~/vehical_rak_arm` | STM32F407 机械臂板固件工程（2026-11-14 前叫 `vehical_rak_edge_ai`），node 2，**不是 ROS ws** | 另一仓库 |
 
 仓库内部另有两个**不入库**的本地目录（2026-10-14 从 `~` 归位，`.gitignore` 的 `/tools/`、`/debug/`）：
 
@@ -75,7 +78,7 @@
 
 1. **`colcon build` 只能在 `~/rak` 根目录跑**（`--base-paths src`）。在 `~` 下跑会在家目录
    砸出 `~/build` `~/install` `~/log` 三个孤儿产物，还会把 `~/ws_thirdparty`、
-   `~/vehical_rak_chassis` 里的包一起卷进 discovery —— 2026-10-10 就这么发生过一次，
+   `~/vehical_rak_motion` 里的包一起卷进 discovery —— 2026-10-10 就这么发生过一次，
    那三个目录已删除。家目录永远不该出现 colcon 产物。
 2. **`~/rak/tools/camera` 不是可清理的垃圾**：`rak_astra_driver` 的 CMake 缓存和
    `astra_node` 的 `RUNPATH` 烧的是 `/home/xrak/rak/tools/camera/.../SDK`（`ldd` 可验证），
@@ -162,10 +165,10 @@ rosdep install --from-paths src --ignore-src --rosdistro jazzy -r -y
 console entry point，直接使用 ROS 系统 Python；stub 不需要模型或 PyTorch。
 TensorRT 原生 decider 已接入（`decider:=tensorrt`），engine 与 tokenizer 资产放在
 gitignored 的 `data/models/`。导出依赖、固定版本、TensorRT profile 草案和当前内存
-门槛见 [Laya TensorRT 导出准备](docs/laya_tensorrt.md)。
+门槛见 [Laya TensorRT 导出准备](docs/how-to/laya_tensorrt_runbook.md)。
 
 **机器本身的基线**（SSH 只允许密钥、功耗档位、无头化、服务精简、日志封顶）不在本文，
-见 [机器基线](docs/machine-baseline.md)，一键命令
+见 [机器基线](docs/reference/machine_baseline.md)，一键命令
 `sudo scripts/system/rak-system-baseline.sh`。
 
 ## 启动入口
@@ -199,7 +202,7 @@ ros2 launch rak_speech asr.launch.py source:=arecord  # 备用直采,不经 audi
 同一入口每次只启动一个深度相机。335L 使用 Orbbec 官方 SDK v2 ROS 2 包
 `orbbec_camera` 的 `gemini_330_series.launch.py`，该上游包需单独安装并 source；
 本仓不复制或维护厂商 SDK。统一 RGB-D 话题和标定/TF 注意事项见
-[相机接入说明](docs/cameras.md)。
+[相机接入说明](docs/reference/cameras.md)。
 
 六麦克风阵列（讯飞 XFM-DP / R818 降噪板）走标准 audio_common 管线：`speech.launch.py` 用
 `audio_capture` 直连 ALSA 采集 16 kHz 单声道发布 `/audio`（六路波束成形在模块内
@@ -208,14 +211,14 @@ ros2 launch rak_speech asr.launch.py source:=arecord  # 备用直采,不经 audi
 `/speech/wake`，经 adb 隧道读板上 vtn socket）和 `tts_node` + `audio_play`
 （`/speech/say` 服务 → sherpa-onnx 离线合成 → USB 喇叭）。设备 id、板端协议、
 QoS、解码/合成速度实测与验收命令见
-[麦克风阵列实测记录](docs/microphone_array.md)。
+[麦克风阵列实测记录](docs/reference/microphone_array.md)。
 
 `task_simulation.launch.py` 是无传感器的任务状态机 fixture；`task_navigation.launch.py`
 组合真实 SLAM/Nav2 软件栈，默认底盘后端为仿真估算，且仍需要有效雷达/定位输入。
 `task_cli` 支持“go to <已配置别名>”及“暂停/继续/取消”。配置 `slow_planner:=rai`
 时还需明确传入 LLM 配置；默认 `local` 不依赖云服务。六轴启动项没有物理仿真器，
 只提供 MoveIt 与动作接口测试。不要同时运行多个 Nav2 或多个 `/cmd_vel` 末端适配器。
-硬件验收前先阅读[硬件接入门槛](docs/hardware_acceptance.md)。真底盘由
+硬件验收前先阅读[硬件接入门槛](docs/reference/hardware_acceptance.md)。真底盘由
 `chassis_bringup.launch.py`（CAN）单独启动，`allow_motion` 默认 false，须由硬件
 负责人确认链路、固件协议和测得的限速后再显式打开。
 操作脚本见 [rak_bringup/scripts](src/rak_bringup/scripts/README.md)。

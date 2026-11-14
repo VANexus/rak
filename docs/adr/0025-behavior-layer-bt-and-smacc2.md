@@ -3,7 +3,7 @@
 - 状态: 已接受（**阶段 1 未实现**；本文只定结构与边界，不声称已交付代码）
 - 日期: 2026-10-29
 - 相关: `src/rak_task_executor/`（现任务状态机）· `src/rak_harness`（仲裁缝）·
-  `docs/brain_arm_tools_design.md` · ADR-0010（Harness）· ADR-0011（WBC 单写者）·
+  `docs/design/brain_arm_tools.md` · ADR-0010（Harness）· ADR-0011（WBC 单写者）·
   ADR-0020（生命周期与单一所有者）
 
 ## 背景
@@ -98,4 +98,4 @@ NAVIGATING→…→SAFETY_HOLD`），所有转移写在一个 `_execute()` 里�
    否则"换引擎"会变成"换行为"。这条要有回归测试才允许切默认值。
 4. **Groot2 的 XML 校验**进 CI：XML 拼错在运行期才报，代价太高。
 
-> 本节的执行顺序、命令与判据见 [`docs/NEXT-2026-10-30.md`](../NEXT-2026-10-30.md) §9 行为层。
+> 本节的执行顺序、命令与判据见 [`docs/status/next_2026-10-30.md`](../status/next_2026-10-30.md) §9 行为层。

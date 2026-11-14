@@ -7,13 +7,13 @@
   本文的两条核心论据 ——「改 IK 归属会击穿 CAN v3 `0x100`」与
   「统一协议不成立（臂走 CAN 关节指令）」—— 随之失效。
   **保留本文以记录当时的推理与被否决的方案，不要按本文实施。**
-- **相关**: `docs/architecture.md` §1/§4 · `docs/hardware_acceptance.md` · `docs/protocol/jetson_f407_uart_v1.1.md` · `src/rak_base_driver` · `src/rak_motion_stub` · `src/rak_navigation/config/nav2_params.yaml`
+- **相关**: `docs/explanation/architecture.md` §1/§4 · `docs/reference/hardware_acceptance.md` · `docs/protocol/jetson_f407_uart_v1.1.md` · `src/rak_base_driver` · `src/rak_motion_stub` · `src/rak_navigation/config/nav2_params.yaml`
 
 ---
 
 ## 背景
 
-硬件事实（来源：`docs/architecture.md` §1、`docs/hardware_acceptance.md` §Known Topology）：
+硬件事实（来源：`docs/explanation/architecture.md` §1、`docs/reference/hardware_acceptance.md` §Known Topology）：
 
 - 底盘是 **4 轮麦轮**，F407 自己跑**四轮 25 kHz 闭环**。
 - **Jetson 不直连 CAN**。CAN 只存在于 F407↔F407 之间（classic CAN 2.0A，1 Mbps，1 kHz）。
@@ -70,7 +70,7 @@
   位姿，横移分量不可信。→ 必须靠 IMU/雷达/视觉融合补偿，见 ADR-0002。
 - **失去 ros2_control 控制器生态**。用不了 `mecanum_drive_controller`，速度限幅、平滑、
   里程计发布、`/cmd_vel` 单写者仲裁都要自己做（现在由 `cmd_vel_stub` 和
-  `nav2` 的 smoother/collision-monitor 承担，见 `docs/architecture.md` §4）。
+  `nav2` 的 smoother/collision-monitor 承担，见 `docs/explanation/architecture.md` §4）。
 - 上位机侧无法做"四轮转速一致性检查"这类诊断。
 
 ---
@@ -145,8 +145,8 @@ EKF 补（ADR-0002 已覆盖里程计与 TF；限幅现由 `max_vx/vy/wz_m_s` �
 
 ## 参考
 
-- `docs/architecture.md` §1（硬件事实）、§4（执行侧）
-- `docs/hardware_acceptance.md` §Known Topology、§Before Connecting a Physical Base
+- `docs/explanation/architecture.md` §1（硬件事实）、§4（执行侧）
+- `docs/reference/hardware_acceptance.md` §Known Topology、§Before Connecting a Physical Base
 - `docs/protocol/jetson_f407_uart_v1.1.md`（`SET_BASE_VELOCITY` 19 字节载荷与 `action_type` 表）
 - `src/rak_navigation/config/nav2_params.yaml:50-64, 171-172`
 - `src/rak_motion_stub/rak_motion_stub/cmd_vel_stub.py`（待更新的过期文档字符串）

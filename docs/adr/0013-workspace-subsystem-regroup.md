@@ -2,7 +2,7 @@
 
 - **状态**: 已接受（2026-10-09，用户确认方向与三处权衡：brain 迁入 src / 按子系统归堆 / CAN v3 栈归档）
 - **日期**: 2026-10-09
-- **相关**: 全部 `src/rak_*` · `attic/`（本 ADR 创建）· `docs/architecture.md` · `docs/migration.md` ·
+- **相关**: 全部 `src/rak_*` · `attic/`（本 ADR 创建）· `docs/explanation/architecture.md` · `docs/explanation/migration_2026-10.md` ·
   `scripts/check_workspace.py` · ADR-0012（传输缝）· ADR-0007 · ADR-0010 · ADR-0011
 - **修订**: ADR-0007/0010 中"`src/rak_harness` 不存在"等表述不变；本 ADR 只改包拓扑与分层规则。
 
@@ -75,7 +75,7 @@
 - **负面**：
   - `rak_bringup` 变成大组装包（launch/config 集中是 ROS 惯例，代价可接受）；
   - 一次性大规模路径变更：所有文档、launch 引用、`ros2 run/launch` 命令、CI 式检查脚本都要同步
-    （本次随 ADR 一并落地，见 `docs/migration.md` 2026-10-09 表）；
+    （本次随 ADR 一并落地，见 `docs/explanation/migration_2026-10.md` 2026-10-09 表）；
   - episode 语料默认路径变更（`brain/data/episodes` → `data/episodes`）；重组时语料目录为空，无迁移成本，
     但旧路径引用（文档/记忆）需以本 ADR 为准更新。
 
@@ -96,7 +96,7 @@
 ## 待闭合项
 
 1. 本 ADR 落地同批次必须完成：全部文档路径同步（README/architecture/AGENTS/CLAUDE/TODO/project_status）+
-   `docs/migration.md` 追加映射表 + `check_workspace.py` 重写；任一未完成则本次重组不算收口。
+   `docs/explanation/migration_2026-10.md` 追加映射表 + `check_workspace.py` 重写；任一未完成则本次重组不算收口。
 2. `rak_speech/asr_node.py` 的函数内懒 import 改为顶层 import（依赖 rak_intent 后不再需要懒加载）。
 3. 旧安装目录（`build/`、`install/`）与新结构混用时 `ros2 run` 会找不到旧可执行名——
    首次切换需 `rm -rf build/architecture install/architecture` 后全量重建。

@@ -37,7 +37,7 @@
 4. **切换传输 = 改一个参数**：`hardware_parameters` 的 `transport` 字段（`usb|can`），零上层改动、
    零控制器改动。`SessionSnapshot` 的单位与语义保证两后端可互换。
 5. CAN 链路配置（mttcan `bitrate 1000000 sample-point 0.810 restart-ms 100`、`fd off`、120 Ω ×2、
-   共地）是部署项，写入 `docs/CONSTRUCTION.md`，不进代码。
+   共地）是部署项，写入 `docs/tutorials/construction.md`，不进代码。
 
 ## 理由
 
@@ -71,5 +71,5 @@
 
 1. `rak_chassis` 仍只导出 4 轮接口；CAN v4 的 7 轴 `ARM_COMMAND` 位置接口、arm controller、
    夹爪轴未实现（ADR-0007/0011 的臂前置继续有效）。
-2. 固件 R55+ 与 Jetson 的 CAN 全链路验收（`docs/hardware_acceptance.md` 底盘门 + 臂门）未跑。
+2. 固件 R55+ 与 Jetson 的 CAN 全链路验收（`docs/reference/hardware_acceptance.md` 底盘门 + 臂门）未跑。
 3. bringup 的 `transport` 默认值仍是 `usb`；CAN 验收通过后翻转为 `can` 并更新 launch。
