@@ -112,7 +112,7 @@ SupportedObjects=50
 50=0x1F8A
 
 [ManufacturerObjects]
-SupportedObjects=13
+SupportedObjects=39
 1=0x2000
 2=0x2001
 3=0x2002
@@ -126,6 +126,32 @@ SupportedObjects=13
 11=0x2202
 12=0x2203
 13=0x2204
+14=0x5800
+15=0x5801
+16=0x5802
+17=0x5803
+18=0x5804
+19=0x5805
+20=0x5806
+21=0x5807
+22=0x5A00
+23=0x5A01
+24=0x5A02
+25=0x5A03
+26=0x5A04
+27=0x5A05
+28=0x5A06
+29=0x5A07
+30=0x5C00
+31=0x5C01
+32=0x5C02
+33=0x5C03
+34=0x5C04
+35=0x5E00
+36=0x5E01
+37=0x5E02
+38=0x5E03
+39=0x5E04
 
 [1000]
 ParameterName=Device type
@@ -278,7 +304,7 @@ DefaultValue=5
 ParameterName=COB-ID used by RPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000180
+DefaultValue=0x00000181
 
 [1400sub2]
 ParameterName=transmission type
@@ -317,7 +343,7 @@ DefaultValue=5
 ParameterName=COB-ID used by RPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000280
+DefaultValue=0x00000281
 
 [1401sub2]
 ParameterName=transmission type
@@ -356,7 +382,7 @@ DefaultValue=5
 ParameterName=COB-ID used by RPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000380
+DefaultValue=0x00000381
 
 [1402sub2]
 ParameterName=transmission type
@@ -395,7 +421,7 @@ DefaultValue=5
 ParameterName=COB-ID used by RPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000480
+DefaultValue=0x00000481
 
 [1403sub2]
 ParameterName=transmission type
@@ -434,7 +460,7 @@ DefaultValue=5
 ParameterName=COB-ID used by RPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000180
+DefaultValue=0x00000182
 
 [1404sub2]
 ParameterName=transmission type
@@ -473,7 +499,7 @@ DefaultValue=5
 ParameterName=COB-ID used by RPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000280
+DefaultValue=0x00000282
 
 [1405sub2]
 ParameterName=transmission type
@@ -512,7 +538,7 @@ DefaultValue=5
 ParameterName=COB-ID used by RPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000380
+DefaultValue=0x00000382
 
 [1406sub2]
 ParameterName=transmission type
@@ -551,7 +577,7 @@ DefaultValue=5
 ParameterName=COB-ID used by RPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000480
+DefaultValue=0x00000482
 
 [1407sub2]
 ParameterName=transmission type
@@ -700,7 +726,7 @@ DefaultValue=6
 ParameterName=COB-ID used by TPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000200
+DefaultValue=0x00000201
 
 [1800sub2]
 ParameterName=transmission type
@@ -746,7 +772,7 @@ DefaultValue=6
 ParameterName=COB-ID used by TPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000300
+DefaultValue=0x00000301
 
 [1801sub2]
 ParameterName=transmission type
@@ -792,7 +818,7 @@ DefaultValue=6
 ParameterName=COB-ID used by TPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000200
+DefaultValue=0x00000202
 
 [1802sub2]
 ParameterName=transmission type
@@ -838,7 +864,7 @@ DefaultValue=6
 ParameterName=COB-ID used by TPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000300
+DefaultValue=0x00000302
 
 [1803sub2]
 ParameterName=transmission type
@@ -884,7 +910,7 @@ DefaultValue=6
 ParameterName=COB-ID used by TPDO
 DataType=0x0007
 AccessType=rw
-DefaultValue=0x00000400
+DefaultValue=0x00000402
 
 [1804sub2]
 ParameterName=transmission type
@@ -1500,3 +1526,257 @@ ParameterName=arm: cmd_flags
 DataType=0x0006
 AccessType=rwr
 PDOMapping=1
+
+[5800]
+ParameterName=Remote TPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000101
+
+[5801]
+ParameterName=Remote TPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000201
+
+[5802]
+ParameterName=Remote TPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000301
+
+[5803]
+ParameterName=Remote TPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000401
+
+[5804]
+ParameterName=Remote TPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000102
+
+[5805]
+ParameterName=Remote TPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000202
+
+[5806]
+ParameterName=Remote TPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000302
+
+[5807]
+ParameterName=Remote TPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000402
+
+[5A00]
+ParameterName=Remote TPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=4
+
+[5A00Value]
+NrOfEntries=4
+1=0x20100010
+2=0x20110010
+3=0x20120010
+4=0x20130010
+
+[5A01]
+ParameterName=Remote TPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=2
+
+[5A01Value]
+NrOfEntries=2
+1=0x20200020
+2=0x20210020
+
+[5A02]
+ParameterName=Remote TPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=2
+
+[5A02Value]
+NrOfEntries=2
+1=0x20220020
+2=0x20230020
+
+[5A03]
+ParameterName=Remote TPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=5
+
+[5A03Value]
+NrOfEntries=5
+1=0x20300010
+2=0x20310010
+3=0x20320010
+4=0x20330008
+5=0x20340008
+
+[5A04]
+ParameterName=Remote TPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=4
+
+[5A04Value]
+NrOfEntries=4
+1=0x21100010
+2=0x21110010
+3=0x21120010
+4=0x21130010
+
+[5A05]
+ParameterName=Remote TPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=4
+
+[5A05Value]
+NrOfEntries=4
+1=0x21140010
+2=0x21150010
+3=0x21160010
+4=0x21170010
+
+[5A06]
+ParameterName=Remote TPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=5
+
+[5A06Value]
+NrOfEntries=5
+1=0x21200010
+2=0x21210010
+3=0x21220008
+4=0x21230008
+5=0x21240010
+
+[5A07]
+ParameterName=Remote TPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=4
+
+[5A07Value]
+NrOfEntries=4
+1=0x21300010
+2=0x21310010
+3=0x21320008
+4=0x21330008
+
+[5C00]
+ParameterName=Remote RPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000101
+
+[5C01]
+ParameterName=Remote RPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000201
+
+[5C02]
+ParameterName=Remote RPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000102
+
+[5C03]
+ParameterName=Remote RPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000202
+
+[5C04]
+ParameterName=Remote RPDO number and node-ID
+DataType=0x0007
+AccessType=rw
+DefaultValue=0x00000302
+
+[5E00]
+ParameterName=Remote RPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=4
+
+[5E00Value]
+NrOfEntries=4
+1=0x20000010
+2=0x20010010
+3=0x20020010
+4=0x20030010
+
+[5E01]
+ParameterName=Remote RPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=2
+
+[5E01Value]
+NrOfEntries=2
+1=0x20400020
+2=0x20410010
+
+[5E02]
+ParameterName=Remote RPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=4
+
+[5E02Value]
+NrOfEntries=4
+1=0x21000010
+2=0x21010010
+3=0x21020010
+4=0x21030010
+
+[5E03]
+ParameterName=Remote RPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=4
+
+[5E03Value]
+NrOfEntries=4
+1=0x21040010
+2=0x21050010
+3=0x21060010
+4=0x21070010
+
+[5E04]
+ParameterName=Remote RPDO mapping parameter
+ObjectType=0x08
+DataType=0x0007
+AccessType=rw
+CompactSubObj=2
+
+[5E04Value]
+NrOfEntries=2
+1=0x21400020
+2=0x21410010

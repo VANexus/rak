@@ -43,6 +43,19 @@ def read_eds(path: Path) -> dict[tuple[str, str], str]:
     return out
 
 
+def _parse_cob(text: str, node_id: int) -> int:
+    """解析 EDS 的 COB-ID 默认值：`$NODEID+0x180` 或裸 `0x180`。
+
+    `$NODEID` 是 EDS 宏（CiA 306），不是 Python 表达式 —— 只支持 `A+B` 这种加法形式。
+    """
+    total = 0
+    for part in text.strip().split("+"):
+        part = part.strip().replace("$NODEID", str(node_id))
+        if part:
+            total += int(part, 0)
+    return total
+
+
 def _get(eds, section: str, key: str, default: str | None = None) -> str | None:
     return eds.get((section.lower(), key.lower()), default)
 
@@ -82,16 +95,18 @@ def check_node(node_name: str, contract_obj, *, eds_dir: str | Path | None = Non
                 continue
             if pdo is None:
                 # 未使用的槽位必须置禁用位（bit31），否则 CANopenNode 会报 PDO_WRONG_MAPPING。
-                if int(cob_default, 0) & 0x80000000 == 0:
+                if _parse_cob(cob_default, node.node_id) & 0x80000000 == 0:
                     problems.append(
                         f"{node_name}.{group}: EDS 未使用却未置禁用位 bit31（{cob_default}）"
                     )
                 continue
-            # EDS/OD 存的是**基址**（0x180/0x200…），节点号由栈在运行时加：
-            # 实测 OD.c `x1800...COB_IDUsedByTPDO = 0x00000180`，而总线上是 0x181（node 1）。
-            # 所以比较式是 EDS 基址 + node_id == 派生 COB-ID，不是 EDS 值直接相等。
+            # EDS 里的 COB-ID 默认值有两种合法写法，都表达"基址 + 节点号"：
+            #   - `$NODEID+0x180`（CiA 301 / CANopenNode DS301_profile.eds 的写法）
+            #   - 裸基址 `0x180`（由栈在运行时加 node_id）
+            # 2026-11-15 起下位仓的 gen_eds.py 生成前者（裸基址会让主站与从站算出
+            # 不同 COB-ID，`~/rpdo` 收不到），这里两种都接受。
             expected = cia_base + (index - 1) * 0x100 + node.node_id
-            cob_value = (int(cob_default, 0) & 0x1FFFFFFF) + node.node_id
+            cob_value = _parse_cob(cob_default, node.node_id) & 0x1FFFFFFF
             if cob_value != expected:
                 problems.append(
                     f"{node_name}.{group}: EDS COB-ID 默认 0x{cob_value:03X} "

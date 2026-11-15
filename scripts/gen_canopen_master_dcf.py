@@ -31,7 +31,10 @@ def main() -> int:
         bus = (CONFIG / "bus.yaml").read_text(encoding="utf-8")
         (tmp_path / "bus.yaml").write_text(
             bus.replace("@BUS_CONFIG_PATH@", str(tmp_path)), encoding="utf-8")
-        proc = subprocess.run([exe, "-S", "-d", str(tmp_path), str(tmp_path / "bus.yaml")],
+        # `-r`（remote PDO）不是可选项：没有它主站 OD 里就没有 0x5800/0x5A00 这组
+        # 远端 PDO 对象，lely 不会把从站 TPDO 当 RPDO 收下，OnRpdoWrite 永不触发，
+        # `~/rpdo` 一帧都没有（2026-11-15 真机实测：0x182 在线上 50 Hz，话题空）。
+        proc = subprocess.run([exe, "-S", "-r", "-d", str(tmp_path), str(tmp_path / "bus.yaml")],
                               cwd=tmp_path, capture_output=True, text=True)
         if proc.returncode != 0:
             sys.exit("dcfgen 失败：\n" + (proc.stderr or proc.stdout)[-1200:])

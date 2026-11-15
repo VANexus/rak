@@ -24,10 +24,16 @@
   `python3 scripts/verify_canopen_vcan.py` exit 0：NMT reset → boot-up → SDO 读 → NMT start，
   `/master/sdo_read` 成功。`master_config` 必须是 `dcfgen` 生成的主站 DCF（已入档）。
   依据：`docs/status/canopen_vcan_2026-11-14.md`、ADR-0024 修订（2026-11-14）。
-- [ ] **TPDO 触发方式与 SYNC 缺口**：`ros2_canopen` 0.3.4 主站不发 SYNC，而我们的
-  TPDO 是 transmission type 5（SYNC 触发）→ 台架收不到 `~/rpdo`（心跳能证明节点在）。
-  二选一：主站补 SYNC producer（上游/lely），或 MCU 侧改事件定时器 TPDO。先写 ADR。
-  多从站加载与 lifecycle 激活已实测通过（ADR-0024 2026-11-14 二次修订）。
+- [x] **SYNC / TPDO / `~/rpdo` 全链闭合**（2026-11-15 真机）
+  根因不是"主站不发 SYNC"（它发，`080#` 稳定 500 Hz），而是 `dcfgen` 缺官方 `-r`
+  （remote PDO）：主站 OD 没有 0x5800/0x5A00，lely 就不把从站 TPDO 当 RPDO 写入。
+  已修：`gen_canopen_master_dcf.py` + `test_dcf_sync.py` + `verify_canopen_vcan.py` 全部加 `-r`。
+  另修两个下位仓 `gen_eds.py` 的 PDO COB-ID（必须 `$NODEID+0x…`）。
+  实测：`/arm/rpdo` 505 Hz，`/joint_states` 真实读数。见 `docs/status/canopen_vcan_2026-11-14.md`。
+- [ ] **底盘板（node 1）接入**：2026-11-15 实测总线上只有 node 2；node 1 对 NMT/SDO
+  全无应答，广播也无回应。先核接线/供电/固件（v5 是否烧录），再看 `0x2F00` build_tag。
+- [ ] **`j6_wrist_roll` 零位核对**：实测回读 4.712 rad，而 `arm_controller` 目标 0，
+  controller_manager 持续报 out of limits。确认 j6 真实零位后回填契约/URDF 限位。
 - [ ] **真机 `can0` 首帧核对**（装机后第一件事）
   每个 PDO 的 DLC 与契约 `byte_size` 一致、没有未知 COB-ID、物理量在合理范围、
   字节序证据回填；`0x2F00` 读回 R76/A16；SYNC 2 ms 抖动与心跳消费实测。

@@ -93,8 +93,11 @@ def write_configs(tmp):
     # master.dcf is the network definition the master boots from (1F80/1F81/
     # 1F85 tables). A slave EDS has no network table, so passing one leaves the
     # slave unbooted: boot timeout, then the upstream retry path aborts.
+    # `-r` (remote PDO) is REQUIRED: without it the master OD lacks 0x5800/0x5A00,
+    # so lely never treats the slave's TPDO as an RPDO write and `~/rpdo` stays
+    # silent even though the frames are on the wire (2026-11-15 hardware run).
     r = subprocess.run(
-        ["bash", "-c", "source %s && dcfgen -d %s %s" % (ROS_SETUP, tmp, bus)],
+        ["bash", "-c", "source %s && dcfgen -r -d %s %s" % (ROS_SETUP, tmp, bus)],
         cwd=os.path.dirname(EDS),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

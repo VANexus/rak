@@ -181,3 +181,41 @@ canopen_interfaces.srv.COReadID_Response(success=True, data=0)
   EDS 不是我们的对象表，台架只能验证到「驱动激活 + 硬件激活 + startup_grace 后判死」。
 - SDO 写路径、心跳消费者 500 ms、EMCY 降级：未测。
 - 真机 can0（R73/A14 或更新）：完全没碰。
+
+## 2026-11-15 真机：机械臂板（node 2，A36）端到端打通
+
+两台下位机接入 can0 后实测。**底盘板（node 1）不在总线上**：被动监听 12 s 只见
+`702#05`；对 node 1 发 NMT reset/start、SDO 读 `0x1000`/`0x2F00` 全部无应答；
+对 node 1..127 全量 SDO 探测只有 node 2 响应；广播 NMT 也无回应。
+**结论：底盘板没接好（或未上电/未烧 v5 固件），不是软件问题**——上板前先核这条。
+
+机械臂板侧四个真问题，逐个闭合：
+
+1. **`CanController: Operation not permitted`** —— lely 的 `CanController::Open()`
+   走 netlink 改链路属性（`RTM_NEWLINK` 把接口 down/up 再设 bitrate），需要
+   `CAP_NET_ADMIN`。普通用户跑 `device_container_node` 直接 abort。
+   处置：以 root 运行（`sudo` + 保留 `source` 的环境）。给二进制加 file capability
+   **不行**：secure-exec 会丢掉 `LD_LIBRARY_PATH`，二进制连 `libdevice_container.so`
+   都找不到（实测 exit 127）。
+2. **`~/rpdo` 一帧都没有（真根因）** —— `dcfgen` 必须加官方 **`-r`（remote PDO）**。
+   不加时主站 OD 里没有 `0x5800/0x5A00` 这组远端 PDO 对象，lely 就不会把从站 TPDO
+   当成 RPDO 写入，`OnRpdoWrite` 永不触发。现象极具误导性：0x182 在线上 50 Hz、
+   SDO 正常、驱动 `Driver booted and ready`，但话题空。
+   `scripts/gen_canopen_master_dcf.py` 与 `test_dcf_sync.py` 已加 `-r`。
+3. **EDS 的 PDO COB-ID 必须写 `$NODEID+0x…`** —— 固件仓 `gen_eds.py` 原先写死
+   `0x180`/`0x200`（无 `$NODEID`），与 CANopenNode 官方 `DS301_profile.eds` 的
+   `$NODEID+0x180` 不一致。两个下位仓已修并重新生成 EDS，本仓副本同步。
+4. **单板联调必须同时裁两处** —— 只裁 `bus.yaml` 不够：URDF 里另一台的
+   `<ros2_control>` 段仍会被 controller_manager 激活，它永远收不到反馈 →
+   `read()` ERROR → 连 `joint_state_broadcaster` 一起被停用。
+   `chassis_bringup.launch.py slaves:=chassis|arm|both` 现在同时裁 bus.yaml、URDF 段
+   与对应 spawner。
+
+实测证据（can0，`slaves:=arm`，`allow_motion:=false`）：
+- `ros2 topic hz /arm/rpdo` → **505 Hz**，对象 0x2110..0x2116 / 0x2120..0x2124 / 0x2130..0x2133 全部到达
+- `/joint_states` 只含 6 个臂关节，读数真实（j1 = 0.0017453 rad = 1 count）
+- `080#` SYNC 稳定 500 Hz；无 `no /arm/rpdo`、无硬件停用
+
+**仍未闭合**：底盘板缺位；`allow_motion:=true` 下的实际运动/限位/急停未验；
+轮序与 `wheel_sign` 在 v5 链路上未复核；`j6_wrist_roll` 当前读数 4.712 rad 与
+`arm_controller` 的 0 目标冲突（CM 报 out of limits）——需要先确认 j6 的真实零位。

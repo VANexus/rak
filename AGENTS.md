@@ -651,11 +651,23 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   configure+activate，**不需要** `ros2 lifecycle set /lifecycle_manager …`（lifecycle
   变体的 6 s/9 s 定时转移已删；那是启动时序赌博）。controller_manager 延到 6 s 起，
   硬件插件另有 startup_grace_ms=5000 宽限兜底。
-  **SYNC 已闭合**：0.3.4 主站**会**发 SYNC——前提是 bus.yaml 写 `sync_period: 2000`
-  （dcfgen 写进 master.dcf 的 0x1006）。2026-11-15 vcan0 实测 `080#` 稳定 500 Hz
-  （`scripts/verify_canopen_vcan.py` 已加 SYNC 帧与频率断言）。此前"主站不发 SYNC"
-  是验证脚本自己的 bus.yaml 漏了该键。TPDO（type 5，SYNC 触发）在 vcan fake slave
-  上仍未映射验证，真机首帧仍是第一个待验收项。
+  **SYNC / TPDO / `~/rpdo` 全链已闭合（2026-11-15 真机，机械臂板 A36）**：
+  - SYNC 由主站发，前提是 bus.yaml 写 `sync_period: 2000`（dcfgen → master.dcf 0x1006），
+    实测 `080#` 稳定 500 Hz。
+  - **`dcfgen` 必须加 `-r`（remote PDO）**：不加时主站 OD 里没有 0x5800/0x5A00，
+    lely 不把从站 TPDO 当 RPDO 写入，`~/rpdo` 一帧没有（现象极具误导性：帧在线上
+    50 Hz、SDO 正常、驱动 `Driver booted and ready`，但话题空）。
+    `scripts/gen_canopen_master_dcf.py` / `test_dcf_sync.py` / `verify_canopen_vcan.py`
+    都已加 `-r`，别再省。
+  - **`device_container_node` 需要 `CAP_NET_ADMIN`**（lely 走 netlink 改链路属性）：
+    普通用户跑直接 `CanController: Operation not permitted`。用 root 跑；
+    **不要**给二进制加 file capability —— secure-exec 会丢掉 `LD_LIBRARY_PATH`，
+    连 `libdevice_container.so` 都找不到（exit 127）。
+  - **单板联调必须同时裁两处**：`slaves:=chassis|arm|both` 同时裁 bus.yaml、
+    URDF 的 `<ros2_control>` 段与对应 spawner。只裁 bus.yaml 的话另一台的 hardware
+    仍会被激活，永远收不到反馈 → `read()` ERROR → 连 joint_state_broadcaster 一起停。
+  - 实测：`/arm/rpdo` 505 Hz，`/joint_states` 真实读数。
+    **底盘板（node 1）2026-11-15 不在总线上**（NMT/SDO 全无应答），待接线核查。
 - The lidar `lidar_name` must be `N10_P` (108 B @ 460800); `N10` fails CRC. Use the udev alias
   `/dev/wheeltec_lidar`, never `/dev/ttyUSB0` (other serial adapters may also claim ttyUSB).
 - Simulation task telemetry is a command-motion estimate, not measured odometry. A

@@ -35,7 +35,7 @@ def _dcfgen(tmp_path: Path) -> Path:
     (tmp_path / "bus.yaml").write_text(
         bus.replace("@BUS_CONFIG_PATH@", str(tmp_path)), encoding="utf-8")
     proc = subprocess.run(
-        [exe, "-S", "-d", str(tmp_path), str(tmp_path / "bus.yaml")],
+        [exe, "-S", "-r", "-d", str(tmp_path), str(tmp_path / "bus.yaml")],
         cwd=tmp_path,
         capture_output=True,
         text=True,

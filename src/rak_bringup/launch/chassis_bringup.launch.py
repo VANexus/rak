@@ -48,6 +48,9 @@ def _launch_setup(context, *args, **kwargs):
     controllers_file = config("controllers_file")
     master_config = config("master_config")
     urdf_path = config("urdf")
+    slaves = config("slaves")
+    if slaves not in ("both", "chassis", "arm"):
+        raise RuntimeError(f"slaves 必须是 both|chassis|arm，得到 {slaves!r}")
 
     sign = config("wheel_sign").split()
     assert len(sign) == 4, f"wheel_sign 需 4 个值（FL FR RL RR），得到 {sign!r}"
@@ -57,7 +60,8 @@ def _launch_setup(context, *args, **kwargs):
         Command(
             f"xacro {urdf_path} allow_motion:={allow_motion} "
             f'wheel_sign_fl:="{sign_fl}" wheel_sign_fr:="{sign_fr}" '
-            f'wheel_sign_rl:="{sign_rl}" wheel_sign_rr:="{sign_rr}"'
+            f'wheel_sign_rl:="{sign_rl}" wheel_sign_rr:="{sign_rr}" '
+            f"slaves:={slaves}"
         ),
         value_type=str,
     )
@@ -73,9 +77,25 @@ def _launch_setup(context, *args, **kwargs):
     #    @BUS_CONFIG_PATH@ 在这里替换成安装态 config 目录。
     canopen_config = canopen_share + "/config"
     bus_text = Path(canopen_config + "/bus.yaml").read_text(encoding="utf-8")
+    bus_text = bus_text.replace("@BUS_CONFIG_PATH@", canopen_config)
+    # 从站裁剪（slaves:=chassis|arm|both）：单板联调时把另一台从站从 bus.yaml 摘掉。
+    # 不做裁剪就必须两台都在线 —— 缺席的那台会 Boot Timeout，容器直接 abort（上游行为）。
+    if slaves != "both":
+        sections, current, key = [], [], None
+        for line in bus_text.splitlines(keepends=True):
+            if line and not line[0].isspace() and not line.startswith("#"):
+                if current:
+                    sections.append((key, current))
+                current, key = [line], line.split(":")[0].strip()
+            else:
+                current.append(line)
+        if current:
+            sections.append((key, current))
+        keep_keys = {"options", "master", slaves}
+        bus_text = "".join("".join(lines) for k, lines in sections if k in keep_keys)
     bus_file = tempfile.NamedTemporaryFile(
         mode="w", prefix="rak_canopen_bus_", suffix=".yaml", delete=False)
-    bus_file.write(bus_text.replace("@BUS_CONFIG_PATH@", canopen_config))
+    bus_file.write(bus_text)
     bus_file.close()
 
     container_params = {
@@ -125,17 +145,19 @@ def _launch_setup(context, *args, **kwargs):
                        "--param-file", controllers_file],
             output="screen",
         ),
-        Node(
+    ]
+    # 底盘控制器只在底盘段存在时 spawn（URDF 里没那段就没有对应命令接口）。
+    if slaves in ("both", "chassis"):
+        nodes.append(Node(
             package="controller_manager",
             executable="spawner",
             arguments=["mecanum_drive_controller",
                        "--controller-manager", "/controller_manager",
                        "--param-file", controllers_file],
             output="screen",
-        ),
-    ]
+        ))
 
-    if arm_writer == "jtc":
+    if arm_writer == "jtc" and slaves in ("both", "arm"):
         nodes.append(
             Node(
                 package="controller_manager",
@@ -146,7 +168,7 @@ def _launch_setup(context, *args, **kwargs):
                 output="screen",
             )
         )
-    elif arm_writer == "wbc":
+    elif arm_writer == "wbc" and slaves in ("both", "arm"):
         nodes.append(
             Node(
                 package="controller_manager",
@@ -181,6 +203,10 @@ def generate_launch_description():
             "master_config",
             default_value=get_package_share_directory("rak_canopen") + "/config/master.dcf",
             description="ros2_canopen 主站 DCF（官方 dcfgen 从 bus.yaml 生成，见 rak_canopen）"),
+        DeclareLaunchArgument(
+            "slaves", default_value="both",
+            description="从站裁剪：both|chassis|arm（单板联调时摘掉缺席的那台，"
+                        "否则它会 Boot Timeout 让容器 abort）"),
         DeclareLaunchArgument(
             "controllers_file",
             default_value=bringup_share + "/config/chassis_controllers.yaml",

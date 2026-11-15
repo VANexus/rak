@@ -35,6 +35,10 @@
   <xacro:include filename="macros/arm_chain.xacro"/>
 
   <xacro:arg name="allow_motion" default="false"/>
+  <!-- [AI] 从站裁剪（与 chassis_bringup 的 slaves:= 同义）：单板联调时把缺席那台的
+       <ros2_control> 段整段去掉。不裁的话 controller_manager 仍会激活它，而它永远
+       收不到反馈 → read() ERROR → CM 把硬件连同 joint_state_broadcaster 一起停用。 -->
+  <xacro:arg name="slaves" default="both"/>
   <!-- [AI] 每轮极性（装配事实，顺序 FL FR RL RR，经 launch 的 wheel_sign 单参数拆开）：
        +1 正常，-1 表示该轮命令与反馈同时取反。2026-10-14 实车标定：左侧 FL/RL 装向
        与右侧相反（DRIVE_CMD [++++] 时左轮后滚、右轮前滚，车体原地转；W/S 变自转、
@@ -217,6 +221,7 @@
 
        OD 对象索引/类型/量化因子的唯一来源是 `src/rak_canopen/config/*.json` +
        `canopen_contract.yaml`；本文件是它们的**消费方**，改协议先改那边。 -->
+  <xacro:if value="${'$(arg slaves)' in ('both', 'chassis')}">
   <ros2_control name="rak_chassis" type="system">
     <hardware>
       <plugin>rak_chassis/CanopenChassis</plugin>
@@ -292,6 +297,8 @@
     </joint>
   </ros2_control>
 
+  </xacro:if>
+
   <!-- ==================== 机械臂段（ADR-0019） ====================
        臂板（vehical_rak_arm）自己的故障域，driver_node=arm（node 2）。
        命令 0x2100..0x2106 UINT16 0.1°；反馈 0x2110..0x2116，J1/J2 是 INT16、
@@ -299,6 +306,7 @@
        名称/行程按 docs/arm_moveit_contract.md §1（FROZEN）：命令域是舵机指令角
        （rad，0..270°，Home=0/225/270/0/0/0），**不是** rak_arm.urdf.xacro 的 q_urdf。
        min/max 引用 properties_arm.xacro，与臂 <limit> 同一表达式。 -->
+  <xacro:if value="${'$(arg slaves)' in ('both', 'arm')}">
   <ros2_control name="rak_arm" type="system">
     <hardware>
       <plugin>rak_chassis/CanopenArm</plugin>
@@ -401,4 +409,5 @@
       </command_interface>
     </joint>
   </ros2_control>
+  </xacro:if>
 </robot>
