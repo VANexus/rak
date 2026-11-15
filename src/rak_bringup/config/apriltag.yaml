@@ -1,0 +1,26 @@
+# apriltag_ros 3.4 参数 —— 固定场地的绝对位姿锚点（vision_nav_v1.md §3）。
+#
+# 布设与选型依据（写死在文档里，改这里先改文档）：
+#   - 家族 36h11：检测率高、误检率低，apt 包默认支持。
+#   - 边长 0.16 m：2 m 处 fx=800 时约占 64 px，足够 PnP 解出厘米级位姿；
+#     再小在 3 m 外就只剩几十像素，位姿抖动明显。
+#   - 标签贴在已知世界坐标（拐角/路口/直道两端），坐标表见 docs/design/vision_nav_v1.md §3.4。
+#
+# 话题：节点订阅 <ns>/image 与 <ns>/camera_info，发布 <ns>/detections + <ns>/tf。
+/**:
+  ros__parameters:
+    image_transport: raw
+    family: 36h11
+    size: 0.16          # tag 外沿边长（米）；打印后实测回填，别用标称值
+    max_hamming: 0      # 不允许纠错位，减少误检
+    qos_profile: sensor_data
+    pose_estimation_method: pnp
+    detector:
+      threads: 2
+      decimate: 2.0     # 1280x720 下 2.0 足够，再大远处小 tag 会漏
+      blur: 0.0
+      refine: true
+      sharpening: 0.25
+      debug: false
+    # 不写 tag: 块 = 检测该家族全部 ID。ID 到世界坐标的映射由地图标定表给出，
+    # 不在这里硬编码（同一张标签可能出现在多个场地）。

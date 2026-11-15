@@ -1,0 +1,41 @@
+# RTAB-Map 纯定位模式参数（vision_nav_v1.md §3）。
+#
+# 形态：固定地图已建好（database + 栅格图），运行时只做定位，不新增节点。
+# 输入：双目（stereo）或单目+轮速/IMU 的先验；输出：map->odom。
+#
+# 与 slam_toolbox 互斥：两者都发 map->odom，同一时刻只能有一个（ADR-0002 一帧一发布者）。
+# sensors:=camera 档用本文件；lidar 档继续走 slam.launch.py。
+rtabmap:
+  ros__parameters:
+    # ---- 纯定位（核心三行，改错这两行就等于在运行时建图）----
+    Mem/IncrementalMemory: "false"     # 不新增节点
+    Mem/InitWMWithAllNodes: "true"     # 起始就把数据库全部节点载入工作记忆
+    Rtabmap/DetectionRate: "1.0"       # 回环/重定位检测 1 Hz，省 CPU（4GB 板）
+
+    # ---- 尺度：双目给真实尺度；单目必须靠先验 ---- 
+    # 双目路径保持默认（stereo 自带基线）；单目兜底时才需要：
+    # Stereo/MaxDisparity 等交给 rtabmap_odom，不在这里设。
+
+    # ---- 特征预算：这块板 CPU 有限，先给保守值，实测后再调 ----
+    Kp/MaxFeatures: "500"
+    Vis/MaxFeatures: "1000"
+    Kp/DetectorStrategy: "6"           # 6 = GFTT/BRIEF，CPU 友好
+    Vis/FeatureType: "6"
+
+    # ---- AprilTag 锚点 ----
+    # rtabmap 订阅 apriltag 的结果当 landmark；PriorsIgnored 默认 true 会静默忽略，
+    # 必须显式关掉，否则标签"检测得到但地图不认"。
+    Optimizer/PriorsIgnored: "false"
+    Marker/CornerRadius: "0.01"
+
+    # ---- 时间与容差 ----
+    Rtabmap/TimeThr: "0"
+    Rtabmap/MemoryThr: "0"
+    Mem/RehearsalSimilarity: "0.45"
+    RGBD/LinearUpdate: "0.1"
+    RGBD/AngularUpdate: "0.1"
+    RGBD/OptimizeMaxError: "3.0"
+
+    # ---- 落地期不要开的（会吃 CPU 或需要更多传感器）----
+    # RGBD/ProximityBySpace: 依赖 scan/cloud，v1.0 无雷达运行时不启用
+    # Reg/Strategy: 保持默认（0=Vis），ICP 需要点云
