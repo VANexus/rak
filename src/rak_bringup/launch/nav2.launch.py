@@ -53,7 +53,8 @@ def _navigation_servers(params_file, use_sim_time, camera_mode=False, planner_la
     for package, executable, name, remap_cmd_vel in _NAV2_SERVERS:
         if name == "collision_monitor" and camera_mode:
             continue
-        parameters = [params_file, {"use_sim_time": use_sim_time}]
+        base = list(params_file) if isinstance(params_file, (list, tuple)) else [params_file]
+        parameters = base + [{"use_sim_time": use_sim_time}]
         # 4D 档：omni 状态格文件由 launch 解析（参数文件里不写死 distro 路径）。
         if name == "planner_server" and planner_lattice:
             parameters.append({"GridBased": {"lattice_filepath": planner_lattice}})
@@ -151,7 +152,7 @@ def _compose(context, nav_share, nav2_params):
                 "lidar_z": LaunchConfiguration("lidar_z"),
                 "odom_source": LaunchConfiguration("odom_source"),
                 "publish_robot_tf": LaunchConfiguration("publish_robot_tf"),
-            }.items() | slam_extra,
+            }.items() | slam_extra.items(),
         ))
 
     entities.append(Node(
