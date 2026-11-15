@@ -58,8 +58,11 @@ controller_server:
       gamma: 0.015
       motion_model: "Omni"
       vx_std: 0.10
-      vy_std: 0.10
-      wz_std: 0.20
+      # [AI] 2026-11-15（vision_nav_v1.md §4.2）：横移/转向采样压小 —— 麦轮 45° 斜走
+      # 只有两轮出力会滑（navigation2 PR #6460 实测口径），直道蛇形靠 TwirlingCritic
+      # 压转向，不靠 wz_max=0（0 会把采样 clip 成零，终点姿态永远达不到）。
+      vy_std: 0.08
+      wz_std: 0.12
       vx_max: 0.25
       # [AI] 2026-10-30（chassis-control-design §6"Jetson 侧配合"）：vx_min 从
       # -0.10 提到 +0.02 —— MPPI 采样下限 = 最低平移速度钳位，避免长期爬行指令：
@@ -82,7 +85,7 @@ controller_server:
       transform_tolerance: 0.2
       visualize: false
       critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "GoalAngleCritic",
-        "PathAlignCritic", "PathFollowCritic", "PathAngleCritic"]
+        "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "TwirlingCritic"]
       ConstraintCritic:
         enabled: true
         cost_power: 1
@@ -122,6 +125,10 @@ controller_server:
         cost_weight: 5.0
         offset_from_furthest: 5
         threshold_to_consider: 1.4
+      TwirlingCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 10.0
       PathAngleCritic:
         enabled: true
         cost_power: 1

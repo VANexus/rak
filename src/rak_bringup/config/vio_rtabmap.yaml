@@ -1,0 +1,36 @@
+# rtabmap 视觉里程计参数（vision_nav_v2.md §2.2 / ADR-0027）
+#
+# 为什么用 rtabmap_odom 而不是自己写：本机 apt 里 rtabmap 0.23.13 已带
+# rgbd_odometry / stereo_odometry（`ros2 pkg executables rtabmap_odom` 实测），
+# 特征法 VO + 内点/回环约束都是现成的；它同时是 rtabmap SLAM 的同一份后端，
+# 定位档与建图档不会出现"两个实现两份参数"。
+#
+# 与 IMU 的关系（诚实口径）：这是**松耦合 VIO**——rtabmap 出视觉增量，
+# 陀螺 Z 由 robot_localization EKF（ekf_4d.yaml imu0）在滤波层融合。
+# 紧耦合 VIO（VINS/OpenVINS 一类）是 v2.1 候选，见设计文档 §6 权衡表。
+#
+# 参数只留接线必需项。2026-11-15 实测：这版 rtabmap_odom 把 Odom/*、Vis/*、GFTT/* 这些
+# 键声明成 **string**，从 yaml 传 double/bool 会抛 InvalidParameterTypeException 直接
+# 把节点打死（GFTT/MinDistance、Odom/AlignWithGround 都踩过）。要调算法参数就走
+# `rtabmap` 的参数数据库/`--ros-args -p 'Odom/Strategy:=0'` 之外的通道，或等上游修声明类型。
+rgbd_odometry:
+  ros__parameters:
+    frame_id: base_footprint
+    odom_frame_id: odom
+    publish_tf: false            # odom->base_footprint 归 EKF（ADR-0002）
+    approx_sync: true
+    approx_sync_max_interval: 0.05
+    queue_size: 10
+    wait_for_transform: 0.2
+    subscribe_depth: true
+    subscribe_rgb: true
+
+stereo_odometry:
+  ros__parameters:
+    frame_id: base_footprint
+    odom_frame_id: odom
+    publish_tf: false
+    approx_sync: true
+    approx_sync_max_interval: 0.05
+    queue_size: 10
+    wait_for_transform: 0.2

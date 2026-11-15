@@ -109,6 +109,11 @@ def generate_launch_description():
                 description="who publishes odom -> base_footprint",
             ),
             DeclareLaunchArgument(
+                "ekf_params",
+                default_value=os.path.join(share, "config", "ekf.yaml"),
+                description="robot_localization params file; empty means config/ekf.yaml (v1: rf2o + IMU).",
+            ),
+            DeclareLaunchArgument(
                 "publish_robot_tf", default_value="true",
                 description="start robot_state_publisher for the body tree; false if chassis_bringup already does",
             ),
@@ -184,7 +189,7 @@ def generate_launch_description():
                 executable="ekf_node",
                 name="ekf_filter_node",
                 output="screen",
-                parameters=[os.path.join(share, "config", "ekf.yaml")],
+                parameters=[LaunchConfiguration("ekf_params")],
                 condition=IfCondition(EqualsSubstitution(odom_source, "ekf")),
             ),
             # Identity odom for testing the slam_toolbox chain with nothing
