@@ -1,4 +1,8 @@
-"""Run the LFD-RoadSeg TorchScript model and publish ROS perception outputs.
+"""Run the road-segmentation TensorRT engine and publish ROS perception outputs.
+
+Inference is TensorRT only (JetPack ships it; torch is not a deployable dependency
+on this board). The engine is built once by scripts/build_roadseg_engine.py from an
+ONNX export of either TwinLiteNet+ (default) or LFD-RoadSeg.
 
 The camera may arrive as a ROS Image or through the existing Astra shared-memory
 feeder. The output mask is always available for RViz. Depth cloud outputs are
@@ -10,7 +14,6 @@ from __future__ import annotations
 
 import copy
 import math
-import os
 import struct
 import time
 from pathlib import Path
@@ -28,6 +31,8 @@ from sensor_msgs.msg import Image, PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 from tf2_ros import Buffer, TransformException, TransformListener
+
+from .roadseg_trt import TrtSegmenter
 
 
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -58,14 +63,22 @@ class RoadSegNode(Node):
         if not (0.0 < self._threshold < 1.0 and self._height > 0 and self._width > 0):
             raise ValueError("road_threshold must be in (0, 1), model dimensions must be positive")
 
-        self._device = self._select_device(str(self.get_parameter("device").value))
-        model_path = Path(str(self.get_parameter("model_path").value)).expanduser()
-        if not model_path.is_file():
-            raise FileNotFoundError(f"TorchScript model does not exist: {model_path}")
-        self._model = self._load_model(model_path)
+        engine_path = Path(str(self.get_parameter("engine_path").value)).expanduser()
+        if not engine_path.is_file():
+            raise FileNotFoundError(
+                f"TensorRT engine does not exist: {engine_path}. "
+                "Build it once with scripts/build_roadseg_engine.py."
+            )
+        self._segmenter = TrtSegmenter(
+            str(engine_path), (self._width, self._height),
+            output_name=str(self.get_parameter("engine_output_name").value) or None,
+        )
+        self._normalize = str(self.get_parameter("normalize").value)
+        if self._normalize not in {"unit", "imagenet"}:
+            raise ValueError("normalize must be 'unit' (TwinLiteNet+) or 'imagenet' (LFD-RoadSeg)")
         self.get_logger().info(
-            f"RoadSeg ready: {model_path} on {self._device}, "
-            f"input={self._width}x{self._height}, threshold={self._threshold:.2f}"
+            f"RoadSeg ready: {engine_path}, input={self._width}x{self._height}, "
+            f"normalize={self._normalize}, threshold={self._threshold:.2f}"
         )
 
         self._mask_pub = self.create_publisher(
@@ -127,18 +140,19 @@ class RoadSegNode(Node):
 
     def _declare_parameters(self) -> None:
         defaults = {
-            "model_path": "/tmp/lfd_deploy/lfd_roadseg_indoor.ts",
-            "device": "auto",
-            "optimize_torchscript": True,
+            "engine_path": "/home/xrak/rak/data/models/roadseg/twinlite_plus_small_fp16_384x672.plan",
+            "engine_output_name": "",
+            "normalize": "unit",
             "input_mode": "shared_memory",
             "image_topic": "/camera/color/image_raw",
             "image_frame_id": "camera_color_frame",
             "shared_memory_frame": "/dev/shm/cam_frame.bin",
             "shared_memory_sequence": "/dev/shm/cam_seq",
             "shared_memory_poll_ms": 10.0,
-            "model_width": 640,
-            "model_height": 480,
+            "model_width": 672,
+            "model_height": 384,
             "road_threshold": 0.40,
+            "rotate_180": False,
             "adaptive_gamma": True,
             "low_light_threshold": 110.0,
             "low_light_gamma": 0.60,
@@ -161,52 +175,6 @@ class RoadSegNode(Node):
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
-
-    @staticmethod
-    def _require_torch():
-        """延迟导入 torch（本仓约定，见 rak_agent/system1.py 与 grasp infer.py）。
-
-        为什么不在模块顶层 import：torch 在这台机器上**不是必然存在**的——
-        JetPack 不带它，apt 也没有 arm64 候选包，只有需要跑模型时才装。
-        顶层 import 会让任何触碰（含 colcon 入口点扫描、check_workspace 的
-        import 探针）都炸 ModuleNotFoundError，把一个"可选推理依赖"变成"包坏了"。
-        本仓其余三个用 torch 的包全部是延迟导入，这里跟上。
-        """
-        try:
-            import torch  # noqa: PLC0415 -- deliberately deferred
-        except ImportError as exc:  # pragma: no cover - 取决于机器是否装了 torch
-            raise RuntimeError(
-                "rak_road_perception 需要 PyTorch（TorchScript 推理）。"
-                "在 Jetson 上按 JetPack 对应版本安装 NVIDIA 提供的 torch 轮子；"
-                "本仓不提供通用 PyTorch 依赖（见 CLAUDE.md 约束）。"
-            ) from exc
-        return torch
-
-    def _select_device(self, requested: str):
-        torch = self._require_torch()
-        if requested == "auto":
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        device = torch.device(requested)
-        if device.type == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError("CUDA was requested but is not available")
-        return device
-
-    def _load_model(self, path: Path):
-        torch = self._require_torch()
-        torch.set_num_threads(1)
-        if self._device.type == "cuda":
-            torch.backends.cudnn.benchmark = True
-        model = torch.jit.load(os.fspath(path), map_location=self._device).eval()
-        if not bool(self.get_parameter("optimize_torchscript").value):
-            return model
-        try:
-            model = torch.jit.freeze(model)
-            model = torch.jit.optimize_for_inference(model)
-            self.get_logger().info("TorchScript freeze/optimize_for_inference enabled")
-        except Exception as exc:  # keep the known-good serialized graph as a fallback
-            self._warn("jit_opt", f"TorchScript optimization skipped: {exc}", interval_s=60.0)
-            model = torch.jit.load(os.fspath(path), map_location=self._device).eval()
-        return model
 
     def _warn(self, key: str, message: str, interval_s: float = 5.0) -> None:
         now = time.monotonic()
@@ -263,20 +231,19 @@ class RoadSegNode(Node):
             if luminance < float(self.get_parameter("low_light_threshold").value):
                 lut = (np.arange(256, dtype=np.float32) / 255.0) ** gamma * 255.0
                 bgr = cv2.LUT(bgr, lut.astype(np.uint8))
+        if bool(self.get_parameter("rotate_180").value):
+            # The camera is mounted upside down and there is no V4L2 flip control; only
+            # this consumer needs an upright image ("road at the bottom"), so the turn
+            # happens here instead of in a separate flip node that would drop camera_info.
+            bgr = cv2.rotate(bgr, cv2.ROTATE_180)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         rgb = cv2.resize(rgb, (self._width, self._height), interpolation=cv2.INTER_LINEAR)
-        normalized = (rgb.astype(np.float32) / 255.0 - _MEAN) / _STD
+        normalized = rgb.astype(np.float32) / 255.0
+        if self._normalize == "imagenet":
+            normalized = (normalized - _MEAN) / _STD
         chw = np.ascontiguousarray(normalized.transpose(2, 0, 1)[None, ...])
-        torch = self._require_torch()
-        tensor = torch.from_numpy(chw).to(self._device)
         try:
-            with torch.inference_mode():
-                logits = self._model(tensor)
-                if isinstance(logits, (tuple, list)):
-                    logits = logits[0]
-                if logits.ndim != 4 or logits.shape[1] < 2:
-                    raise RuntimeError(f"unexpected model output shape: {tuple(logits.shape)}")
-                probability = torch.softmax(logits.float(), dim=1)[0, 1].cpu().numpy()
+            probability = self._segmenter.class_probability(chw)
         except Exception as exc:
             self._warn("inference", f"RoadSeg inference failed: {exc}")
             return
