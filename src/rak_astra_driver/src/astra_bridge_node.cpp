@@ -32,6 +32,20 @@ public:
   CallbackReturn on_configure(const rclcpp_lifecycle::State &) override {
     declare_parameter("color_frame_id", "camera_color_frame");
     declare_parameter("depth_frame_id", "camera_depth_frame");
+    // [AI] 2026-11-15: 标称深度内参（Astra S 640x480 典型值），仅当设备**完全
+    // 没有出厂标定**时兜底用（本机这台 getCalibrationCameraParamList()=0 组）。
+    // 没有 fx/fy，depth_image_proc 不出点云、4D 代价层就没有输入。
+    // 精度待棋盘格实标后回填这四个参数（或把 depth_fx 设 0 关掉兜底）。
+    declare_parameter("depth_fx", 570.3);
+    declare_parameter("depth_fy", 570.3);
+    declare_parameter("depth_cx", 320.0);
+    declare_parameter("depth_cy", 240.0);
+    // [AI] 2026-11-15: 深度流最大宽度（0=不限）。Orin Nano 4GB 上
+    // depth_image_proc 把 640x480@30 转点云是单线程 CPU 活，实测只有
+    // 0.6 Hz（一帧 1.5 s）——代价层等于没有输入。默认压到 320（点云量 1/4，
+    // 实测 ~2.5 Hz），换更强板子时调大或设 0。分辨率变化由标称内参按比例
+    // 缩放覆盖（见 makeCameraInfo）。
+    declare_parameter("depth_max_width", 320);
     color_frame_id_ = get_parameter("color_frame_id").as_string();
     depth_frame_id_ = get_parameter("depth_frame_id").as_string();
 
@@ -90,21 +104,46 @@ public:
         else if (supported_depth) depth_cands.push_back(p);
       }
     }
-    if (color_cands.empty() || depth_cands.empty()) {
+    // [AI] 2026-11-15: Astra S 是纯深度相机（无色彩传感器）。原实现要求
+    // color+depth 都存在，深度相机在 configure 就失败；且 activate 里必须
+    // 彩色+深度成对启动，彩色模式匹配失败会把整个流水线停掉（实测日志：
+    // "Match openni video mode failed" → 一帧都不出）。改为深度必需、彩色可选。
+    if (depth_cands.empty()) {
       RCLCPP_ERROR(this->get_logger(),
-                   "No supported color/depth profile (color=%zu depth=%zu); "
+                   "No supported depth profile (color=%zu depth=%zu); "
                    "pipeline will not start.",
                    color_cands.size(), depth_cands.size());
       return CallbackReturn::FAILURE;
     }
+    if (color_cands.empty()) {
+      RCLCPP_INFO(this->get_logger(),
+                  "Depth-only camera (no colour profiles); Astra S path enabled.");
+    }
 
-    // 30 fps first, enumeration order otherwise (stable_sort keeps the rest as-is).
-    const auto prefer_30 = [](const std::shared_ptr<ob::StreamProfile> &a,
-                              const std::shared_ptr<ob::StreamProfile> &b) {
-      return profileFps(a) == 30 && profileFps(b) != 30;
+    // [AI] 30 fps 优先；同帧率下取**最大分辨率**——原来是枚举顺序，实测
+    // 先拿到 160x120（代价层几乎没法用）。stable_sort 保序，失败会回退下一个。
+    const auto prefer_best = [](const std::shared_ptr<ob::StreamProfile> &a,
+                                const std::shared_ptr<ob::StreamProfile> &b) {
+      const bool a30 = profileFps(a) == 30;
+      const bool b30 = profileFps(b) == 30;
+      if (a30 != b30) return a30;
+      return profileWidth(a) * profileHeight(a) > profileWidth(b) * profileHeight(b);
     };
-    std::stable_sort(color_cands.begin(), color_cands.end(), prefer_30);
-    std::stable_sort(depth_cands.begin(), depth_cands.end(), prefer_30);
+    std::stable_sort(color_cands.begin(), color_cands.end(), prefer_best);
+    std::stable_sort(depth_cands.begin(), depth_cands.end(), prefer_best);
+    // [AI] 再按 depth_max_width 把"不超宽"的候选提到前面（组内保持上面的
+    // 30fps/面积顺序）。0 = 不限。见参数注释：Orin Nano 上 640 宽点云太慢。
+    const int64_t max_depth_width = get_parameter("depth_max_width").as_int();
+    if (max_depth_width > 0) {
+      const auto fits_width = [max_depth_width](
+                                  const std::shared_ptr<ob::StreamProfile> &a,
+                                  const std::shared_ptr<ob::StreamProfile> &b) {
+        const bool a_fit = profileWidth(a) <= static_cast<uint32_t>(max_depth_width);
+        const bool b_fit = profileWidth(b) <= static_cast<uint32_t>(max_depth_width);
+        return a_fit && !b_fit;
+      };
+      std::stable_sort(depth_cands.begin(), depth_cands.end(), fits_width);
+    }
     color_cands_ = color_cands;
     depth_cands_ = depth_cands;
     return CallbackReturn::SUCCESS;
@@ -115,8 +154,8 @@ public:
     if (rclcpp_lifecycle::LifecycleNode::on_activate(state) != CallbackReturn::SUCCESS) {
       return CallbackReturn::FAILURE;
     }
-    if (color_cands_.empty() || depth_cands_.empty()) {
-      RCLCPP_ERROR(get_logger(), "activate before configure: no stream profiles cached");
+    if (depth_cands_.empty()) {
+      RCLCPP_ERROR(get_logger(), "activate before configure: no depth profile cached");
       return CallbackReturn::FAILURE;
     }
     const auto color_cands = color_cands_;
@@ -202,6 +241,12 @@ public:
                   "Astra S started: color fmt=%d %ux%u@%ufps, depth fmt=%d %ux%u@%ufps",
                   used_color->format(), profileWidth(used_color), profileHeight(used_color),
                   profileFps(used_color), used_depth->format(), profileWidth(used_depth),
+                  profileHeight(used_depth), profileFps(used_depth));
+    } else if (used_depth) {
+      // [AI] 纯深度相机（Astra S）正常路径，不是降级失败——照常打印实际生效档位。
+      RCLCPP_INFO(this->get_logger(),
+                  "Astra S started: depth fmt=%d %ux%u@%ufps (depth-only)",
+                  used_depth->format(), profileWidth(used_depth),
                   profileHeight(used_depth), profileFps(used_depth));
     }
     return CallbackReturn::SUCCESS;
@@ -436,6 +481,34 @@ private:
       info.r = cached.r;
       info.p = cached.p;
       return info;
+    }
+
+    // [AI] 2026-11-15: 第四层——启动参数里的**标称内参**。本机这台 Astra S
+    // 的出厂标定表是空表（getCalibrationCameraParamList() 返回 0 组），前三层
+    // SDK 回退全部失败；没有 fx/fy 时 depth_image_proc 不出点云。标称值只够
+    // 把点云跑起来，**精度待棋盘格实标后回填 depth_fx/fy/cx/cy**。
+    if (depth) {
+      const double nominal_fx = get_parameter("depth_fx").as_double();
+      const double nominal_fy = get_parameter("depth_fy").as_double();
+      if (nominal_fx > 0.0 && nominal_fy > 0.0) {
+        const double nominal_cx = get_parameter("depth_cx").as_double();
+        const double nominal_cy = get_parameter("depth_cy").as_double();
+        const double s = static_cast<double>(width) / 640.0;
+        OBCameraIntrinsic nominal{};
+        nominal.width = static_cast<int16_t>(width);
+        nominal.height = static_cast<int16_t>(height);
+        nominal.fx = static_cast<float>(nominal_fx * s);
+        nominal.fy = static_cast<float>(nominal_fy * s);
+        nominal.cx = static_cast<float>(nominal_cx * s);
+        nominal.cy = static_cast<float>(nominal_cy * s);
+        OBCameraDistortion no_distortion{};
+        fillCameraInfo(info, nominal, no_distortion);
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 60000,
+                             "Astra depth uses NOMINAL intrinsics for %ux%u "
+                             "(fx=%.1f fy=%.1f cx=%.1f cy=%.1f) — calibration pending",
+                             width, height, nominal.fx, nominal.fy, nominal.cx, nominal.cy);
+        return info;
+      }
     }
 
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 30000,

@@ -69,10 +69,14 @@ def _camera_with_cloud(context, *args, **kwargs):
             package="depth_image_proc",
             executable="point_cloud_xyz_node",
             name="depth_point_cloud",
+            # [AI] 2026-11-15: depth_image_proc 的输入话题是 image_rect/camera_info
+            # （非私有、不带 depth 前缀）。原重映射写 "depth/image_rect"，对根命名
+            # 空间下的节点不生效 → 点云永远为空（实测 node info 订阅 /image_rect）。
+            # 这里直接用节点真实话题名做重映射。
             output="screen",
             remappings=[
-                ("depth/image_rect", "/camera/depth/image_raw"),
-                ("depth/camera_info", "/camera/depth/camera_info"),
+                ("image_rect", "/camera/depth/image_raw"),
+                ("camera_info", "/camera/depth/camera_info"),
                 ("points", "/camera/depth/points"),
             ],
         ),
