@@ -71,6 +71,8 @@
 
 | 文档 | 状态 | 最后更新 |
 |---|---|---|
+| [`design/vision_nav_v1.md`](design/vision_nav_v1.md) | **草案**（未接受，落地前需 ADR） | 2026-11-15 |
+| [`design/vision_nav_v2.md`](design/vision_nav_v2.md) | 已落 ADR-0027（4D 融合全栈；真机未验证） | 2026-11-15 |
 | [`design/brain_arm_tools.md`](design/brain_arm_tools.md) | **草案**（未接受，落地前需 ADR） | 2026-10-17 |
 | [`design/chassis_control.md`](design/chassis_control.md) | **提案**（等 F11/F1 前置闭合） | 2026-10-30 |
 | [`design/grasp_perception.md`](design/grasp_perception.md) | 草案 / 分支实现 | 2026-10-14 |

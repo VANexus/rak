@@ -2,6 +2,28 @@
 
 > 状态：现行 · 最后更新：2026-11-12
 
+更新日期：2026-11-15
+
+## 2026-11-15 增量：4D 融合视觉导航 v2.0（ADR-0027，软件门禁全绿 / 真机未验证）
+
+一组"复用现成库 + 接线 + 门禁"的改动，落在 `src/rak_bringup`，设计见
+`docs/design/vision_nav_v2.md`：
+
+- **EKF 四路**：`config/ekf_4d.yaml`（轮式差分 / rf2o 绝对 / VO 差分 / IMU vyaw），
+  `slam.launch.py ekf_params:=` 透传，默认仍指 v1 的 `ekf.yaml`。
+- **VIO**：`launch/vio.launch.py`（`rtabmap_odom` rgbd|stereo → `/odometry/vio`，无 TF）。
+- **4D 代价层**：`config/nav2_4d.yaml`，`rtabmap_costmap_plugins::VoxelLayer`
+  （局部 decay 5 s / 全局持久），三源 `/scan` + `/camera/depth/points` + `/stereo/points`。
+- **全向寻路**：`SmacPlannerLattice` + 上游 omni 原语；`MPPI` 权重不动。
+- **门禁**：`test_4d_nav_config.py` 8 项离线契约；`scripts/verify_4d_fusion.py` 6 道运行时门
+  （2026-11-15 本机 ALL PASSED：G3 合成障碍标 1549 格、G5 rtabmap VO 出 `/odometry/vio`、
+  G6 `ComputePathToPose` SUCCEEDED 且路径 202 点）。
+
+**实测否掉的**：`spatio_temporal_voxel_layer` 2.5.5 在同一份合成数据上不标记（max_cost=0）；
+`SmacPlannerHybrid` 1.3.13 不接受 `Omni`；rcl 参数解析要求协方差单行 flat + 全浮点。
+
+**未验证**：深度相机/雷达/双目均未上机；EKF 协方差仍是占位值；`/stereo/points` 等双目标定。
+
 更新日期：2026-11-13
 
 ## 2026-11-13 增量：新机器基线与工具链闭合（无功能变更）

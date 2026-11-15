@@ -39,7 +39,93 @@
   依据：`docs/reference/hardware_acceptance.md` 的臂侧门禁、
   `docs/reference/arm_moveit_contract.md` §1。
 
-## P1 — 挡住定量结论
+## P1a — 视觉寻路 v1.0（`docs/design/vision_nav_v1.md`）
+
+已完成（2026-11-15，均有实测）：
+- [x] **感知换 TensorRT**：`rak_road_perception` 去 torch，`roadseg_trt.py` 用 ctypes
+  直连 TRT+libcudart；TwinLiteNet+ Small 384×672 FP16 = 15.9 ms GPU / 25.4 ms 单帧。
+  工具：`scripts/export_twinlite_onnx.py`、`build_roadseg_engine.py`。
+- [x] **A/B 对照**：TwinLiteNet+ 40.3 ms/24.8 FPS、边界锐度 soft/bnd 2.05；
+  LFD-RoadSeg v6 190.8 ms（p50 66.5）/5.2 FPS、12.51。工具 `scripts/compare_roadseg.py`。
+- [x] **前视相机接入**：`/dev/video0` 单目 UVC；`v4l2_camera` 不支持 MJPG，改官方
+  `usb_cam` MJPG 1280×720@30（实测 29.4 Hz / 单核 50.5% / RSS 90 MB）。
+  `launch/camera.launch.py`。
+- [x] **单目标定**：ChArUco 5×7（板型由 0.70 px vs 97 px 残差测出）、24 视角、
+  in-sample 0.401 px / hold-out 0.381 px、fx=844.40 fy=851.46 cx=614.20 cy=401.18。
+  `scripts/calibrate_camera_charuco.py`，产物 `~/.ros/camera_info/front_camera.yaml`。
+- [x] **RTAB-Map 纯定位 + AprilTag 骨架**：apt 装 rtabmap 0.23.13 + apriltag_ros 3.4.0；
+  `launch/localization.launch.py` + 两个 config。干跑确认
+  `Localization mode (Mem/IncrementalMemory=false)`；apriltag 合成图 44/45 帧检出。
+- [x] **Nav2 收口**：`sensors:=camera|map_yaml:=` 旁路；MPPI 加 TwirlingCritic、
+  vy_std 0.08 / wz_std 0.12。
+- [x] **DeepStream/Holoscan 实测**：单相机 29.9 FPS；batch=6 只赚 15%（访存受限）；
+  `nvv4l2decoder` 解 MJPG 失败；Holoscan 无 Python 绑定。
+- [x] **内存预算**：roadseg TRT 节点 625 MB（实测）；含 qwentts 全栈 4.1–5.4 GB > 3.4 GB。
+- [x] **全模型下载齐备**（2026-11-15）：`acoustic/models/` 下 kokoro-int8（207 MB）
+  + streaming-zipformer-zh-14M（78 MB）；`data/models/laya-typed-decisions/` 下
+  safetensors（804 MB）→ BF16 ONNX（807 MB 含 data）→ **TensorRT 引擎 807 MB**
+  （构建 65 s，`trtexec PASSED`）；`test_tensorrt_decider.py` 5 项全过。
+- [x] **全模型高负载实测**（2026-11-15）：八组件同跑（Laya TRT + roadseg TRT +
+  TTS + ASR + Nav2 + rtabmap + apriltag + camera），组件合计 **2990 MB**，
+  整机峰值 **3455/3520 MB**、最低可用 **64 MB**、swap 峰值 **2049 MB**（满）。
+  Laya 单进程 **1616 MB** 是最大单体。**结论：Laya 与全栈同时常驻不可行**，
+  必须按需加载或二选一。Laya TRT 实测 **67.3 ms**，ASR 48–70 ms/句。
+- [x] **语音交互延迟预算实测**（2026-11-15）：唤醒 <50 ms + ASR 48–70 ms/s +
+  端点检测 0.5–1.2 s + Laya 67 ms + 即时层 <100 ms ≈ **1.7 s 首响**（可行）；
+  内容层 kokoro 2.2–2.9 s 首响（**不可行**，ADR-0018 三层结构是唯一达标路径）。
+  依据：§5A.12。
+- [ ] **ASR 部分结果驱动动作**（把 1.2 s 端点等待压到 ~0.3 s）：`asr_node` 边解码
+  边发中间意图，高置信度直接执行、低置信度只播"嗯？"。这是"无感"的关键一步。
+- [ ] **Laya 按需加载**：全栈下 64 MB 可用内存压线，需改为收到决策请求再加载引擎
+  （或与 roadseg 共享 CUDA 上下文）。
+- [x] **全栈高负载实测**（2026-11-15，`scripts/loadtest_full_stack.py`）：usb_cam +
+  roadseg(TRT) + apriltag + rtabmap 纯定位 + Nav2 4 服务器 + kokoro TTS 同跑，
+  Nav2 达 `Managed nodes are active`；组件合计 **2051 MB**，整机峰值 **2869/3520 MB**，
+  最低可用 650 MB，swap 峰值 756 MB（zram 压缩后约 200 MB），TTS RTF 2.31–2.41 稳定。
+  **顺手修掉一个真 bug**：`nav2.launch.py` 的 `sensors:=camera` 分支不启
+  `robot_state_publisher`，导致 `base_link→odom` 缺失、Nav2 生命周期 `Aborting
+  bringup`（整栈看似起来实则全 inactive）。已修。依据：§5A.10。
+
+待做：
+- [ ] **贴 AprilTag 才能重定位**：实测画面里只有 ChArUco 标定板，无 36h11 tag，
+  `/detections` 为空数组。需打印并贴在已知坐标（§3.1c 布设表）。
+- [ ] **rtabmap 首次真机重定位**：判据 = 与 AprilTag PnP 位姿差 <5 cm（静态 30 s）。
+- [ ] **离线建图一次并落盘**（N10_P 雷达 + `slam.launch.py`），存 `data/maps/`，
+  作为 `sensors:=camera map_yaml:=` 的输入。
+- [ ] **MPPI 直道实测**：直道 10 m 往返横向偏差 <5 cm。
+- [ ] **TTS 换 kokoro**（`backend:=sherpa`）：实测 RSS 408 MB（vs qwentts 1.2–1.5 GB），
+  RTF 2.2；TRT/CUDA EP 对 TTS 无收益（见设计 §5A.9）。模型下载
+  `kokoro-int8-multi-lang-v1_1`（147 MB），放 `acoustic/models/`（gitignored）。
+- [ ] **六相机前解决 MJPG GPU 解码**：否则 6×50% CPU ≈ 3 核，第一瓶颈。
+- [ ] **标定质量复核（可选）**：板铺满整帧四角再标，看 k3 是否变有意义。
+
+## P1a-2 — 4D 融合视觉导航 v2.0（`docs/design/vision_nav_v2.md` / ADR-0027）
+
+已完成（2026-11-15，门禁全绿；**真机未验证**）：
+- [x] **EKF 四路融合**：`config/ekf_4d.yaml`（轮式差分 + rf2o 绝对 + VO 差分 + IMU vyaw），
+  `slam.launch.py ekf_params:=` 透传。gtest 等价门禁：`test_4d_nav_config.py` 8 项。
+- [x] **视觉里程计**：`launch/vio.launch.py`（`rtabmap_odom rgbd|stereo` → `/odometry/vio`，
+  `publish_tf: false`）；松耦合 VIO = VO + EKF 融陀螺。
+- [x] **4D 代价层**：`config/nav2_4d.yaml`，`rtabmap_costmap_plugins::VoxelLayer`
+  （局部 `decay=5 s`，全局持久），三源 `/scan` + `/camera/depth/points` + `/stereo/points`。
+  STVL 2.5.5 实测不标记（同数据同场景 0 格），已记入 ADR-0027「被否决/待闭合」。
+- [x] **全向寻路**：`SmacPlannerLattice` + 上游 omni 原语（5 cm/0.5 m），
+  configure 实测 `Using motion model: State Lattice`；MPPI Omni 沿用。
+- [x] **单入口 + 门禁**：`ros2 launch rak_bringup 4d_nav.launch.py`；
+  `scripts/verify_4d_fusion.py` 6 道门全绿（G3 实测标 1549 格、G5 rtabmap VO 出
+  `/odometry/vio`、G6 `ComputePathToPose` SUCCEEDED 202 点），合成传感器 fixture
+  `scripts/fake_4d_sensors.py` + `scripts/fake_vio_sensors.py`。
+
+待做：
+- [ ] **真机首帧**：深度相机 + 雷达同时进体素层（`topic hz` + costmap 标记），判据见 ADR-0027 待闭合 1。
+- [ ] **EKF 协方差标定**：Allan + 直行 2 m，回填 `ekf_4d.yaml`（同 P1b）。
+- [ ] **双目标定 → `/stereo/points`**：`stereo_image_proc` 已装未接线。
+- [ ] **全栈内存实测**：含体素层与 VIO 的 RSS/最低可用内存；超 3.4 GB 就砍全局体素层。
+- [ ] **STVL 重测**：查明不标记原因，通过则换回（OpenVDB 稀疏网格省内存）。
+- [ ] **cuVSLAM 对照**：Isaac ROS 4.6（官方支持 JP7.2 + Jazzy，走 NVIDIA apt + `isaac-ros-cli`）
+  与 rtabmap VO 的 CPU/内存对比。
+
+## P1b — 挡住定量结论
 
 - [ ] **轮径 + lx/ly 实测回填 URDF**（麦轮正解的前提）
   依据：`docs/reference/firmware_capability_spec.md` §4。
@@ -55,7 +141,16 @@
 - [ ] **pitch/roll 符号约定现场核对**（核对前 Jetson 不消费 `0x2031`/`0x2032`）
   依据：`docs/reference/canopen_bitfields.md` §7。
 
-## P2 — 质量升级
+## P2a — 板载 IMU 姿态（下位机 `~/vehical_rak_motion`）
+
+- [ ] **D1 互补滤波 pitch/roll**：陀螺 X/Y 已在 14 字节块内（`app_imu.c:235-245`），
+  加 ~25 行；零偏需顺带标 X/Y。判据：0.5 m/s² 加速与静止对比 ≤1°。
+- [ ] **D2 `imu_evt` 倾斜有效性位**：高加速度/冲击期置位，主机据此决定是否用姿态修正。
+- [ ] **D3 现场符号/零位核对**：水平→0°±0.5°，头下压 10°→pitch ∓10°，左抬 10°→roll ±10°。
+  核对前 Jetson 不得消费 `0x2031`/`0x2032`（`canopen_bitfields.md` §7）。
+  结论回填该文档 + 固件注释。
+
+## P2b — 质量升级
 
 - [ ] **底盘控制升级 C1–C5 按序推进**
   C1 静摩擦前馈机制已随 R76 落地，增益重整定等台架首测。
