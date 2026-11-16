@@ -61,7 +61,6 @@
   <exec_depend>apriltag_ros</exec_depend>
   <exec_depend>v4l2_camera</exec_depend>
   <exec_depend>usb_cam</exec_depend>
-  <exec_depend>image_rotate</exec_depend>
 
   <!-- 底盘 ros2_control 链（原 rak_chassis_bringup） -->
   <exec_depend>controller_manager</exec_depend>

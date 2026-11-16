@@ -463,7 +463,7 @@ B≈65 mm（USB SBS 模块典型基线）、亚像素 Δd=0.25 px：
 | 形态 | **单目**：单帧铺满 1280×720，**不是 SBS 双目** | 抓帧目视 |
 | MJPG | 1280×720@31、1920×1080@30 | `--list-formats-ext` |
 | YUYV | 640×480@30；1280×720 只有 9 fps | 同上 |
-| 颠倒 | 安装上下颠倒，**无 V4L2 flip/rotate 控件** | `--list-ctrls`（20 项全查） |
+| 安装 | 2026-11-16 已**物理装正**；此前为上下颠倒 | 抓帧目视 |
 | 对焦 | **无对焦控件**（固定焦距）；`sharpness` 0–6 可调 | 同上 |
 
 `v4l2_camera` 0.7.3 **不支持 MJPG**（`Current pixel format is not supported yet: MJPG`
@@ -503,10 +503,9 @@ B≈65 mm（USB SBS 模块典型基线）、亚像素 Δd=0.25 px：
 2. `camera_name` 必须匹配驱动推导名（v4l2_camera 会 warn
    `[ax__usb2.0:_ax_usb2.0] does not match`，然后发全零内参）。`usb_cam` 无此限制。
 3. `image_flip_node` **不转发 `camera_info`**：`use_camera_info:=true` 走精确时间
-   同步，两路时间戳对不上就什么都不发；`false` 图像通但 info 依然没有。所以
-   翻转不做在 launch，放在唯一需要「道路在下方」先验的消费者
-   （`roadseg_node` 参数 `rotate_180`，一行 `cv2.rotate`）。AprilTag 与
-   RTAB-Map 旋转无关，不需要翻。
+   同步，两路时间戳对不上就什么都不发；`false` 图像通但 info 依然没有。这也是当初
+   翻转不做在 launch 的原因。**2026-11-16 相机已物理装正**，launch / `roadseg_node`
+   / 标定脚本里的 180° 旋转逻辑已全部删除；物理旋转与软件旋转等价，标定 yaml 继续有效。
 
 **模糊**：不是对焦——没有对焦控件。`sharpness` 扫描 0/2/4/6 = Laplacian
 37/62/99/139，**已设 4**（6 开始掉 marker 检出）。

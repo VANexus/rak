@@ -4,7 +4,7 @@ Runs what the robot actually runs, in one process tree, with a monitor sampling 
 and per-process RSS:
 
   1. usb_cam 1280x720@30 (MJPG)            -- camera driver
-  2. roadseg_node (TensorRT, 384x672)      -- segmentation, rotate_180 on
+  2. roadseg_node (TensorRT, 384x672)      -- segmentation
   3. apriltag_node                         -- fiducial detection
   4. rtabmap (localization mode)           -- visual localization
   5. Nav2 controller/planner/behaviors/bt  -- navigation stack (4 servers)
@@ -214,8 +214,7 @@ def main() -> int:
         "ros2", "run", "rak_road_perception", "roadseg_node", "--ros-args",
         "-p", f"engine_path:={ENGINE}",
         "-p", "input_mode:=ros_image",
-        "-p", "image_topic:=/camera/image_raw",
-        "-p", "rotate_180:=true"], domain, logs / "roadseg.log")
+        "-p", "image_topic:=/camera/image_raw"], domain, logs / "roadseg.log")
     procs["apriltag"] = spawn("apriltag", [
         "ros2", "run", "apriltag_ros", "apriltag_node", "--ros-args",
         "-r", "image_rect:=/camera/image_raw",

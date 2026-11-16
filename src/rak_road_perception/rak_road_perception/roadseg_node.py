@@ -152,7 +152,6 @@ class RoadSegNode(Node):
             "model_width": 672,
             "model_height": 384,
             "road_threshold": 0.40,
-            "rotate_180": False,
             "adaptive_gamma": True,
             "low_light_threshold": 110.0,
             "low_light_gamma": 0.60,
@@ -231,11 +230,6 @@ class RoadSegNode(Node):
             if luminance < float(self.get_parameter("low_light_threshold").value):
                 lut = (np.arange(256, dtype=np.float32) / 255.0) ** gamma * 255.0
                 bgr = cv2.LUT(bgr, lut.astype(np.uint8))
-        if bool(self.get_parameter("rotate_180").value):
-            # The camera is mounted upside down and there is no V4L2 flip control; only
-            # this consumer needs an upright image ("road at the bottom"), so the turn
-            # happens here instead of in a separate flip node that would drop camera_info.
-            bgr = cv2.rotate(bgr, cv2.ROTATE_180)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         rgb = cv2.resize(rgb, (self._width, self._height), interpolation=cv2.INTER_LINEAR)
         normalized = rgb.astype(np.float32) / 255.0

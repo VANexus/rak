@@ -44,24 +44,6 @@ def make_board(args):
     )
 
 
-def orient(gray: np.ndarray, rotate: int) -> np.ndarray:
-    """Rotate the frame so the board is upright before detection.
-
-    The front camera is mounted upside down on this robot (measured 2026-11-15), so the
-    raw frames arrive 180 deg rotated. Calibrating on rotated frames is fine (it only
-    changes the sign convention of the extrinsics), but every consumer -- the
-    segmentation model especially -- expects an upright image, so the calibration and the
-    runtime node must agree on one orientation.
-    """
-    if rotate == 180:
-        return cv2.rotate(gray, cv2.ROTATE_180)
-    if rotate == 90:
-        return cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)
-    if rotate == 270:
-        return cv2.rotate(gray, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    return gray
-
-
 def detect_charuco(gray: np.ndarray, board, dictionary, params):
     corners, ids, _ = cv2_aruco.detectMarkers(gray, dictionary, parameters=params)
     if ids is None or len(ids) < 3:
@@ -241,7 +223,7 @@ def capture(args) -> int:
         ok, frame = cap.read()
         if not ok:
             continue
-        gray = orient(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), args.rotate)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         found = detect_charuco(gray, board, dictionary, params)
         if found[1] is None:
             continue
@@ -325,8 +307,6 @@ def main() -> int:
     ap.add_argument("--square-length", type=float, default=0.0286, help="metres")
     ap.add_argument("--marker-length", type=float, default=0.0214, help="metres")
     ap.add_argument("--dictionary", default="DICT_5X5_50")
-    ap.add_argument("--rotate", type=int, default=180, choices=[0, 90, 180, 270],
-                    help="rotate raw frames before detection (this camera mounts upside down)")
     ap.add_argument("--device", default="0")
     # Calibrate AT the resolution the driver actually publishes: camera_info carries the
     # intrinsics verbatim, so a 1280x720 calibration used on 640x480 frames is simply wrong.

@@ -15,12 +15,8 @@ Measured on this robot (2026-11-15):
     The intrinsics in camera_info are published verbatim -- they are NOT rescaled -- so
     the calibration resolution and the driver resolution must match. Switching to
     `driver:=v4l2` (640x480) requires recalibrating at 640x480.
-  * The camera is mounted UPSIDE DOWN and there is no V4L2 flip control. Frames are
-    published raw (and calibrated raw); the segmentation node rotates internally, because
-    AprilTag and RTAB-Map are rotation-invariant and only the "road is at the bottom"
-    prior cares. `flip:=true` runs the official image_flip_node instead -- but note it
-    does NOT forward camera_info reliably (measured: no /camera/rotated/camera_info with
-    either driver), so consumers would lose intrinsics.
+  * The camera is mounted upright (re-mounted 2026-11-16). Frames are published raw and
+    calibrated raw; nothing downstream rotates or flips them.
   * it is a MONO camera: the frame fills the whole sensor, it is NOT a
     side-by-side stereo pair. Do not point `rak_stereo_driver` at it -- that
     driver splits SBS frames into two eyes and would emit two half-images.
@@ -39,13 +35,6 @@ from launch.conditions import IfCondition
 from launch.substitutions import EqualsSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 
-# The camera is mounted upside down on this robot, and the V4L2 driver exposes no
-# flip control (checked: no hflip/vflip/rotate control on /dev/video0). The official
-# `image_rotate` package's `image_flip_node` does the 180 deg turn on the GPU-free
-# fast path (cv::flip), and the calibration yaml was produced in the FLIPPED frame
-# (`calibrate_camera_charuco.py --rotate 180`), so image and camera_info agree.
-FLIPPED_FRAME = "camera_optical_frame"
-
 
 def generate_launch_description():
     video_device = LaunchConfiguration("video_device")
@@ -53,7 +42,6 @@ def generate_launch_description():
     camera_info_url = LaunchConfiguration("camera_info_url")
     use_sim_time = LaunchConfiguration("use_sim_time")
     driver = LaunchConfiguration("driver")
-    flip = LaunchConfiguration("flip")
     camera_name = LaunchConfiguration("camera_name")
 
     return LaunchDescription([
@@ -82,12 +70,6 @@ def generate_launch_description():
             description="file:///...yaml from camera_calibration. Empty means uncalibrated.",
         ),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
-        DeclareLaunchArgument(
-            "flip",
-            default_value="false",
-            description="run image_flip_node. Off by default: it drops camera_info, and "
-                        "only the segmentation model needs an upright image.",
-        ),
 
         LogInfo(msg="front camera: mono UVC (MJPG). Stereo calibration is NOT needed for v1.0; "
                     "single-camera intrinsics are, or AprilTag/rtabmap cannot give metric poses."),
@@ -129,26 +111,5 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
             }],
             condition=IfCondition(EqualsSubstitution(driver, "v4l2")),
-        ),
-        # Same namespace as the driver so the remaps resolve to the driver's topics:
-        # subscribing to the relative name "image" from the root would land on /image and
-        # silently never receive anything (measured: node alive, zero output).
-        # Output is /camera/rotated/{image,camera_info} -- that is what consumers use.
-        Node(
-            package="image_rotate",
-            executable="image_flip_node",
-            name="camera_flip",
-            namespace="camera",
-            output="screen",
-            parameters=[{
-                "rotation_steps": 2,      # 2 * 90 deg = 180
-                # false: the driver's camera_info stamps do not always match the image
-                # stamps (usb_cam), and the flip node uses an exact-time sync -- with
-                # true it silently produces nothing. Measured 2026-11-15.
-                "use_camera_info": False,
-                "output_frame_id": FLIPPED_FRAME,
-            }],
-            remappings=[("image", "image_raw"), ("camera_info", "camera_info")],
-            condition=IfCondition(EqualsSubstitution(flip, "true")),
         ),
     ])
