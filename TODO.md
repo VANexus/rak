@@ -131,6 +131,39 @@
 - [ ] **cuVSLAM 对照**：Isaac ROS 4.6（官方支持 JP7.2 + Jazzy，走 NVIDIA apt + `isaac-ros-cli`）
   与 rtabmap VO 的 CPU/内存对比。
 
+## P1a-3 — 纯视觉寻线 v1.0 待决策（`docs/design/vision_line_follow_v1.md`）
+
+设计已出（草案，未改代码），实现前必须先拍板下面三件事；未定之前 M1 不开工。
+
+- [ ] **赛道形态：一条可见标线（`guide_line`）还是左右边界（`track_corridor`）？**
+  为什么卡着：这条决定 v1.0 主路径是几何响应（黑帽/顶帽/色度）还是"左右边界成对提取"；
+  两者都没有时几何主路径不成立，必须改学习分割为主，§4.5 与里程碑要重写。
+  决定了会影响：`line_mode` 默认值、扫描线取峰逻辑、`track_width` 是否参与置信度、
+  M1 的录数口径与验收指标。
+  判过：现场录 50 帧确认形态，结论写进设计 §11 Q1 并回填参数。
+  依据：`docs/design/vision_line_follow_v1.md` §4.5.1、§11 Q1。
+
+- [ ] **检测节点是否允许部署到 orin**（源码仍只在本机改，`~/rak` 只是部署副本）
+  为什么卡着：1280×720 bgr8@30 = 663 Mbit/s、mono8 掩码 = 221 Mbit/s，都超过
+  97 Mbit/s 链路；只有把 `line_detect_node` 放 orin、跨机只传约 100 B 的
+  `LineObservation`，带宽预算才成立。否则要么本机收图（链路直接超），
+  要么把控制也搬到 orin（偏离"上层在本机"）。
+  决定了会影响：部署清单、orin 内存/CPU 预算、调试流 `debug_image` 是否允许、
+  M1/M2 的联调方式。
+  判过：确认 orin 可新增一个常驻节点（RSS < 200 MB、CPU < 25% 单核），
+  写入设计 §3.1 并更新部署清单。
+  依据：`docs/design/vision_line_follow_v1.md` §3.1、§3.3、§9.5。
+
+- [ ] **外参标定是否执行**（卷尺 + 地面 5 个控制点，约 30 分钟）
+  为什么卡着：单目 IPM 的比例完全依赖 `height/pitch/roll/x/y`；没标定时 BEV 的
+  1 m 不是 1 m，横向误差与曲率都不可信（俯仰 0.5° 在 2 m 处就是 1.7 cm）。
+  设计规定 `calibrated=false` 时节点拒绝启动，不留"看起来合理"的默认值。
+  决定了会影响：M1 离线回放能否给出定量结论、M3 真机横向 5 cm 验收是否有意义、
+  以及"先跑起来再补标定"这条捷径是否被允许。
+  判过：按 §8.2 完成 5 点标定，`calibrated: true` + 日期 + 方法 + 重投影 RMS < 1.5 cm
+  写入 `data/calib/front_camera_extrinsics.yaml`。
+  依据：`docs/design/vision_line_follow_v1.md` §4.3、§8.2、§11 Q2。
+
 ## P1b — 挡住定量结论
 
 - [ ] **轮径 + lx/ly 实测回填 URDF**（麦轮正解的前提）
