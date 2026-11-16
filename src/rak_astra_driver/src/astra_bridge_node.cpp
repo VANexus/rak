@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -59,9 +60,13 @@ public:
     depth_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/depth/camera_info", rclcpp::SensorDataQoS());
 
     // 设备获取失败（被占用 / 没插）必须是可读的 FAILURE，不是进程消失。
+    // pipe_ 现在按需重建（见 startPipelineAttempt() 上方的注释）：configure 阶段
+    // 建一个只用来枚举能力；activate 阶段第一次尝试可复用这个从未 start 过的
+    // 实例，之后每次失败都会丢弃并重建。
     std::shared_ptr<ob::Device> dev;
     try {
-      dev = pipe_.getDevice();
+      pipe_ = std::make_unique<ob::Pipeline>();
+      dev = pipe_->getDevice();
     } catch (const ob::Error &error) {
       RCLCPP_ERROR(get_logger(), "Astra getDevice failed: %s",
                    error.getMessage() ? error.getMessage() : "ob::Error");
@@ -160,6 +165,9 @@ public:
     }
     const auto color_cands = color_cands_;
     const auto depth_cands = depth_cands_;
+    // 新会话重新探测一次标定能力（上一轮可能因为别的模式失败才留下标记）。
+    color_per_frame_calib_failed_ = false;
+    depth_per_frame_calib_failed_ = false;
 
     const auto frameset_cb = [this](std::shared_ptr<ob::FrameSet> frameset) {
       RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
@@ -183,57 +191,49 @@ public:
       }
     };
 
-    // ob::Error deliberately does NOT derive from std::exception (see
-    // libobsensor/hpp/Error.hpp: standalone class, getMessage() not what()), so a
-    // std::exception-only catch lets it escape, hits std::terminate and kills the
-    // node before any retry can run. Catch it first, then the rest.
-    const auto fail = [this](const std::string &why) {
-      RCLCPP_WARN(this->get_logger(), "pipeline start attempt failed: %s", why.c_str());
-      try { pipe_.stop(); } catch (...) {}
-    };
-
-    // Try every colour candidate against every depth candidate until one starts.
-    // Each attempt builds a fresh ob::Config, and a failed start is torn down
-    // before the next try so the pipeline is not left half-open.
+    // ── DEPTH-ONLY FIRST ───────────────────────────────────────────────────
+    // Order matters. Depth is the only stream this driver must have (it is what
+    // depth_image_proc turns into /camera/depth/points), and colour is optional
+    // (the Astra S exposes no colour profiles at all). Starting colour×depth
+    // first and only degrading afterwards was the reason one bad colour attempt
+    // could poison the whole session: see the pipeline-reuse note below.
     std::shared_ptr<ob::StreamProfile> used_color, used_depth;
+    bool first_attempt = true;  // 复用 configure 阶段那个从未 start 过的实例
     for (const auto &depth_p : depth_cands) {
-      for (const auto &color_p : color_cands) {
-        auto config = std::make_shared<ob::Config>();
-        config->enableStream(depth_p);
-        config->enableStream(color_p);
-        try {
-          pipe_.start(config, frameset_cb);
-          used_color = color_p;
-          used_depth = depth_p;
-          break;
-        } catch (const ob::Error &error) {
-          fail(error.getMessage() ? error.getMessage() : "ob::Error (no message)");
-        } catch (const std::exception &error) {
-          fail(error.what());
-        } catch (...) {
-          fail("unknown exception");
-        }
+      auto config = std::make_shared<ob::Config>();
+      config->enableStream(depth_p);
+      if (startPipelineAttempt(config, frameset_cb, first_attempt)) {
+        used_depth = depth_p;
+        break;
       }
-      if (used_depth) break;
+      first_attempt = false;
     }
 
-    // Depth is what feeds /camera/depth/points; degrade to depth-only rather than
-    // bringing down the whole sensor view if the camera refuses every colour mode.
+    // ── FALLBACK: colour × depth, one fresh pipeline per attempt ───────────
+    // Only reached when every depth-only mode failed. Kept for cameras that
+    // genuinely need the colour stream to be up.
     if (!used_depth) {
-      auto config = std::make_shared<ob::Config>();
-      config->enableStream(depth_cands.front());
-      try {
-        pipe_.start(config, frameset_cb);
-        used_depth = depth_cands.front();
-        RCLCPP_WARN(this->get_logger(), "Astra started DEPTH-ONLY (no colour mode would start)");
-      } catch (const ob::Error &error) {
-        RCLCPP_ERROR(get_logger(), "Astra pipeline failed to start: %s",
-                     error.getMessage() ? error.getMessage() : "ob::Error");
-        return CallbackReturn::FAILURE;
-      } catch (const std::exception &error) {
-        RCLCPP_ERROR(get_logger(), "Astra pipeline failed to start: %s", error.what());
-        return CallbackReturn::FAILURE;
+      for (const auto &depth_p : depth_cands) {
+        for (const auto &color_p : color_cands) {
+          auto config = std::make_shared<ob::Config>();
+          config->enableStream(depth_p);
+          config->enableStream(color_p);
+          if (startPipelineAttempt(config, frameset_cb, false)) {
+            used_depth = depth_p;
+            used_color = color_p;
+            break;
+          }
+        }
+        if (used_depth) break;
       }
+    }
+
+    if (!used_depth) {
+      RCLCPP_ERROR(get_logger(),
+                   "Astra pipeline failed to start: no depth mode would start "
+                   "(%zu depth x %zu colour candidates tried, each on a fresh pipeline)",
+                   depth_cands.size(), color_cands.size());
+      return CallbackReturn::FAILURE;
     }
 
     if (used_color) {
@@ -242,7 +242,7 @@ public:
                   used_color->format(), profileWidth(used_color), profileHeight(used_color),
                   profileFps(used_color), used_depth->format(), profileWidth(used_depth),
                   profileHeight(used_depth), profileFps(used_depth));
-    } else if (used_depth) {
+    } else {
       // [AI] 纯深度相机（Astra S）正常路径，不是降级失败——照常打印实际生效档位。
       RCLCPP_INFO(this->get_logger(),
                   "Astra S started: depth fmt=%d %ux%u@%ufps (depth-only)",
@@ -252,13 +252,80 @@ public:
     return CallbackReturn::SUCCESS;
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // 为什么必须"每次尝试都换一个全新的 ob::Pipeline"——不要改成复用一个实例
+  // 反复 stop()/start()
+  // ───────────────────────────────────────────────────────────────────────
+  // Orbbec SDK 1.10.x 的 Pipeline 不是无状态的。一次失败的 start() 会在
+  // Pipeline/OpenNI 层留下半配置的流状态：内部的 property 表、已协商的
+  // OpenNI video mode、以及 sensor 的 enable 标志都不会被随后的 stop() 完整
+  // 回滚。在同一个实例上继续下一次 start() 时，SDK 会拿上一次残留的 mode 去
+  // 匹配，于是出现"明明之前能起来的档位，现在连 depth-only 都报
+  // OB_SENSOR_COLOR Match openni video mode failed"——实机复现过：连跑
+  // 12–15 次 colour×depth 失败后，同一个 pipe_ 上的 depth-only 也再起不来，
+  // 而同一时刻官方 sample（进程内全新 Pipeline）开深度正常。
+  // 唯一可靠的恢复方式是销毁 Pipeline（连带释放 Device 句柄）再 new 一个：
+  // 这样 SDK 从 Context 重新枚举设备、重新协商模式，状态回到干净起点。
+  // 代价是每次尝试多一次设备枚举（毫秒级），相对"整路传感器挂掉"可以忽略。
+  // 结论：换 Pipeline，不要在旧实例上重试。
+  // reuse_current=true 只允许用在"这个实例从未 start() 过"的第一次尝试上
+  // （configure 阶段建的那个）；一旦发生过失败，就必须走重建路径。
+  bool startPipelineAttempt(
+      const std::shared_ptr<ob::Config> &config,
+      const std::function<void(std::shared_ptr<ob::FrameSet>)> &frameset_cb,
+      bool reuse_current = false) {
+    if (!reuse_current || !pipe_) {
+      // 先销毁旧实例（释放设备），保证新 Pipeline 从干净状态枚举。
+      pipe_.reset();
+    }
+    try {
+      if (!pipe_) pipe_ = std::make_unique<ob::Pipeline>();
+    } catch (const ob::Error &error) {
+      RCLCPP_WARN(get_logger(), "fresh ob::Pipeline() failed: %s",
+                  error.getMessage() ? error.getMessage() : "ob::Error");
+      pipe_.reset();
+      return false;
+    } catch (const std::exception &error) {
+      RCLCPP_WARN(get_logger(), "fresh ob::Pipeline() failed: %s", error.what());
+      pipe_.reset();
+      return false;
+    } catch (...) {
+      RCLCPP_WARN(get_logger(), "fresh ob::Pipeline() failed: unknown exception");
+      pipe_.reset();
+      return false;
+    }
+
+    // ob::Error deliberately does NOT derive from std::exception (see
+    // libobsensor/hpp/Error.hpp: standalone class, getMessage() not what()), so a
+    // std::exception-only catch lets it escape, hits std::terminate and kills the
+    // node before any retry can run. Catch it first, then the rest.
+    try {
+      pipe_->start(config, frameset_cb);
+      return true;
+    } catch (const ob::Error &error) {
+      RCLCPP_WARN(get_logger(), "pipeline start attempt failed: %s",
+                  error.getMessage() ? error.getMessage() : "ob::Error (no message)");
+    } catch (const std::exception &error) {
+      RCLCPP_WARN(get_logger(), "pipeline start attempt failed: %s", error.what());
+    } catch (...) {
+      RCLCPP_WARN(get_logger(), "pipeline start attempt failed: unknown exception");
+    }
+    // 失败的实例本身就是脏的，直接丢掉；下一次尝试会再 new 一个。
+    pipe_.reset();
+    return false;
+  }
+
   CallbackReturn on_deactivate(const rclcpp_lifecycle::State & state) override {
-    try { pipe_.stop(); } catch (...) {}
+    // stop() 之后连 Pipeline 一起销毁：留着一个用过的实例就等于把上面
+    // "不能复用 pipeline" 的坑原样搬到了 deactivate→activate 这条路径上。
+    if (pipe_) { try { pipe_->stop(); } catch (...) {} }
+    pipe_.reset();
     return rclcpp_lifecycle::LifecycleNode::on_deactivate(state);
   }
 
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override {
-    try { pipe_.stop(); } catch (...) {}
+    if (pipe_) { try { pipe_->stop(); } catch (...) {} }
+    pipe_.reset();
     color_cands_.clear();
     depth_cands_.clear();
     color_pub_.reset();
@@ -271,7 +338,8 @@ public:
   // noexcept by language: an ob::Error escaping here would std::terminate the
   // process during teardown instead of just failing to release the device.
   ~AstraBridgeNode() noexcept {
-    try { pipe_.stop(); } catch (...) {}
+    if (pipe_) { try { pipe_->stop(); } catch (...) {} }
+    pipe_.reset();
   }
 
 private:
@@ -311,6 +379,9 @@ private:
   // table. Per-frame and Pipeline lookups both resolve by matching the running
   // profile, which is exactly what fails in DEPTH-ONLY; the stored table is
   // read directly instead.
+  // 每帧标定查询失败后不再重试（见 makeCameraInfo）；每次 activate 重置。
+  bool color_per_frame_calib_failed_ = false;
+  bool depth_per_frame_calib_failed_ = false;
   bool color_device_calib_ready_ = false;
   bool color_device_calib_tried_ = false;
   sensor_msgs::msg::CameraInfo color_device_calib_;
@@ -360,24 +431,38 @@ private:
     // factory depth calibration, and that is enough for depth_image_proc to turn
     // the depth image into /camera/depth/points. Without this fallback the point
     // cloud display stays empty for the whole session.
-    try {
-      auto profile = videoProfile(frame);
-      if (profile) {
-        const auto intrinsic = profile->getIntrinsic();
-        if (usableIntrinsic(intrinsic, width, height)) {
-          fillCameraInfo(info, intrinsic, profile->getDistortion());
-          return info;
+    // 一旦这一层失败就**不再重试**。DEPTH-ONLY 下 getIntrinsic() 每帧都会抛
+    // ob::Error，而且 SDK 自己在抛之前先打一行 "Can not find matched camera
+    // param!"（不受 RCLCPP 节流控制）。30 fps 下就是每秒 30 行刷屏 + 30 次异常
+    // 开销。标定能力是设备/模式的属性，不会在会话中途变好，问一次就够。
+    bool &per_frame_calib_failed =
+        depth ? depth_per_frame_calib_failed_ : color_per_frame_calib_failed_;
+    if (!per_frame_calib_failed) {
+      try {
+        auto profile = videoProfile(frame);
+        if (profile) {
+          const auto intrinsic = profile->getIntrinsic();
+          if (usableIntrinsic(intrinsic, width, height)) {
+            fillCameraInfo(info, intrinsic, profile->getDistortion());
+            return info;
+          }
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000,
+                               "Astra per-frame intrinsics missing or resolution-mismatched; "
+                               "falling back to pipeline calibration");
         }
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000,
-                             "Astra per-frame intrinsics missing or resolution-mismatched; "
-                             "falling back to pipeline calibration");
+      } catch (const ob::Error &) {
+        // Expected in DEPTH-ONLY. The pipeline-level lookup below still works.
+        per_frame_calib_failed = true;
+        RCLCPP_INFO(get_logger(),
+                    "Astra has no per-frame calibration for the running mode; "
+                    "using pipeline/stored/nominal calibration from here on");
       }
-    } catch (const ob::Error &) {
-      // Expected in DEPTH-ONLY. The pipeline-level lookup below still works.
     }
 
-    try {
-      const auto param = pipe_.getCameraParam();
+    // `if (cond) try { ... } catch { ... }` 是合法语句：Pipeline 已随 deactivate
+    // 释放时整层跳过，落到下面的设备标定表 / 标称内参兜底。
+    if (pipe_) try {
+      const auto param = pipe_->getCameraParam();
       const auto &intrinsic = depth ? param.depthIntrinsic : param.rgbIntrinsic;
       const auto &distortion = depth ? param.depthDistortion : param.rgbDistortion;
       // The factory entry is stored at the sensor's native resolution while the
@@ -436,7 +521,7 @@ private:
     if (!tried) {
       tried = true;
       try {
-        auto table = pipe_.getDevice()->getCalibrationCameraParamList();
+        auto table = pipe_->getDevice()->getCalibrationCameraParamList();
         if (table) {
           const uint32_t groups = table->count();
           RCLCPP_INFO(get_logger(), "Astra stored calibration table: %u group(s)", groups);
@@ -639,7 +724,9 @@ private:
   std::string color_frame_id_;
   std::string depth_frame_id_;
   ob::FormatConvertFilter color_converter_;
-  ob::Pipeline pipe_;
+  // unique_ptr 而不是值成员：每次启动尝试都要丢弃旧实例、重建新实例，
+  // 原因见 startOnFreshPipeline() 上方的长注释。
+  std::unique_ptr<ob::Pipeline> pipe_;
 };
 
 // 组件注册: 供 component_container 以 "AstraBridgeNode" 加载 (L2, 2026-10-14)。
