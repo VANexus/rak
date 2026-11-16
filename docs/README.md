@@ -33,6 +33,7 @@
 
 | 文档 | 状态 | 最后更新 |
 |---|---|---|
+| [`tutorials/onboarding.md`](tutorials/onboarding.md) | 现行（新队友：模型网关 / 工具配置 / 环境 / 基础设施地图） | 2026-11-16 |
 | [`tutorials/construction.md`](tutorials/construction.md) | 现行（装配顺序 + 部署清单） | 2026-10-14 |
 
 **How-to**
