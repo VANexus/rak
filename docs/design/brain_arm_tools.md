@@ -44,9 +44,12 @@ S1 保持"场景文本 → 7 类策略标签"的快路径位：它对臂/工具�
 **D2 — 单一提案缝；消费这条缝的不是控制台，是 agent 循环本身。**
 所有主动动作是一个版本化提案契约（§3）。工具的消费者是**像 Claude Code 一样的内部循环**：
 LLM 以 function-calling 调菜单（JSON Schema 即工具定义），提案出、结果回灌上下文、循环继续。
-"操作台"就是对话（语音进/出 + 开发台文本），**不是 CLI，也不是 MCP 之类的外部控制面**（§3.1）。
-提案 source 二值：`harness`（循环，含操作员在环的监督会话）与 `operator`（人工直接注入，
-仅调试/commissioning）。brain 依旧只发 `/brain/decision`（ADR-0010：决策是上下文，不是命令）；
+"操作台"就是对话（语音进/出 + 开发台文本），**不是 CLI**。跨进程 MCP 工具面由
+**ADR-0028** 单独接受（2026-11-16 修订 D2 的"不设 MCP"部分）：它是同一条提案缝的
+第三个客户端，不是第二个执行器。
+提案 source 三值：`harness`（循环，含操作员在环的监督会话）、`operator`（人工直接注入，
+仅调试/commissioning）、`mcp`（跨进程 MCP 客户端，ADR-0028；真实身份写 `requested_by` 进审计）。
+brain 依旧只发 `/brain/decision`（ADR-0010：决策是上下文，不是命令）；
 执行侧只有一个节点 `rak_tool_executor`（新包，§10）。
 
 **D3 — 冻结契约一律不改，新动作用新消息。**
@@ -115,7 +118,9 @@ string detail_json                # 机器读细节：轨迹 id、耗时、终�
 
 ### 3.1 消费方式：agentic loop——工具即手，不是给外面开控制台
 
-本设计不设 CLI 操作台、不设 MCP 之类的外部控制面。控制面是**机器人自己的循环**，
+本设计不设 CLI 操作台。控制面是**机器人自己的循环**；跨进程 MCP 工具面是 ADR-0028
+接受的第二个客户端（`src/rak_mcp`），它只消费同一条提案缝（`/tool_proposals` +
+`/tool_results`），权限/护栏/审计仍只在 `rak_tool_executor` 里执行，
 和 Claude Code 调 Read/Write/Bash 是同一种结构，只是"世界"从文件系统换成了硬件：
 
 ```
@@ -185,6 +190,12 @@ SDK；下表"逐条对应"里的权限层/审计都由 ROS 侧落地。P1 落地
 | `arm.home` | `speed_scale` | 同上（Home=`[0, 3.9270, 4.7124, 0, 0, 0]` rad，契约 §1） | motion_free | 同上 | 同上 | 是 |
 | `gripper.set` | `position`（0…1） | `gripper_controller` 话题 | motion_on_object | **硬件门**：无物理通道期间恒 `rejected`（原因明示） | n/a（无反馈） | 语义上是 |
 | `scene.scan` | `degrees` | （P4：WBC 底盘自转） | motion_free | **推迟**：底盘单写者冲突未解 | — | 是 |
+| `query.chassis_state` | — | `/joint_states` 四轮 + `mecanum_drive_controller` odometry | read | — | 即时 | n/a |
+| `chassis.drive` | `vx_mps`/`vy_mps`（≤0.30）、`wz_rps`（≤1.20）、`duration_s`（0.05…3.0，必填） | `/mecanum_drive_controller/reference` @20 Hz | motion_free | `allow_motion` 已开；**Nav2 不在场**（互锁，ADR-0028） | 到点自动置零；让出时置零 | 是 |
+| `chassis.stop` | — | 同上，只写零 | read（绕过 `allow_motion`，逐次审计） | — | 即时 | 是 |
+
+> 菜单的**权威清单**是 `rak_tool_executor/tool_registry.py`（`tools/list` 与 MCP 面同源）；
+> 本表是人读视图，改工具请两边一起对。
 
 **显式禁止**（提案即 `rejected` 并审计）：`estop`、`motion_enable`（两者都是 operator_only 硬件门，不进菜单）、任何速度/关节直写、任何标定参数写（`wheel_sign` 等）。
 
@@ -298,8 +309,9 @@ motion 级提案必然触发确认、确认状态入 `detail_json` 与语料；L
 8. **loop 的 LLM 供应与延迟**：单环 12–30 s（与臂动作同量级，可接受），但断网/供应商故障时
    loop 必须静默降级——不再产生新提案，已确认的运动走完，`guard()`/S1 路径完全独立不受影响
    （P1 验收项）。密钥只在环境变量（ANTHROPIC_API_KEY），任何配置文件不得落键。
-9. **无外部控制面是设计决定**：不接 rosbridge/MCP 之类给外部客户端的通用控制桥；台架需要看图
-   用 Foxglove 或 `ros2 topic echo`。若将来要推翻（例如远程遥操作需求），需单独 ADR 并先定鉴权。
+9. **不接通用远程控制桥**：不接 rosbridge 之类给外部客户端的无鉴权控制桥；台架需要看图
+   用 Foxglove 或 `ros2 topic echo`。**跨进程 MCP 工具面已由 ADR-0028 接受**（stdio、
+    本地进程、复用提案缝与同一套护栏），其余远程遥操作需求仍需单独 ADR 并先定鉴权。
 10. **DeepSeek Anthropic 兼容端点的 tool_use 支持需先探针**（P1 第一件事）：最小验证 = 一条
     工具定义 + 一次 tool_use 往返 + `tool_result` 回灌；不通过则 loop 传输层切 SiliconFlow
     （OpenAI 兼容格式，消息形状相同，loop 本体不动——D7 的分层就是为这个）。

@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<!--
+  台架专用的最小底盘模型：四个轮 + ros2_control mock 硬件。
+
+  它只用来在没有 can0 的机器上验证「工具面下发速度 → 控制器 → 读回」这条链路；
+  轮几何、控制器参数、轮序都不在这里定义 —— 控制器读的是
+  share/rak_bringup/config/chassis_controllers.yaml（与实机同一份）。
+-->
+<robot name="rak_bench_mock">
+  <link name="base_link"/>
+
+  <link name="front_left_wheel"/>
+  <joint name="front_left_wheel" type="continuous">
+    <parent link="base_link"/>
+    <child link="front_left_wheel"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <link name="front_right_wheel"/>
+  <joint name="front_right_wheel" type="continuous">
+    <parent link="base_link"/>
+    <child link="front_right_wheel"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <link name="rear_left_wheel"/>
+  <joint name="rear_left_wheel" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_left_wheel"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <link name="rear_right_wheel"/>
+  <joint name="rear_right_wheel" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_right_wheel"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <ros2_control name="MockChassis" type="system">
+    <hardware>
+      <plugin>mock_components/GenericSystem</plugin>
+    </hardware>
+    <joint name="front_left_wheel">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="front_right_wheel">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rear_left_wheel">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rear_right_wheel">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+</robot>

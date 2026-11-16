@@ -17,6 +17,8 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <!-- 限速单一数值来源：chassis_limits（见 chassis_key_test.py 注释） -->
+  <exec_depend>rak_tool_executor</exec_depend>
   <test_depend>python3-pytest</test_depend>
 
   <export>

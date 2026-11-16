@@ -37,8 +37,12 @@ Read these before changing behavior — they record decisions the code does not 
 - `docs/adr/0022-jetson-canopen-contract-layer.md` — how the **Jetson** side binds to CANopen v5: protocol stack = lely-core (ADR-0021), this repo only *derives* COB-IDs / PDO layout / rates / quantization from the MCU SSOT (`src/rak_canopen/`) and gate-checks that v4 and v5 never share a bus.
 - `docs/reference/hardware_acceptance.md` — gates that must pass before any physical base/arm test.
 - `docs/design/brain_arm_tools.md` — **DESIGN DRAFT** (2026-10-15, not accepted): tool-proposal
-  contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption (no CLI/MCP external
-  control surface), phasing P0–P5. Needs an ADR before implementation.
+  contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption (no CLI; the
+  cross-process MCP surface is separately accepted by ADR-0028, same proposal seam), phasing P0–P5.
+  Needs an ADR before implementation.
+- `docs/adr/0028-mcp-tool-surface.md` — **accepted**: `src/rak_mcp` exposes the tool registry over
+  standard MCP (stdio JSON-RPC); it is a third *client* of `/tool_proposals`, never a second
+  executor, and holds no speed limit / safety constant of its own.
 - `docs/explanation/migration_2026-10.md` — the 2026-10-04 unified `rak_` package rename (old name → new name table).
 - `TODO.md` — prioritized roadmap (P0–P3). Tasks only; rationale lives in the ADRs.
 - `docs/README.md` — docs index + writing rules (Diátaxis layout, status line, numbering).
@@ -99,8 +103,8 @@ owned packages.
   from the design draft below — that loop itself still **needs its ADR** before it is considered
   accepted.
   The **DESIGN DRAFT** for the brain↔arm/tools operation layer (versioned tool-proposal
-  contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption — no CLI/MCP external
-  control surface, phasing P0–P5) is
+  contract, pinocchio-IK arm chain, tool menu, agentic-loop consumption — no CLI external
+  control surface; the MCP one is ADR-0028, phasing P0–P5) is
   `docs/design/brain_arm_tools.md` (2026-10-15, **not accepted** — needs an ADR; do not
   implement it as if it were one).
 - ADR-0007's target — whole robot on `ros2_control`, host-side mecanum IK — is **partially
@@ -181,7 +185,10 @@ every one has a real responsibility:
 - `src/rak_harness`: Jev↔executor arbitration seam + voice dialogue loop (ADR-0010) —
   advisory proposals only, never velocity or joint commands.
 - `src/rak_tool_executor`: the single deterministic executor for the versioned tool-proposal
-  contract (`docs/design/brain_arm_tools.md`, still a DESIGN DRAFT).
+  contract (`docs/design/brain_arm_tools.md`, still a DESIGN DRAFT). Owns the only motion gates
+  (`allow_motion`, chassis single-writer interlock) and the audit trail.
+- `src/rak_mcp`: standard MCP (stdio JSON-RPC 2.0) surface over the **same** registry — tools,
+  schema validation and timeouts are imported from `rak_tool_executor`, never copied (ADR-0028).
 - `src/rak_task_executor`: sole owner of text-navigation task and Nav2 goal lifecycle;
   depends on `rak_intent`, never on `rak_agent`.
 - `src/rak_intent`: shared versioned text→intent contract (stdlib-only at import time);
@@ -709,22 +716,19 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   numerics within bf16, argmax identical, same `Decision` contract) is recorded in
   `docs/how-to/laya_tensorrt_runbook.md` §Acceptance and pinned by
   `src/rak_agent/test/test_tensorrt_decider.py`; a *new* engine needs that pass again.
-- **The left wheels (FL/RL) are wired inverted — measured 2026-10-14.** `DRIVE_CMD`
-  `[++++]` (all four commanded identical, i.e. what a straight line looks like on the
-  wire) makes the left pair roll backward and the right pair forward, so the base spins in
-  place. Signature: `W`/`S` become rotation, `Q`/`E` become forward/backward, and `A`/`D`
-  cancel all three DOF at once (wheels spin, body does not move). It is **not** an ABCD
-  port permutation — `[++++]` maps to itself under any permutation, so only a sign flip
-  can explain it; do not go hunting in the firmware port table. The correction is the
-  URDF per-joint `sign` parameter in `src/rak_description/urdf/rak_chassis.urdf.xacro`
-  (defaults `-1 1 -1 1` via `wheel_sign_fl/fr/rl/rr`), applied by the CANopen bridge
-  (`rak_chassis/src/canopen_bridge.cpp`), which negates that wheel's command **and**
-  feedback together so the closed loop stays self-consistent and ROS's
-  "positive = rolling forward" becomes true. Override it on
-  `chassis_bringup.launch.py wheel_sign:="..."` to A/B without rebuilding. **v5 未实测**：
-  该极性是 v4 时代在真车上量的，CANopen 链路上的轮序/符号要等首帧再核一次
-  （`canopen_contract.yaml` 已记 [FL,FR,RL,RR] ↔ W1..W4）。Re-calibrate after any wheel,
-  motor or encoder change.
+- **Wheel polarity: the firmware owns it — measured again 2026-11-16.** The 2026-10-14
+  conclusion ("left pair FL/RL wired inverted, fix it host-side with `wheel_sign=-1 1 -1 1`")
+  is **void**. Two-wheel visual re-test showed the real grouping is front-pair vs rear-pair,
+  not left vs right, so the firmware directive table
+  (`vehical_rak_motion/Core/Inc/wheel_config.h`, `WHEEL_FWD_DIR_LIST`) is now all `+1`
+  and the host must **not** stack a second sign on top. URDF defaults
+  (`src/rak_description/urdf/rak_chassis.urdf.xacro`) and
+  `chassis_bringup.launch.py wheel_sign:=` therefore default to `1 1 1 1`; the per-joint
+  `sign` mechanism still exists (negates command **and** feedback together, keeping the
+  loop self-consistent), but only as an override after a re-wiring, with the physical
+  authority staying in `wheel_config.h`. `canopen_contract.yaml` records
+  `[FL,FR,RL,RR] ↔ W1..W4` and points at the firmware for values — do not restate the
+  numbers in a third place. Re-calibrate after any wheel, motor or encoder change.
 - **历史坑，别再复活**：v4 时代 `read()` 曾把 `fault_bitmap` 里 `cmd_stale`（bit3）也当反馈否决，
   自锁成"控制器没激活 → 死区 → read 报错 → CM 停用硬件"。ADR-0017 定的是"只对真正的故障位否决"，
   这条原则在 v5 桥里延续成：**每块板自己的反馈超时才会 ERROR**，`cmd_seq`/`cmd_flags` 活性由 MCU

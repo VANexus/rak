@@ -24,8 +24,12 @@ from rclpy.qos import QoSProfile
 
 KEY_STEP_LIN = 0.05    # m/s 每按一次步长
 KEY_STEP_ANG = 0.25    # rad/s
-MAX_LIN = 0.30         # m/s 上限(未标定前保持保守)
-MAX_ANG = 1.20         # rad/s
+# [AI] 限速不在这里定义：唯一数值来源 = rak_tool_executor.chassis_limits
+# （工具表 schema、执行器 clamp、本 TUI 共用一份，避免三处漂移）。
+from rak_tool_executor.chassis_limits import (  # noqa: E402
+    MAX_ANGULAR_RPS as MAX_ANG,
+    MAX_LINEAR_MPS as MAX_LIN,
+)
 
 
 def clamp(v, lim):

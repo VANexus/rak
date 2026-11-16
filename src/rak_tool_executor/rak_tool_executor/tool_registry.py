@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import chassis_limits
+
 # Safety classes (design docs/brain_arm_tools_design.md section 4):
 #   read/speak        -> loop auto-approves
 #   motion_free       -> operator confirmation required before proposing
@@ -30,6 +32,8 @@ class ToolSpec:
     status: str  # implemented | unimplemented | deferred
     hint: str = ""  # reason when not implemented, guidance for the LLM
     deprecated: bool = field(default=False)
+    # 默认超时：提案到终态结果的等待上限。MCP 层直接用它，不另立一张表。
+    timeout_s: float = field(default=30.0)
 
 
 _NUM = {"type": "number"}
@@ -57,6 +61,17 @@ TOOLS: tuple[ToolSpec, ...] = (
         args_schema={"type": "object", "properties": {}, "required": []},
         safety=SAFETY_READ,
         status="implemented",
+    ),
+    ToolSpec(
+        name="query.chassis_state",
+        description=(
+            "读取底盘状态：四轮实测位置/速度（/joint_states）与里程计位姿/速度"
+            "（mecanum_drive_controller odometry）。运动后用它确认车真的动了。"
+        ),
+        args_schema={"type": "object", "properties": {}, "required": []},
+        safety=SAFETY_READ,
+        status="implemented",
+        timeout_s=5.0,
     ),
     ToolSpec(
         name="task.goto",
@@ -91,6 +106,47 @@ TOOLS: tuple[ToolSpec, ...] = (
         args_schema={"type": "object", "properties": {}, "required": []},
         safety=SAFETY_READ,
         status="implemented",
+    ),
+    ToolSpec(
+        name="chassis.drive",
+        description=(
+            "底盘按机体坐标系速度行驶一段固定时长后自动置零停车。"
+            "vx 前进为正 (m/s)、vy 左为正 (m/s)、wz 逆时针为正 (rad/s)；"
+            f"上限 |vx|,|vy|≤{chassis_limits.MAX_LINEAR_MPS} m/s、"
+            f"|wz|≤{chassis_limits.MAX_ANGULAR_RPS} rad/s，"
+            f"时长 0.05..{chassis_limits.MAX_DURATION_S} s —— 不存在无限期运动。"
+            "Nav2 在场上时会被底盘单写者互锁拒绝（结构化返回 nav2_active）。"
+        ),
+        args_schema={
+            "type": "object",
+            "properties": {
+                "vx_mps": dict(_NUM, minimum=-chassis_limits.MAX_LINEAR_MPS,
+                               maximum=chassis_limits.MAX_LINEAR_MPS,
+                               description="前进为正, m/s"),
+                "vy_mps": dict(_NUM, minimum=-chassis_limits.MAX_LINEAR_MPS,
+                               maximum=chassis_limits.MAX_LINEAR_MPS,
+                               description="向左为正, m/s"),
+                "wz_rps": dict(_NUM, minimum=-chassis_limits.MAX_ANGULAR_RPS,
+                               maximum=chassis_limits.MAX_ANGULAR_RPS,
+                               description="逆时针为正, rad/s"),
+                "duration_s": dict(_NUM, minimum=chassis_limits.MIN_DURATION_S,
+                                   maximum=chassis_limits.MAX_DURATION_S,
+                                   description="持续时长, s；到点置零"),
+            },
+            "required": ["duration_s"],
+        },
+        safety=SAFETY_MOTION,
+        status="implemented",
+        timeout_s=chassis_limits.MAX_DURATION_S + 5.0,
+    ),
+    ToolSpec(
+        name="chassis.stop",
+        description="立即把底盘目标速度置零（只写零，不产生任何运动）。",
+        args_schema={"type": "object", "properties": {}, "required": []},
+        # 只写零目标、永不产生位移，因此按只读级自动放行：越急停越不该卡在确认上。
+        safety=SAFETY_READ,
+        status="implemented",
+        timeout_s=5.0,
     ),
     ToolSpec(
         name="arm.home",

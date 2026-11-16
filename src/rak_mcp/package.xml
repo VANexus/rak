@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rak_mcp</name>
+  <version>0.1.0</version>
+  <description>标准 MCP（JSON-RPC 2.0 / stdio）工具面：把 rak_tool_executor 的工具表暴露给外部智能体与客户端。</description>
+  <maintainer email="xrak@todo.todo">xrak</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>rak_interfaces</depend>
+  <!-- 工具表 / 参数校验 / 速度上限的唯一来源，本包不复制任何一份 -->
+  <depend>rak_tool_executor</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>ros2controlcli</exec_depend>
+  <!-- 台架 launch 的生命周期写法与 task.launch.py 同一份助手 -->
+  <exec_depend>rak_orchestration</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
