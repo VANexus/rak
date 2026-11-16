@@ -36,7 +36,7 @@ from .stats import Window
 WINDOW = 200
 #: wheel 关节名子串（chassis_controllers.yaml：front/rear_left/right_wheel）
 WHEEL_STEM = "wheel"
-#: 四轮顺序规范（与 chassis_bringup wheel_sign 参数一致）：FL FR RL RR
+#: 四轮顺序规范（与固件 wheel_config.h 的轮序一致）：FL FR RL RR
 _WHEEL_ORDER = (
     ("front_left", "FL"), ("front_right", "FR"),
     ("rear_left", "RL"), ("rear_right", "RR"),
@@ -72,7 +72,8 @@ class SlipWatchNode(ManagedNode):
         gate = bool(self.declare("gate_enabled", False))
         self._imu_max_age_s = imu_age * 1e-3
         self._gate_enabled = gate
-        # 权重符号未现场核对（CAN-BRINGUP §7.1）——全局翻转不影响 |residual| 判据
+        # yaw 贡献权重（左 -1 / 右 +1），对应固件 wheel_config.h 的 WHEEL_YAW_DIR_LIST；
+        # 与前进方向表解耦。全局翻转不影响 |residual| 判据。
         weights = self.declare("wheel_weights", "[-1.0, 1.0, -1.0, 1.0]")
         import json
         try:

@@ -20,6 +20,8 @@ docs/status/canopen_vcan_2026-11-14.md）。真机：can_interface:=can0（默�
   ros2 launch rak_bringup chassis_bringup.launch.py
   ros2 launch rak_bringup chassis_bringup.launch.py allow_motion:=true
   ros2 launch rak_bringup chassis_bringup.launch.py arm_motion_writer:=wbc
+  # 主站跑在物理连 can0 的另一台机器（本机无 CAN 口）：
+  ros2 launch rak_bringup chassis_bringup.launch.py canopen_container:=external
 """
 
 import tempfile
@@ -49,6 +51,10 @@ def _launch_setup(context, *args, **kwargs):
     master_config = config("master_config")
     urdf_path = config("urdf")
     slaves = config("slaves")
+    container_mode = config("canopen_container")
+    if container_mode not in ("spawn", "external"):
+        raise RuntimeError(
+            f"canopen_container 必须是 spawn|external，得到 {container_mode!r}")
     if slaves not in ("both", "chassis", "arm"):
         raise RuntimeError(f"slaves 必须是 both|chassis|arm，得到 {slaves!r}")
 
@@ -75,42 +81,49 @@ def _launch_setup(context, *args, **kwargs):
     #    传从站 EDS 会 Boot Timeout 后 abort；
     #  - 从站 dcf 必须是相对名，dcf_path 是它们的父目录 → bus.yaml 里的
     #    @BUS_CONFIG_PATH@ 在这里替换成安装态 config 目录。
-    canopen_config = canopen_share + "/config"
-    bus_text = Path(canopen_config + "/bus.yaml").read_text(encoding="utf-8")
-    bus_text = bus_text.replace("@BUS_CONFIG_PATH@", canopen_config)
-    # 从站裁剪（slaves:=chassis|arm|both）：单板联调时把另一台从站从 bus.yaml 摘掉。
-    # 不做裁剪就必须两台都在线 —— 缺席的那台会 Boot Timeout，容器直接 abort（上游行为）。
-    if slaves != "both":
-        sections, current, key = [], [], None
-        for line in bus_text.splitlines(keepends=True):
-            if line and not line[0].isspace() and not line.startswith("#"):
-                if current:
-                    sections.append((key, current))
-                current, key = [line], line.split(":")[0].strip()
-            else:
-                current.append(line)
-        if current:
-            sections.append((key, current))
-        keep_keys = {"options", "master", slaves}
-        bus_text = "".join("".join(lines) for k, lines in sections if k in keep_keys)
-    bus_file = tempfile.NamedTemporaryFile(
-        mode="w", prefix="rak_canopen_bus_", suffix=".yaml", delete=False)
-    bus_file.write(bus_text)
-    bus_file.close()
+    # canopen_container:=external 时**不在本机起**这个容器：主站必须待在物理连着
+    # can0 的那台（orin），本机只跑 controller_manager 与控制器；两侧经
+    # ros2_canopen proxy driver 的 `<driver>/rpdo|tpdo` 话题跨 DDS 对接，不新增协议层。
+    device_container = None
+    if container_mode == "spawn":
+        canopen_config = canopen_share + "/config"
+        bus_text = Path(canopen_config + "/bus.yaml").read_text(encoding="utf-8")
+        bus_text = bus_text.replace("@BUS_CONFIG_PATH@", canopen_config)
+        # 从站裁剪（slaves:=chassis|arm|both）：单板联调时把另一台从站从 bus.yaml 摘掉。
+        # 不做裁剪就必须两台都在线 —— 缺席的那台会 Boot Timeout，容器直接 abort（上游行为）。
+        if slaves != "both":
+            sections, current, key = [], [], None
+            for line in bus_text.splitlines(keepends=True):
+                if line and not line[0].isspace() and not line.startswith("#"):
+                    if current:
+                        sections.append((key, current))
+                    current, key = [line], line.split(":")[0].strip()
+                else:
+                    current.append(line)
+            if current:
+                sections.append((key, current))
+            keep_keys = {"options", "master", slaves}
+            bus_text = "".join("".join(lines) for k, lines in sections if k in keep_keys)
+        bus_file = tempfile.NamedTemporaryFile(
+            mode="w", prefix="rak_canopen_bus_", suffix=".yaml", delete=False)
+        bus_file.write(bus_text)
+        bus_file.close()
 
-    container_params = {
-        "bus_config": bus_file.name,
-        "can_interface_name": can_interface,
-        "master_config": master_config,
-    }
-    device_container = Node(
-        package="canopen_core",
-        executable="device_container_node",
-        name="device_container",
-        namespace="",
-        output="screen",
-        parameters=[container_params],
-    )
+        container_params = {
+            "bus_config": bus_file.name,
+            "can_interface_name": can_interface,
+            "master_config": master_config,
+        }
+        device_container = Node(
+            package="canopen_core",
+            executable="device_container_node",
+            name="device_container",
+            namespace="",
+            output="screen",
+            parameters=[container_params],
+        )
+
+    device_nodes = [device_container] if device_container is not None else []
 
     nodes = [
         Node(
@@ -120,7 +133,7 @@ def _launch_setup(context, *args, **kwargs):
             output="screen",
             parameters=[{"robot_description": robot_description}],
         ),
-        device_container,
+        *device_nodes,
         # bus.yaml 用**非 lifecycle** 驱动（MasterDriver / ProxyDriver）：容器在
         # init() 里自己 configure+activate 主站与各驱动，没有 `/lifecycle_manager`
         # 节点，也就不再需要 6 s/9 s 定时敲 `ros2 lifecycle set`（2026-11-15 移除：
@@ -200,6 +213,11 @@ def generate_launch_description():
         DeclareLaunchArgument("can_interface", default_value="can0",
                               description="SocketCAN 接口；台架用 vcan0"),
         DeclareLaunchArgument(
+            "canopen_container", default_value="spawn",
+            description="spawn=本机起 device_container（需本机有 CAN 口）；"
+                        "external=主站已在物理连 can0 的另一台机器上跑"
+                        "（跨机经 <driver>/rpdo|tpdo 话题对接）"),
+        DeclareLaunchArgument(
             "master_config",
             default_value=get_package_share_directory("rak_canopen") + "/config/master.dcf",
             description="ros2_canopen 主站 DCF（官方 dcfgen 从 bus.yaml 生成，见 rak_canopen）"),
@@ -215,7 +233,9 @@ def generate_launch_description():
             "urdf",
             default_value=description_share + "/urdf/rak_chassis.urdf.xacro"),
         DeclareLaunchArgument(
-            "wheel_sign", default_value="-1 1 -1 1",
+            # 物理方向权威在固件 wheel_config.h；2026-11-16 起固件指令表全 +1，
+            # Jetson 侧不再叠加第二份符号（详见 rak_chassis.urdf.xacro 注释）。
+            "wheel_sign", default_value="1 1 1 1",
             description="四轮极性 FL FR RL RR；+1 正常，-1 命令与反馈同时取反"),
         OpaqueFunction(function=_launch_setup),
     ])

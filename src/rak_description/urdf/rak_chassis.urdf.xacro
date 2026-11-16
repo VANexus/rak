@@ -39,14 +39,17 @@
        <ros2_control> 段整段去掉。不裁的话 controller_manager 仍会激活它，而它永远
        收不到反馈 → read() ERROR → CM 把硬件连同 joint_state_broadcaster 一起停用。 -->
   <xacro:arg name="slaves" default="both"/>
-  <!-- [AI] 每轮极性（装配事实，顺序 FL FR RL RR，经 launch 的 wheel_sign 单参数拆开）：
-       +1 正常，-1 表示该轮命令与反馈同时取反。2026-10-14 实车标定：左侧 FL/RL 装向
-       与右侧相反（DRIVE_CMD [++++] 时左轮后滚、右轮前滚，车体原地转；W/S 变自转、
-       Q/E 变前后、A/D 三自由度全对消）。**不是**端口置换，只有取反能解释。
-       换轮/重接线后重新标定改这里（或 launch wheel_sign:=），不用重编译。 -->
-  <xacro:arg name="wheel_sign_fl" default="-1"/>
+  <!-- [AI] 每轮极性（顺序 FL FR RL RR，经 launch 的 wheel_sign 单参数拆开）：
+       +1 正常，-1 表示该轮命令与反馈同时取反。
+       物理方向的唯一权威在固件 vehical_rak_motion/Core/Inc/wheel_config.h
+       （wheel_forward_dir / wheel_encoder_dir）。2026-11-16 两轮目视实测后，
+       固件把指令表收敛为全 +1（W1/W2 与 W3/W4 分组反，不是左右侧反），
+       因此 Jetson 侧不再叠加第二份符号，四个默认值统一 +1；
+       2026-10-14“左侧 FL/RL 取反”的旧结论作废。
+       换轮/重接线后重新标定改 wheel_config.h（或 launch wheel_sign:=）。 -->
+  <xacro:arg name="wheel_sign_fl" default="1"/>
   <xacro:arg name="wheel_sign_fr" default="1"/>
-  <xacro:arg name="wheel_sign_rl" default="-1"/>
+  <xacro:arg name="wheel_sign_rl" default="1"/>
   <xacro:arg name="wheel_sign_rr" default="1"/>
   <!-- [AI] REP-120: base_link(轮轴心面)离地高度。2026-10-14 实测轮径 5.5 cm，
        轴心离地 = 轮半径 = 0.0275（轮关节在 base_link z=0，轮必须接地） -->

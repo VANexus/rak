@@ -65,10 +65,14 @@ semantics:
   w3spd:   {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
   w4spd:   {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
   w1spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 0x2001 WheelSpeedFb ARRAY[4] INT16，0.01 rad/s"}
-  # [AI] 2026-10-30 轮序↔物理位置实测确认（两轮 seq 目视交叉验证，CAN-BRINGUP §7.1）：
-  #   W1=前左(倒) W2=前右(正) W3=后左(倒) W4=后右(正)
-  # 与 rak_chassis.urdf.xacro 的 wheel_sign 默认值 "-1 1 -1 1" 逐位吻合——
-  # CANopen 链路接入 ros2_control 时按 [FL,FR,RL,RR] 序映射 W1..W4，符号不再改动。
+  # [AI] 2026-11-16 轮序与方向（用户物理确认 + 两轮目视实测）：
+  #   W1..W4 = [左前, 右前, 左后, 右后] = A/B/C/D。
+  #   方向符号的唯一来源：vehical_rak_motion/Core/Inc/wheel_config.h
+  #   （wheel_forward_dir / wheel_encoder_dir / WHEEL_YAW_DIR_LIST），本文不复述数值。
+  #   实测：表 {-1,-1,+1,+1} → W1/W2 后退、W3/W4 前进；表 {+1,-1,-1,+1} →
+  #   W1/W3 后退、W2/W4 前进。规律是前两个/后两个分组，不是左右侧，故固件
+  #   指令表收敛为全 +1；Jetson 侧 wheel_sign 默认也随之全 +1，不维护第二份符号。
+  #   “左侧 W1/W3 取反”的旧注记作废。
   w2spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
   w3spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
   w4spd_fb: {unit: rad/s, factor: 0.01, source: "[SPEC] 同上"}
