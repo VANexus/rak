@@ -2,3 +2,5 @@
 # 同名 .sh 钩子的 dsv 通道（colcon/_local_setup_util 的 python 侧消费）；
 # set-if-unset：显式设置的 CYCLONEDDS_URI 优先。路径在配置期按本包安装前缀展开。
 set-if-unset;CYCLONEDDS_URI;file://@CMAKE_INSTALL_PREFIX@/share/rak_bringup/config/cyclonedds.xml
+set-if-unset;RMW_IMPLEMENTATION;rmw_cyclonedds_cpp
+set-if-unset;ROS_DOMAIN_ID;47

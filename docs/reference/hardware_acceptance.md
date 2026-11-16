@@ -129,6 +129,9 @@ Recorded so the next person does not re-derive it:
   the wrong value `1 -1 1 -1` makes `W` drive the base backward. The full symptom
   signature and the reason it cannot be an ABCD port permutation are in the AGENTS.md
   gotcha. Re-calibrate after any wheel, motor or encoder change.
+  **2026-11-16 修订（此条旧结论作废）：** 复测表明真实分组是前两轮/后两轮而非左右侧，
+  固件 `wheel_config.h` 的指令表已收敛为全 +1 并成为方向的唯一权威；URDF 与 launch 的
+  `wheel_sign` 默认值随之改为 `1 1 1 1`，主机侧不再叠加符号。上面这段保留为历史记录。
 - Feedback path is consistent end to end: commanding `vx=+0.05` produced a host peak of
   1.54 rad/s and `WHEEL_SPD` reported FL +0.92 / FR +0.83 rad/s with the wheels visibly
   turning.

@@ -211,10 +211,11 @@ IDLE -> ACCEPTED -> RUNNING -> SUCCEEDED / FAILED / CANCELED
 `task_navigation.launch.py` 的 `motion_backend` 只有 `sim`/`stub` 两个值，默认 `sim`，
 组合 launch 本身不连接任何设备。链路安全门是 `chassis_bringup.launch.py` 的
 `allow_motion`（默认 false，硬件只握手+遥测、零目标），`can_channel` 默认 `can0`。
-另有 `wheel_sign`（默认 `-1 1 -1 1`，顺序 FL FR RL RR）承载**实测的每轮极性装配事实**：
-2026-10-14 标定出左侧 FL/RL 电机装向与右侧相反，`rak_system.cpp` 对该轮的命令与反馈
-成对取反，使 ROS 的"正速度 = 向前滚"成立。代码层兜底保持中性 `1 1 1 1`，不写死某台车的
-接线；换轮或重接线后要重新标定。
+另有 `wheel_sign`（默认 `1 1 1 1`，顺序 FL FR RL RR）。**物理方向的事实源是固件
+`vehical_rak_motion/Core/Inc/wheel_config.h`**：2026-11-16 两轮目视实测后固件指令表收敛为
+全 +1（真实分组是前两轮/后两轮，不是左右侧），Jetson 侧不再叠加第二份符号；
+2026-10-14“左侧 FL/RL 取反、默认 `-1 1 -1 1`”的结论作废。`sign` 机制仍保留为换线后的
+覆盖手段，作用是对该轮命令与反馈成对取反，使 ROS 的"正速度 = 向前滚"成立。
 工具与上层只准经 topic/action/service 与驱动节点对话，不得直连硬件（ADR-0016）；
 链路冒烟用 `scripts/can_link_smoke.py can0`，限速、断联/E-stop 与人工监督低速测试
 仍按 `hardware_acceptance.md` 执行，launch 可解析不构成安全证明。
