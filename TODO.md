@@ -1,6 +1,6 @@
 # TODO — 工作队列
 
-> 状态：现行 · 最后更新：2026-11-14
+> 状态：现行 · 最后更新：2026-11-16
 
 本文件是本仓**唯一**的工作队列。规则：
 
@@ -13,9 +13,40 @@
 
 ## P0 — 挡住真机
 
-- [ ] **R76 烧录 + 冷启动核验**（底盘板 `~/vehical_rak_motion`）
+2026-11-16 真机端到端联调（已完成，证据见 `docs/status/project_status.md` 当日增量段）：
+
+- [x] **CANopen 单主站**：总线上只有一个 `device_container`；被动监听只有节点1 心跳
+  `701=05`、无第二主站发帧；SYNC `080` 1488 帧/3 s ≈ 496 Hz，4 路 TPDO 各 ~100 Hz。
+- [x] **R76 固件在板**：SDO `0x2F00`=3553106（0x363352 → R76）、`0x2F01`=66（`'B'` 掉电复位）。
+- [x] **`/cmd_vel` → wbc → `/mecanum_drive_controller/reference`**：本机发 `vx=0.05, wz=0.2`，
+  orin 侧 reference `linear.x=0.049995`、`frame_id=base_link`，wbc `enabled/nav`。
+- [x] **Nav2 规划 + MPPI 下发**：`NavfnPlanner` + `nav2_mppi_controller`；
+  `ComputePathToPose` `error_code=0`，`NavigateToPose` 后 `/cmd_vel` 抓到 232 条（`x≈0.0051`）。
+- [x] **C30D 断电重上电后控制环恢复**：`0x2034`（imu_age）由饱和 255 → 10，
+  `0x2020` 位置从冻结值恢复更新；心跳 OPERATIONAL、无 EMCY。
+
+- [ ] **四轮不响应速度脉冲**（2026-11-16，地面实动）
+  为什么卡着：`allow_motion=true`、`mecanum_drive_controller=active`、
+  `/mecanum_drive_controller/reference=0.03` 已确认，但 1.5 s 脉冲内四轮
+  `/joint_states.velocity` 只有 ±0.01 rad/s（约一个编码器 LSB），期望
+  `0.03/0.01375≈2.18 rad/s` 且四轮同号；`gyro.z` 无有效偏航（`wz_max_abs=0.049`）。
+  决定了会影响：能否进入真机导航；也决定是改标定/量纲还是查驱动使能。
+  下一步：脉冲期间同步抓 `/chassis/tpdo` 的 `0x2000..0x2003`，与 reference 对比，
+  区分「量纲/比例错误」与「驱动器未真正使能」。
+  依据：`docs/reference/canopen_bitfields.md`、`TODO.md` 当日联调记录。
+
+- [ ] **四轮 TF NaN**
+  为什么卡着：底盘硬件只有 velocity 接口，`/joint_states.position` 四轮恒为 NaN，
+  `robot_state_publisher` 按 position 算 TF 输出 NaN，wbc 报 `TF_NAN_INPUT`，
+  轮 link 在 TF 树里不可用。
+  决定了会影响：RViz/代价层的轮式可视化、任何依赖轮 TF 的检查，以及轮速的交叉核对。
+  下一步：底盘侧积出轮角位置再发布，或改 URDF 让轮关节不依赖 position。
+  判过：`tf2_echo base_link <wheel>_link` 输出有限值，且随轮子转动连续变化。
+
+- [x] **R76 烧录 + 冷启动核验**（底盘板 `~/vehical_rak_motion`，2026-11-16 完成）
   构建双 preset 零警告、`tools/canopen_gate.py` 绿、tag `R76` 均已完成；
-  剩烧录，冷启动后核 `build_tag`（`0x2F00`）与复位原因（`0x2F01`）。
+  烧录后冷启动实测：`0x2F00`（build_tag）= 3553106 = 0x363352 → **R76**，
+  `0x2F01`（reset reason）= 66（`'B'`，掉电复位）。
   依据：`../vehical_rak_motion/docs/CANOPEN-V5.md`、`docs/status/project_status.md`。
   已就绪产物：Debug `abeea499f6a14924` / Release `58ee9eb151fe08a7`（SHA-256 前 16）。
 
@@ -30,8 +61,10 @@
   已修：`gen_canopen_master_dcf.py` + `test_dcf_sync.py` + `verify_canopen_vcan.py` 全部加 `-r`。
   另修两个下位仓 `gen_eds.py` 的 PDO COB-ID（必须 `$NODEID+0x…`）。
   实测：`/arm/rpdo` 505 Hz，`/joint_states` 真实读数。见 `docs/status/canopen_vcan_2026-11-14.md`。
-- [ ] **底盘板（node 1）接入**：2026-11-15 实测总线上只有 node 2；node 1 对 NMT/SDO
-  全无应答，广播也无回应。先核接线/供电/固件（v5 是否烧录），再看 `0x2F00` build_tag。
+- [x] **底盘板（node 1）接入**：2026-11-16 已恢复。心跳 `701=05`（OPERATIONAL）、
+  SDO 读写正常、4 路 TPDO 各 ~100 Hz；`0x2F00` 读回 R76。
+  断电重上电后控制环恢复（`0x2034` imu_age 10、`0x2020` 位置恢复更新）。
+  注意：速度脉冲仍不跟踪，单列为 P0「四轮不响应速度脉冲」。
 - [ ] **`j6_wrist_roll` 零位核对**：实测回读 4.712 rad，而 `arm_controller` 目标 0，
   controller_manager 持续报 out of limits。确认 j6 真实零位后回填契约/URDF 限位。
 - [ ] **真机 `can0` 首帧核对**（装机后第一件事）
@@ -67,6 +100,8 @@
 - [x] **DeepStream/Holoscan 实测**：单相机 29.9 FPS；batch=6 只赚 15%（访存受限）；
   `nvv4l2decoder` 解 MJPG 失败；Holoscan 无 Python 绑定。
 - [x] **内存预算**：roadseg TRT 节点 625 MB（实测）；含 qwentts 全栈 4.1–5.4 GB > 3.4 GB。
+- [x] **Gemini 335L 接入（2026-11-16）**：按官方 `ros-yazzy-orbbec-camera` 2.9.3 适配，
+  深度 10.13 Hz / 彩色 4.77 Hz / 相机 IMU 187 Hz，直连 USB3；Astra 路径保留。
 - [x] **全模型下载齐备**（2026-11-15）：`acoustic/models/` 下 kokoro-int8（207 MB）
   + streaming-zipformer-zh-14M（78 MB）；`data/models/laya-typed-decisions/` 下
   safetensors（804 MB）→ BF16 ONNX（807 MB 含 data）→ **TensorRT 引擎 807 MB**
@@ -103,6 +138,8 @@
   RTF 2.2；TRT/CUDA EP 对 TTS 无收益（见设计 §5A.9）。模型下载
   `kokoro-int8-multi-lang-v1_1`（147 MB），放 `acoustic/models/`（gitignored）。
 - [ ] **六相机前解决 MJPG GPU 解码**：否则 6×50% CPU ≈ 3 核，第一瓶颈。
+- [ ] **深度面板彩色化**：RViz 深度显示是否改成彩色伪彩面板未定，等使用方拍板
+  （当前 `sensors_rviz.rviz` 保持原样，不与深度显示那条线并行改）。
 - [ ] **标定质量复核（可选）**：板铺满整帧四角再标，看 k3 是否变有意义。
 
 ## P1a-2 — 4D 融合视觉导航 v2.0（`docs/design/vision_nav_v2.md` / ADR-0027）
@@ -180,6 +217,33 @@
 - [ ] **pitch/roll 符号约定现场核对**（核对前 Jetson 不消费 `0x2031`/`0x2032`）
   依据：`docs/reference/canopen_bitfields.md` §7。
 
+- [ ] **`/scan` 跨机不可见**
+  为什么卡着：lidar 启动时没带 `ROS_DOMAIN_ID=47` + `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`
+  + 钉 `wlP1p1s0` 的 `CYCLONEDDS_URI`，本机发现不到 writer
+  （orin 本地 `/scan` 10 Hz / 525 线正常）。
+  决定了会影响：上层能否在本机直接消费雷达（Nav2 代价层、录包口径、跨机诊断）。
+  判过：本机 `ros2 topic hz /scan` 稳定 ~10 Hz，且 lidar 启动脚本统一带上述三项环境。
+
+- [ ] **orin 缺 `osqp`**
+  为什么卡着：`rak_wbc` 声明了依赖但部署未装，`wbc_node` configure 直接
+  `ModuleNotFoundError`；当前靠 `~/.wbc-venv`（`--system-site-packages` + `osqp==1.1.3`）绕过。
+  决定了会影响：wbc 能否按正常部署流程启动（venv 不是长期方案，且 aarch64 可得性未核）。
+  判过：rosdep/部署清单包含 `osqp`，裸 `ros2 launch rak_wbc wbc.launch.py` 可 configure。
+
+- [ ] **`rak_mcp` 未部署**
+  为什么卡着：源码在，但 orin 与开发机都没有包/进程/配置，MCP 工具面无法真实调用。
+  决定了会影响：验收第 7 项（工具真实调用生效）无法开展，上层只能走 ros2 CLI。
+  判过：MCP server 可启动并被客户端列出工具，且一次限速内真实调用生效并留证。
+
+- [ ] **启动所有权竞态**
+  为什么卡着：`sensors.launch.py`（`publish_robot_tf:=true`）发布全车 URDF，
+  `controller_manager` 以 `/robot_description` 话题为准 → 加载 `rak_arm`；
+  臂板不在线时 `joint_state_broadcaster` 被连带停用。多条线并行时还会互相
+  SIGKILL 对方的 ROS 栈（2026-11-16 实测 exit -9）。
+  决定了会影响：并行联调能否可重复，以及 `slaves:=chassis` 是否真能裁剪。
+  下一步：一条命令级单写者编排（清残留 → 只允许一个 URDF 发布者 → 起栈 → 校验控制器），
+  并加 owner 标记避免跨线互杀。
+
 ## P2a — 板载 IMU 姿态（下位机 `~/vehical_rak_motion`）
 
 - [ ] **D1 互补滤波 pitch/roll**：陀螺 X/Y 已在 14 字节块内（`app_imu.c:235-245`），
@@ -208,6 +272,13 @@
 
 - [ ] **`rak_metrics` 低速平坦样本占比**：Orin 上 `colcon` 编译后跑一次，留数据。
   依据：`docs/design/chassis_control.md` §6。
+
+- [ ] **整机 5V/3A（15 W）供电预算不足**
+  为什么卡着：USB 外设申报合计约 3.59 A > 3 A，余量为负；目前只有采样手段，
+  还没有一次复位前后的完整证据链。
+  决定了会影响：能否排除欠压导致的 Orin 反复重启，以及外设是否必须改独立 5V 供电。
+  下一步：已落地 journald 持久化 + 50 ms 采样脚本（`/var/log/pwr/pwr.csv`），
+  下次复位后看断点前 40 行区分欠压/断电；串口 `ttyTCU0` 抓 reset reason 待接线。
 
 ## P3 — 远期（前面全绿再动）
 
