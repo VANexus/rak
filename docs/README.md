@@ -50,6 +50,7 @@
 
 | 文档 | 状态 | 最后更新 |
 |---|---|---|
+| [`hardware_ownership.md`](hardware_ownership.md) | 现行（机器分工，本机有没有硬件的唯一权威） | 2026-11-16 |
 | [`reference/arm_moveit_contract.md`](reference/arm_moveit_contract.md) | **冻结**（2026-10-09，MoveIt 侧唯一接口） | 2026-10-28 |
 | [`reference/canopen_bitfields.md`](reference/canopen_bitfields.md) | 现行（v5 位域与身份表） | 2026-11-09 |
 | [`reference/firmware_capability_spec.md`](reference/firmware_capability_spec.md) | **提案**（待两块下位机仓签字） | 2026-11-09 |
