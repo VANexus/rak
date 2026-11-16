@@ -52,6 +52,11 @@
   <!-- [AI] 雷达扫描平面 base_link→laser_link 高度。2026-10-14 实测扫描平面离地
        0.18（确认为出光面，非壳顶）− base_height 0.0275 = 0.1525 -->
   <xacro:arg name="lidar_z" default="0.1525"/>
+  <!-- [AI] 雷达安装偏航。2026-10-17 重新斜放：雷达正方向相对车头往左≈30°
+       （REP-103：+z 朝上，向左 = +yaw）。同日用 RANSAC 实测校准：两面主墙相对
+       雷达 35.8°（互相垂直），要墙与车体轴对齐需 yaw = 90−35.8 = 54.2°
+       （0.9460 rad）；显示还歪就再调这一个数。 -->
+  <xacro:arg name="lidar_yaw" default="0.9460"/>
 
   <!-- ===== 车体几何（2026-10-11 实测）===== -->
   <xacro:property name="wheelbase" value="0.245"/>  <!-- 轴距：前后轮最外点 30 − 轮径 5.5（2026-10-14） -->
@@ -124,12 +129,12 @@
   <xacro:mecanum_wheel prefix="rear_right"  x="${-hw}" y="${-ht}"/>
 
   <!-- ===== 传感器安装帧（fixed；几何单一来源，勿在 launch 里重复发布）===== -->
-  <!-- 雷达：前·中轴。scan 的 frame_id=laser_link（驱动默认，勿改） -->
+  <!-- 雷达：前·中轴，2026-10-17 起带 lidar_yaw 偏航补偿。scan 的 frame_id=laser_link（驱动默认，勿改） -->
   <link name="laser_link"/>
   <joint name="laser_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="laser_link"/>
-    <origin xyz="${laser_x} 0 $(arg lidar_z)" rpy="0 0 0"/>
+    <origin xyz="${laser_x} 0 $(arg lidar_z)" rpy="0 0 $(arg lidar_yaw)"/>
   </joint>
 
   <!-- 6 阵列麦克风：雷达正上方（vtn_node 桥接，本身不发 TF）。x 实测 0.11 与雷达同 x，借 laser_x -->
@@ -140,13 +145,42 @@
     <origin xyz="${laser_x} 0 ${mic_z}" rpy="0 0 0"/>
   </joint>
 
-  <!-- 深度相机：车头最前。内参/光学帧(camera_*_optical_frame)由 Orbbec 驱动发布，
-       此处只挂载安装帧 camera_link；base_link->camera_link 外参 TODO(measured) -->
+  <!-- 深度相机（Orbbec ASTRA S）：车头最前。内参/光学帧(camera_*_optical_frame)由
+       OpenNI2 桥(shm_to_ros.py)发布。相机**垂直翻转倒装**（2026-11-08 实测：原图 flipv
+       后正立、水平偏移 -8px），安装帧 rpy 中的 cam_roll=pi 为该倒装的[AI]假设，
+       TODO(measured)：上车用激光雷达地面点投影进图像验证，若不对应改 rpy。
+       base_link->camera_link 外参 xyz 已实测（cam_x/cam_z）。
+       depth/color 光学帧链在此静态定义，供 roadseg_node/depth_image_proc 的 TF 查询。 -->
+  <xacro:property name="cam_roll" value="${pi}"/>
   <link name="camera_link"/>
   <joint name="camera_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="camera_link"/>
-    <origin xyz="${cam_x} 0 ${cam_z}" rpy="0 0 0"/>
+    <origin xyz="${cam_x} 0 ${cam_z}" rpy="${cam_roll} 0 0"/>
+  </joint>
+  <link name="camera_depth_frame"/>
+  <joint name="camera_depth_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_depth_frame"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="camera_depth_optical_frame"/>
+  <joint name="camera_depth_optical_joint" type="fixed">
+    <parent link="camera_depth_frame"/>
+    <child link="camera_depth_optical_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>
+  <link name="camera_color_frame"/>
+  <joint name="camera_color_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_color_frame"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="camera_color_optical_frame"/>
+  <joint name="camera_color_optical_joint" type="fixed">
+    <parent link="camera_color_frame"/>
+    <child link="camera_color_optical_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
   </joint>
 
   <!-- IMU：LSM6DSRTR（SPI）。2026-10-14 实测安装姿态：芯片"正着放"后绕车体 Y 轴

@@ -63,6 +63,7 @@
   <exec_depend>rak_moveit_config</exec_depend>
   <!-- 抓取相机合成（原在 rak_grasp_perception，重组后归组装层） -->
   <exec_depend>rak_grasp_perception</exec_depend>
+  <exec_depend>rak_road_perception</exec_depend>
   <exec_depend>rak_pointcloud</exec_depend>
   <exec_depend>rmw_cyclonedds_cpp</exec_depend>
   <exec_depend>rviz2</exec_depend>
