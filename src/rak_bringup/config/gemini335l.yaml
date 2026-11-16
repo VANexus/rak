@@ -1,16 +1,25 @@
+# Gemini 335L — WiFi 档（默认）
+#
+# 用途：orin 出流、开发机 RViz 远程看。链路实测上限约 4 MB/s（UDP 满载 32 Mbit/s），
+# 所以这里不按相机能力开满，而是按链路预算开：
+#   depth 424x240 Y16 @10  ≈ 2.0 MB/s   （这代没有 320x240，424 是最小档）
+#   color 424x240 RGB @5   ≈ 1.5 MB/s
+#   IMU   200 Hz           ≈ 0.06 MB/s
+#   + /scan + TF 之后约 3.7 MB/s，仍有少量余量。
+# 本机（orin 上直接看、或有线千兆）用 profile:=full 换 1280x800@30。
+#
+# 彩色只给 5 fps 是刻意的：15 fps 时 color 单独就 4.5 MB/s，会打满链路，
+# 表现和以前一样——RViz 里画面停住不动。/camera/depth/points 由 orin 上的
+# depth_image_proc 本地生成，默认不在 RViz 显示，开的时候记得这是额外 3 MB/s。
 uvc_backend: v4l2
 enumerate_net_device: false
 device_num: 1
 device_preset: Default
 
-# Color is on for the RViz sensor view (sensors.launch.py -> sensors_rviz.rviz shows
-# /camera/color/image_raw); the 2026-10 note below recorded why it was off back when
-# nothing subscribed. Re-disable once the display is retired:
-# 1280x800 RGB at 30 fps is ~92 MB/s of copy the CPU pays for and nobody read it.
 enable_color: true
-color_width: 1280
-color_height: 800
-color_fps: 30
+color_width: 424
+color_height: 240
+color_fps: 5
 color_format: RGB
 color_frame_queue_max_frames: 1
 "color.image_raw.enable_pub_plugins":
@@ -18,9 +27,9 @@ color_frame_queue_max_frames: 1
 color_preset: ""
 
 enable_depth: true
-depth_width: 1280
-depth_height: 800
-depth_fps: 30
+depth_width: 424
+depth_height: 240
+depth_fps: 10
 depth_format: Y16
 depth_registration: false
 "depth.image_raw.enable_pub_plugins":
@@ -35,14 +44,30 @@ enable_publish_extrinsic: true
 enable_hardware_noise_removal_filter: true
 enable_noise_removal_filter: false
 
-# IMU off: heading authority is the Jetson's LSM6DSRTR (ADR-0007), and nothing
-# subscribes to the camera's accel/gyro samples.
-enable_accel: false
-enable_gyro: false
-enable_sync_output_accel_gyro: false
+# 机身 IMU：200 Hz、4g / 1000 dps，SDK 侧数据校正打开。
+# 灯号分工（不是替代关系）：
+#   /imu/data_raw            LSM6DSRTR @1 kHz, frame imu_link        —— EKF/航向权威源
+#   /camera/gyro_accel/sample Gemini 335L @200 Hz,
+#                            frame camera_accel_gyro_optical_frame
+#                            —— 交叉校验/可视化用，跟相机同源，换机不影响航向链
+# （2.9.3 里 enable_sync_output_accel_gyro=true 时合并话题叫 <ns>/gyro_accel/sample，
+#   不是文档里常见的 <ns>/imu/sample，实测见 cameras.md）
+# 两个话题名不同，不存在同话题多发布者的问题；不要把它们 remap 到同一个话题。
+enable_accel: true
+enable_gyro: true
+enable_sync_output_accel_gyro: true
+accel_rate: 200hz
+accel_range: 4g
+gyro_rate: 200hz
+gyro_range: 1000dps
+enable_accel_data_correction: true
+enable_gyro_data_correction: true
+# 驱动用这个值填 linear_acceleration_covariance / angular_velocity_covariance 的对角项
+# （单位 m/s^2 与 rad/s）。0.01 是驱动默认的保守估计，未做 Allan 方差标定。
+# 需要更严的协方差时，在本文件里改，不要改上游代码。
+linear_accel_cov: 0.01
 
-# The SDK builds the cloud on the CPU, one point per depth pixel. At factor 1 that is
-# 1280x800 = 1.02M points/frame; factor 4 is 320x200 = 64k, ~16x less work. Measured on
-# this box: 15.2% -> 4.1% of a core for the camera container. Prefer the GPU node
-# (rak_pointcloud) with enable_point_cloud:=false when a full-resolution cloud is wanted.
+# SDK 自己建点云（CPU，一帧一点/像素）默认关，统一走 orin 上的 depth_image_proc。
+# 注意：**不要把 enable_point_cloud 写进本文件**——上游 launch 的 YAML 会盖掉
+# launch 参数，写进来就等于把 enable_point_cloud:=true 永久废掉（见 cameras.md）。
 point_cloud_decimation_filter_factor: 4

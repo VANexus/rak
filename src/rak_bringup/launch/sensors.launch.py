@@ -8,19 +8,26 @@
 
 What lands in RViz (config: config/sensors_rviz.rviz)
     lidar      /scan (LaserScan) + /lslidar_point_cloud (PointCloud2)
-    depth cam  /camera/depth/image_raw, /camera/color/image_raw,
-               /camera/depth/points (PointCloud2, built by depth_image_proc)
+    depth cam  /camera/depth/image_raw, /camera/color/image_raw (Gemini only, the
+               Astra S is depth-only), /camera/depth/points (PointCloud2, built on
+               the robot by depth_image_proc so both backends share one contract)
     IMU        /imu/data_raw (rviz_imu_plugin, LSM6DSRTR @1kHz, frame imu_link)
+               /camera/gyro_accel/sample (Gemini 335L @200 Hz, frame
+               camera_accel_gyro_optical_frame, accel arrows -- cross-check only)
     mic array  /wake_doa (Marker) -- live bearing arrow + fading event trail
                (repainted continuously, see rak_speech/wake_doa_viz);
                audio itself has no RViz display, the DOA angle is its picture.
     wheel odom /mecanum_drive_controller/odom (Odometry arrows, needs chassis:=true)
 
-Ownership rules (ADR-0015: one publisher per frame)
+Ownership rules (ADR-0015: one publisher per frame, one publisher per topic)
     body tree (base_footprint -> base_link -> sensors/arm) : robot_state_publisher here,
         unless chassis_bringup already runs one -> publish_robot_tf:=false
     camera optical frames : the camera driver's job (orbbec publish_tf:=true), except
         camera:=astra whose driver does not broadcast TF -> this launch adds it
+    IMU : two sources, two topics, no overlap. /imu/data_raw is the EKF/heading
+        authority (1 kHz, survives a camera swap); /camera/gyro_accel/sample is
+        the camera's own 200 Hz IMU for cross-check and visualisation. Never remap
+        one onto the other -- that would put two publishers on one topic.
     odom -> base_footprint : rf2o or EKF (slam.launch.py), never the wheel controller
                              (chassis_controllers.yaml sets enable_odom_tf: false)
 """
@@ -61,7 +68,13 @@ def _camera_with_cloud(context, *args, **kwargs):
             PythonLaunchDescriptionSource(
                 os.path.join(bringup_share, "launch", "depth_camera.launch.py")
             ),
-            launch_arguments={"camera": backend}.items(),
+            launch_arguments={
+                "camera": backend,
+                # 跨机 RViz 时传 depth_max_width:=160（见 astra.launch.py 注释）。
+                "depth_max_width": LaunchConfiguration("depth_max_width").perform(context),
+                "gemini_profile": LaunchConfiguration("camera_profile").perform(context),
+                "gemini_ir": LaunchConfiguration("camera_ir").perform(context),
+            }.items(),
         ),
         # depth_image_proc: depth image + camera_info -> PointCloud2. Chosen over the
         # SDK's own cloud so both backends honour the same topic contract.
@@ -143,6 +156,22 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "camera", default_value="gemini335l", choices=["gemini335l", "astra"],
             description="depth camera backend (ADR-0014: exactly one)",
+        ),
+        DeclareLaunchArgument(
+            "depth_max_width", default_value="320",
+            description="astra depth width cap (0 = no cap); 160 for cross-host RViz "
+                        "over WiFi (image + cloud bandwidth)",
+        ),
+        DeclareLaunchArgument(
+            "camera_profile", default_value="wifi", choices=["wifi", "full"],
+            description="gemini335l only: wifi = 424x240 depth@10 + color@5 "
+                        "(cross-host RViz), full = 1280x800@30 (local display/cable)",
+        ),
+        DeclareLaunchArgument(
+            "camera_ir", default_value="none",
+            choices=["none", "left", "right", "both"],
+            description="gemini335l only: publish left/right IR images "
+                        "(/camera/ir/left/image_raw, /camera/ir/right/image_raw)",
         ),
         DeclareLaunchArgument(
             "imu", default_value="true",

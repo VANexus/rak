@@ -325,6 +325,7 @@ if [ "$MODE" = check ]; then
   info "rak-can0.service: $(systemctl is-enabled rak-can0.service 2>/dev/null || echo 未安装)"
   info "can0 link: $(ip -brief link show can0 2>/dev/null | awk '{print $2, $3}')"
   info "雷达 udev 规则: $([ -f /etc/udev/rules.d/99-wheeltec-lidar.rules ] && echo 已装 || echo 未装)"
+  info "Orbbec udev 规则: $([ -f /etc/udev/rules.d/99-obsensor-libusb.rules ] && echo 已装 || echo 未装)"
   info "x11vnc.service: $(systemctl is-enabled x11vnc.service 2>/dev/null || echo 未安装)"
   info "/etc/x11vnc.pass: $([ -f /etc/x11vnc.pass ] && echo 存在 || echo 缺失)"
 fi
@@ -343,6 +344,25 @@ if [ "$MODE" = apply ]; then
     udevadm control --reload-rules
     udevadm trigger
     info "ok: 雷达 udev 别名规则已装（/dev/wheeltec_lidar）"
+  fi
+  # Orbbec 相机: 官方 ros 包自带 99-obsensor-libusb.rules，里面有 Gemini 335L 的
+  # 2bc5:0804。旧版 SDK 装的 56-orbbec-usb.rules 没有 0804 → /dev/bus/usb 节点
+  # 归 root:root，libusb 报 "Access denied"，SDK 枚举出的序列号为空，驱动按 SN
+  # 选设备永远失败（表现为 "Device with serial number ... not found"，很像没插）。
+  # 规则从已安装的 ros 包取，避免把厂商表复制进仓库后与驱动版本脱节。
+  # 注意：只对 vendor 2bc5 发 change 事件。用 --action=add 广播整个 USB 子系统
+  # 会连 USB 网卡一起重新枚举，orin 会直接掉网（2026-11-16 踩过）。
+  ORBBEC_UDEV_RULES=""
+  for cand in /opt/ros/*/share/orbbec_camera/udev/99-obsensor-libusb.rules; do
+    [ -f "$cand" ] && ORBBEC_UDEV_RULES="$cand"
+  done
+  if [ -n "$ORBBEC_UDEV_RULES" ]; then
+    cp "$ORBBEC_UDEV_RULES" /etc/udev/rules.d/
+    udevadm control --reload-rules
+    udevadm trigger --action=change --subsystem-match=usb --attr-match=idVendor=2bc5
+    info "ok: Orbbec udev 规则已装（Gemini 335L / 2bc5:0804）"
+  else
+    warn "未找到 orbbec_camera 的 udev 规则（ros-jazzy-orbbec-camera 未安装？）"
   fi
   # VNC: README 的远程桌面路线（x11vnc 共享真实 X display，不用 vino）
   if command -v x11vnc >/dev/null 2>&1; then

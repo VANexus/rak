@@ -148,7 +148,13 @@ Visualization Manager:
       Color: 0; 255; 128
       Color Transformer: AxisColor
       Decay Time: 0
-      Enabled: true
+      # 显示链路已配好（topic + Reliable QoS），但**默认关**：160x120 一帧
+      # ~300 KB，实测在开发机<->orin 的 WiFi(~4 MB/s) 上 Reliable 重传会把链路
+      # 打满（orin tx 7 MB/s 仍在补发），/scan、/imu 全饿死。有线/千兆时打开。
+      # [AI] 2026-11-16 复测：链路好时 160x120 点云本机实测能到 19 Hz / ~3 MB/s，
+      # 可以打开；但和深度图面板（1.1 MB/s）+ /scan + /imu 叠加后接近 WiFi 上限，
+      # 所以仍保持默认关，需要看三维时手动勾选。
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Min Color: 0; 0; 0
@@ -158,18 +164,24 @@ Visualization Manager:
       Size (Pixels): 2
       Size (m): 0.01
       Style: Points
+      Use Fixed Frame: true
+      Use rainbow: true
+      # [AI] 跨机走 WiFi 时把 Reliability 从 Best Effort 改成 Reliable：
+      # 点云一帧 ~300 KB(=几十个 IP 分片)，丢一个分片整帧就没了，Best Effort
+      # 下跨机基本看不到；Reliable 会请求重传。本机回环用哪个都行。
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Best Effort
+        Reliability Policy: Reliable
         Value: /camera/depth/points
-      Use Fixed Frame: true
-      Use rainbow: true
       Value: true
+    # 彩色：Gemini 335L 有 RGB；Astra S 是纯深度相机，切 camera:=astra 时这个
+    # 面板会停在 "No Image"，无害（不影响其余显示）。
+    # profile:=wifi 下彩色只有 5 fps（刻意压带宽，见 config/gemini335l.yaml）。
     - Class: rviz_default_plugins/Image
       Enabled: true
-      Image Topic:
+      Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
@@ -178,14 +190,26 @@ Visualization Manager:
       Max Value: 1
       Median window: 5
       Min Value: 0
-      Name: Depth Camera RGB
-      Normalize Range: true
+      Name: Depth Camera Color
+      Normalize Range: false
       Queue Size: 2
       Transport Hint: raw
       Value: true
+    #
+    # [AI] 2026-11-16 修正：这个面板此前一直显示 "No Image"，曾被误判成
+    # "rviz 不支持 16UC1"。真实原因是**键名写错**：rviz2 的 Image display
+    # 话题属性叫 `Topic:`，不是 rviz1 的 `Image Topic:`。名字对不上时 rviz
+    # 不报错、不建订阅（ros2 topic info 里 Subscription count = 0），面板就永远
+    # 停在 "No Image" —— 看起来像"驱动没数据"。
+    # A/B 实测（本机 lyrical 24.x）：同一份配置只把 `Image Topic:` 改成 `Topic:`，
+    # 16UC1 立刻出图并随数据实时刷新；换 mono8 也一样。编码不是问题。
+    # 深度图默认开着：160x120@30fps 只有 ~1.1 MB/s，WiFi 扛得住。
+    # 注意 16UC1（单位 mm）在 rviz 的 Image 面板里是按 /256 显示的，3 m 的墙
+    # 只有 13/255 的灰度，看上去接近全黑、像"卡住的静态图"；这不是断流。
+    # 想看深度形状就看点云或把窗口拉大，数值对不对用 topic echo 核。
     - Class: rviz_default_plugins/Image
-      Enabled: false
-      Image Topic:
+      Enabled: true
+      Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
@@ -198,30 +222,15 @@ Visualization Manager:
       Normalize Range: true
       Queue Size: 2
       Transport Hint: raw
-      Value: false
+      Value: true
 
     # -------------------------------------------------------------------- IMU
-    - Acceleration:
-        Acc Normalization Factor: 1
-        Enabled: false
-        Color: 255; 0; 0
-        Alpha: 0.1
-        Radius: 0.01
-        Show Components: false
-        Show Covariance: false
-      Class: rviz_imu_plugin/Imu
+    # lyrical/jazzy 的 rviz_default_plugins 里没有 Imu（本机 lyrical 实测
+    # "PluginlibFactory: ... 'rviz_default_plugins/Imu' ... does not exist"），
+    # 两机都用独立包 rviz_imu_plugin。装法见 docs/imu_setup.md。
+    - Class: rviz_imu_plugin/Imu
       Enabled: true
       Name: IMU /imu/data_raw
-      Orientation:
-        Alpha: 0.7
-        Axes Length: 0.15
-        Axes Radius: 0.01
-        Color: 0; 255; 0
-        Enabled: true
-        Show Acceleration: false
-        Show Angular Velocity: false
-        Show Covariance: false
-        Show Orientation: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -229,21 +238,62 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /imu/data_raw
       Value: true
-      angular_velocity:
-        Alpha: 0.3
-        Color: 255; 255; 0
-        Enabled: false
-        Radius: 0.01
-        Show Components: false
-        Show Covariance: false
-      offset:
-        Orientation:
-          Pitch: 0
-          Roll: 0
-          Yaw: 0
-        X: 0
-        Y: 0
-        Z: 0
+      # lyrical 与 jazzy 装的都是 rviz_imu_plugin（老版移植），真实键名是
+      # "Axes properties" / "Acceleration properties" 这一组；旧写法
+      # `Orientation: {Axes Length, Show Orientation}` 与
+      # `Acceleration: {Acc Normalization Factor}` 在这个插件里根本不存在，
+      # 结果是它用默认值画 1 m 坐标轴、加速度默认开启。
+      # LSM6DSRTR 这一路有姿态，所以坐标轴 0.15 m 保留；加速度关掉，避免和
+      # 相机 IMU 那路箭头混在一起。
+      Axes properties:
+        Enable axes: true
+        Axes size, in meters: 0.15
+        Axes scale: 1
+        Color: 0; 255; 0
+        Alpha: 0.7
+      Acceleration properties:
+        Enable acceleration: false
+        Acc. vector scale: 0.1
+        Acc. vector color: 255; 0; 0
+        Acc. vector alpha: 0.6
+        Derotate acceleration: false
+
+    # 相机自带 IMU（Gemini 335L）。它不像 /imu/data_raw 那样由航向链使用，
+    # 所以这里不画姿态（驱动不提供 orientation，协方差首项 -1），只把加速度
+    # 画成箭头：有箭头 = 200 Hz 在流、轴向正确。换回 Astra S 时该话题不存在，
+    # 面板空着，不影响别的显示。
+    # 话题名以实测为准：2.9.3 开 enable_sync_output_accel_gyro 后合并话题是
+    # /camera/gyro_accel/sample（frame camera_accel_gyro_optical_frame），
+    # 不是教程里写的 /camera/imu/sample。
+    - Class: rviz_imu_plugin/Imu
+      Enabled: true
+      Name: IMU /camera/gyro_accel/sample (accel)
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /camera/gyro_accel/sample
+      Value: true
+      # 键名照插件的实现来写：lyrical 与 jazzy 装的都是 rviz_imu_plugin（老版
+      # 移植），真正的属性名是 "Enable axes" / "Acc. vector scale" 这些，
+      # "Acc Normalization Factor"、"Show Orientation" 是 jazzy 内置 Imu 显示的
+      # 键，写在这里不生效（上面 /imu/data_raw 那一块就是历史遗留的旧键名，
+      # 实际渲染的是默认 1 m 坐标轴）。相机 IMU 这里关掉坐标轴、只留加速度箭头：
+      # 0.1 × 9.8 ≈ 1 m，1g 静止时朝 -y（相机下方），在默认 14 m 俯视视野里
+      # 也能看见；想更精细就临时把 Acc. vector scale 调小再放大看。
+      Axes properties:
+        Enable axes: false
+        Axes size, in meters: 0.02
+        Axes scale: 1
+        Color: 255; 255; 255
+        Alpha: 1
+      Acceleration properties:
+        Enable acceleration: true
+        Acc. vector scale: 0.1
+        Acc. vector color: 255; 64; 0
+        Acc. vector alpha: 0.9
+        Derotate acceleration: false
 
     # --------------------------------------------------------- microphone array
     - Class: rviz_default_plugins/Marker
@@ -347,7 +397,7 @@ Visualization Manager:
       Class: rviz_default_plugins/Map
       Color Scheme: map
       Draw Behind: true
-      Enabled: true
+      Enabled: false
       Name: Map /map
       Topic:
         Depth: 1
@@ -356,7 +406,10 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /map
       Use Timestamp: false
-      Value: true
+      # 默认关：sensors 视图不跑 SLAM，没有 map->base_footprint，
+      # 订阅 /map 只会刷 "timestamp earlier than ... transform cache"，
+      # 且本机 Mesa 驱动上 Map 的 indexed_8bit shader 直接让 rviz2 崩。
+      Value: false
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path
@@ -421,26 +474,22 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
-      Distance: 3.0
+      # 俯视正交：一次看全 12 m 激光环 + 相机前方深度点云扇形 + 机器人。
+      # （Orbit 视角在默认距离下会被机械臂模型挡住，看不到地面上的传感器数据。）
+      Class: rviz_default_plugins/TopDownOrtho
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.06
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
-      Focal Point:
-        X: 0
-        Y: 0
-        Z: 0.4
-      Focal Shape Fixed Size: true
-      Focal Shape Size: 0.05
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.01
-      Pitch: 0.5
+      Scale: 14
       Target Frame: base_link
-      Value: Orbit (XY)
-      Yaw: 0.8
+      Value: TopDownOrtho (XY)
+      X: 0
+      Y: 0
     Saved:
       - Class: rviz_default_plugins/TopDownOrtho
         Enable Stereo Rendering:

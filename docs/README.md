@@ -56,7 +56,7 @@
 | [`reference/firmware_capability_spec.md`](reference/firmware_capability_spec.md) | **提案**（待两块下位机仓签字） | 2026-11-09 |
 | [`reference/hardware_acceptance.md`](reference/hardware_acceptance.md) | 现行（顶部有过期横幅，按横幅读） | 2026-10-14 |
 | [`reference/machine_baseline.md`](reference/machine_baseline.md) | 现行（Orin 基线，可一键回滚） | 2026-11-12 |
-| [`reference/cameras.md`](reference/cameras.md) | 现行（部分包名是迁移前旧名） | 2026-10-07 |
+| [`reference/cameras.md`](reference/cameras.md) | 现行（Astra S + Gemini 335L 双 backend，Orbbec udev / IMU 话题已记录） | 2026-11-16 |
 | [`reference/microphone_array.md`](reference/microphone_array.md) | 现行（2026-10-10 实测记录） | 2026-10-30 |
 | [`reference/perf/ipc_baseline.md`](reference/perf/ipc_baseline.md) | 实测记录 | 2026-10-14 |
 | [`reference/perf/cross_host_dds.md`](reference/perf/cross_host_dds.md) | 实测记录 | 2026-11-09 |

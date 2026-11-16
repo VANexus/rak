@@ -1,0 +1,51 @@
+# Gemini 335L — 全分辨率档（profile:=full）
+#
+# 只在 orin 本机直接看图、或有线千兆时用。1280x800 RGB @30 fps 光彩色就是
+# ~92 MB/s 的拷贝，WiFi 上根本送不出去，跨机 RViz 会看到"最后一帧停住"。
+uvc_backend: v4l2
+enumerate_net_device: false
+device_num: 1
+device_preset: Default
+
+enable_color: true
+color_width: 1280
+color_height: 800
+color_fps: 30
+color_format: RGB
+color_frame_queue_max_frames: 1
+"color.image_raw.enable_pub_plugins":
+  - image_transport/raw
+color_preset: ""
+
+enable_depth: true
+depth_width: 1280
+depth_height: 800
+depth_fps: 30
+depth_format: Y16
+depth_registration: false
+"depth.image_raw.enable_pub_plugins":
+  - image_transport/raw
+
+enable_frame_sync: true
+enable_depth_scale: true
+time_domain: global
+enable_sync_host_time: true
+enable_publish_extrinsic: true
+
+enable_hardware_noise_removal_filter: true
+enable_noise_removal_filter: false
+
+# IMU 与 WiFi 档一致：200 Hz、4g / 1000 dps，SDK 侧校正打开。
+# 分工见 gemini335l.yaml 的注释与 docs/reference/cameras.md。
+enable_accel: true
+enable_gyro: true
+enable_sync_output_accel_gyro: true
+accel_rate: 200hz
+accel_range: 4g
+gyro_rate: 200hz
+gyro_range: 1000dps
+enable_accel_data_correction: true
+enable_gyro_data_correction: true
+linear_accel_cov: 0.01
+
+point_cloud_decimation_filter_factor: 4
