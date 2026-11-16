@@ -16,3 +16,15 @@ if [ -z "${CYCLONEDDS_URI:-}" ] && [ -n "${_rak_cyclonedds_prefix}" ] &&
   export CYCLONEDDS_URI="file://${_rak_cyclonedds_prefix}/share/rak_bringup/config/cyclonedds.xml"
 fi
 unset _rak_cyclonedds_prefix
+
+# [AI] 2026-11-16: RMW 与 domain 也在这里兜底（与 rak_cyclonedds.dsv.in 的 set-if-unset 对齐）。
+# 背景：orin 的 ~/.bashrc 只 source /opt/ros/jazzy，没有这两个变量；手工起节点时
+# 漏掉 export 就会落到 FastRTPS + domain 0，和开发机（Cyclone + domain 47）完全
+# 不可见——表现是 RViz 里"最后一帧留在屏幕上不动"，而不是报错。
+# set-if-unset：显式指定的值（如 bench 想换 RMW）仍然优先。
+if [ -z "${RMW_IMPLEMENTATION:-}" ]; then
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+fi
+if [ -z "${ROS_DOMAIN_ID:-}" ]; then
+  export ROS_DOMAIN_ID=47
+fi

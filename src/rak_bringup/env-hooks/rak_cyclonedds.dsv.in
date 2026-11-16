@@ -2,5 +2,8 @@
 # 同名 .sh 钩子的 dsv 通道（colcon/_local_setup_util 的 python 侧消费）；
 # set-if-unset：显式设置的 CYCLONEDDS_URI 优先。路径在配置期按本包安装前缀展开。
 set-if-unset;CYCLONEDDS_URI;file://@CMAKE_INSTALL_PREFIX@/share/rak_bringup/config/cyclonedds.xml
+# [AI] 2026-11-16: RMW 与 domain 必须和上面的 URI 同源注入。orin 的 ~/.bashrc 只
+# source /opt/ros/jazzy，没有这两个变量；漏设就落到 FastRTPS + domain 0，
+# 与开发机（Cyclone + domain 47）互相不可见，表现是 RViz 画面停在最后一帧。
 set-if-unset;RMW_IMPLEMENTATION;rmw_cyclonedds_cpp
 set-if-unset;ROS_DOMAIN_ID;47

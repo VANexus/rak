@@ -3,24 +3,45 @@
   Minimal Cyclone DDS config for xrak. Domain 47 is the project runtime domain.
 
   [AI] 2026-10-14 (IPC 基线, 见 docs/perf/ipc_baseline.md):
-  - <Internal><MaxMessageSize>65500</MaxMessageSize> — 已实测被 CycloneDDS 0.10.5 接受。
+  - MaxMessageSize=65500 — 已实测被 CycloneDDS 接受。
     大样本(2MB/帧)的 UDP 分片数 ~4x 下降, 61MB/s 跨进程端到端 p50 3.7ms -> 2.4ms。
   - SocketReceiveBufferSize 的两种写法(扁平 / <Internal><Socket> 子结构)均被本版 schema 拒绝
     ("ambiguous element prefix"); 大流量的接收缓冲改走内核侧
     (net.core.rmem_max/wmem_max = 16MB, /etc/sysctl.d/99-rak-ipc.conf)。
-  - lo 绑定 / 关多播 实测无收益(±1Hz, 延迟不变), 维持 autodetermine + 多播,
-    远程 RViz 的发现不受影响。
+  - lo 绑定 / 关多播 实测无收益(±1Hz, 延迟不变), 维持多播, 远程 RViz 的发现不受影响。
+
+  [AI] 2026-11-16: DDS 网卡由 autodetermine 改为显式钉死局域网口。
+  背景：本机除 WiFi 外还有 docker 网桥(172.19.0.1 / 172.22.0.1)和 netmaker
+  (100.121.213.6, WireGuard, MTU 1420, 对端 endpoint 是公网中继 8.129.26.180)。
+  autodetermine 当前按默认路由恰好挑了 WiFi，但只要默认路由/接口枚举顺序变化，
+  DDS 的发现与数据就可能落到隧道或网桥上。两台机器本来就在 192.168.5.0/24 同网段直连
+  (本机 ip route get 192.168.5.215 -> wlp0s20f3；orin 同网段 -> wlP1p1s0)，不需要隧道。
+
+  机器相关项 —— 本文件是【开发机】版本：
+    NetworkInterface/@name = wlp0s20f3   (192.168.5.182)
+    Peers/Peer/@address    = 192.168.5.215 (orin)
+  orin 上的同一份配置需改成 wlP1p1s0 / 192.168.5.182。
+  CycloneDDS 0.11 的 NetworkInterface/@name 只接受网卡名，写 IP 会直接报
+  "does not match an available interface"（2026-11-16 实测）。
 -->
 <CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
   <Domain id="47">
     <General>
       <Interfaces>
-        <NetworkInterface autodetermine="true" priority="default" multicast="default" />
+        <!-- 只保留局域网口；autodetermine="false" 防止再自动加入 docker 网桥 / netmaker。 -->
+        <NetworkInterface name="wlp0s20f3" autodetermine="false" multicast="true" priority="default" />
       </Interfaces>
       <AllowMulticast>true</AllowMulticast>
+      <!-- 0.11 起 MaxMessageSize 归 General；写在 Internal 下仍生效但会告警。 -->
+      <MaxMessageSize>65500B</MaxMessageSize>
     </General>
     <Discovery>
-      <!-- [AI] 2026-10-15: 默认 Discovery/MaxAutoParticipantIndex=9 (0.10.5 xsd)。每进程一个
+      <!-- 钉死 LAN 对端，避免依赖 WiFi 多播完成 SPDP（本链路多播丢包会让新起的
+           participant 长时间发现不到对端）。 -->
+      <Peers>
+        <Peer address="192.168.5.215" />
+      </Peers>
+      <!-- [AI] 2026-10-15: 默认 Discovery/MaxAutoParticipantIndex=9。每进程一个
            participant index，域 47 实测进程数 ~20+（chassis 栈 + nav2/slam 栈 12 + 相机 TF
            静态节点 + 语音栈），超限的节点启动即死于
            "Failed to find a free participant index for domain 47"
@@ -29,8 +50,5 @@
            端口号 = 7400 + 250*47 + 2*index + offset，index 须 <120 (schema 约束)，取 100。 -->
       <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
     </Discovery>
-    <Internal>
-      <MaxMessageSize>65500</MaxMessageSize>
-    </Internal>
   </Domain>
 </CycloneDDS>
