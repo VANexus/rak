@@ -197,6 +197,14 @@ class I2cImuNode(ManagedNode):
         self.last = None
         self.max_gap = 0.0
         self.max_sample_age_ms = 0.0
+        # [AI] R82 冻结看门狗：LSM6DSR 会掉回 power-down（CTRL1_XL/CTRL2_G 归 0），
+        # 此时 I2C 仍正常 ACK、寄存器回读也不报错，驱动只能从**数据**发现：
+        # 输出恒 0 或同一 12 字节连读不变。实测过连续 30 s 全 0（i2c_err=0），
+        # 不重配寄存器就永远发垃圾帧给 EKF。
+        self.raw_prev = None
+        self.raw_same = 0
+        self.freeze_reinit = 0
+        self.freeze_limit = 50
 
     # ---------------------------------------------------------------- configure
     def on_configure(self, state):
@@ -225,6 +233,7 @@ class I2cImuNode(ManagedNode):
         if len(self.gyro_bias) != 3:
             return self.fail(f'gyro_bias 需要 3 个数: {bias_raw!r}')
 
+        self.freeze_limit = int(self.declare('freeze_limit', 50))
         self.declare('startup_timeout_s', 5.0)
 
         if self.odr not in ODR_BITS:
@@ -312,6 +321,26 @@ class I2cImuNode(ManagedNode):
         if age_ms > self.max_sample_age_ms:
             self.max_sample_age_ms = age_ms
 
+        # [AI] R82: 冻结检测（恒 0 或连续同值）→ 重配寄存器，而不是继续发垃圾
+        if buf == self.raw_prev:
+            self.raw_same += 1
+        else:
+            self.raw_same = 0
+            self.raw_prev = buf
+        if self.raw_same >= self.freeze_limit:
+            self.raw_same = 0
+            self.freeze_reinit += 1
+            self.i2c.write_reg(REG_CTRL3_C, 0x44)          # BDU | IF_INC
+            self.i2c.write_reg(REG_CTRL1_XL, ODR_BITS[self.odr])
+            self.i2c.write_reg(REG_CTRL2_G, ODR_BITS[self.odr])
+            self.report('freeze', DiagnosticStatus.WARN,
+                        f'IMU 输出冻结 {self.freeze_limit} 连拍，已重配寄存器 '
+                        f'(累计 {self.freeze_reinit} 次)',
+                        {'reinit': self.freeze_reinit})
+            self.get_logger().warning(
+                f'IMU 数据冻结（连续 {self.freeze_limit} 帧同值），重配 CTRL1_XL/CTRL2_G'
+                f'（第 {self.freeze_reinit} 次）')
+            return
         gx, gy, gz, ax, ay, az = struct.unpack_from('<6h', buf)
         gyro = map_vec((gx * GYRO_SCALE, gy * GYRO_SCALE, gz * GYRO_SCALE), self.axis_map)
         gyro = tuple(v - b for v, b in zip(gyro, self.gyro_bias))

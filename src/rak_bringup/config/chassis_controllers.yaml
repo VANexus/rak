@@ -6,6 +6,7 @@
 #
 # [AI] 2026-10-14 装车实测回填：wheels_radius=0.0275（Ø5.5 cm）、
 #      sum=0.26（hw 0.1225 + ht 0.1375；轴距 24.5/轮距 27.5）。
+#      物理权威 = 固件 wheel_config.h（WHEEL_RADIUS_UM / WHEEL_LEVER_UM）；geometry_gate 校验。
 controller_manager:
   ros__parameters:
     update_rate: 100  # Hz；命令刷新率（25 kHz 位置环在 MCU 里）
@@ -97,7 +98,10 @@ mecanum_drive_controller:
     kinematics:
       # [AI] 2026-10-14 装车实测（取代固件 R30 台架值）：
       # 轮半径 27.5 mm；sum = hw+ht = 0.26（轴距 24.5、轮距 27.5）
-      wheels_radius: 0.0275
+      # [AI] 2026-11-18 实测回填：轮盘半径 0.0275 只是轮子本体，mecanum 实际滚在
+      # **滚子外缘**，有效滚动半径 0.0309。用 0.0275 时轮系里程比双传感器真值少 11%
+      # （实测：四轮 19.38 rad，雷达 0.599 m / 深度 0.601 m → r_eff=0.0309）。
+      wheels_radius: 0.0309
       sum_of_robot_center_projection_on_X_Y_axis: 0.26
       base_frame_offset:
         x: 0.0

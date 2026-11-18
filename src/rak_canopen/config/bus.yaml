@@ -39,8 +39,13 @@ chassis:
   package: "canopen_proxy_driver"
   dcf: "chassis.eds"
   boot_timeout_ms: 1000        # 官方参数：等 boot-up 的窗口；无板时 3 次失败后容器 abort
-  polling: true
-  period: 10                   # 反馈轮询 10 ms
+  # [AI] polling 必须 false（2026-11-18 实测）：ros2_canopen 的 ProxyDriver 在
+  # polling:true 时会用 SDO 周期读把 OD 写成它自己的缓存值，覆盖掉 TPDO 收到的
+  # 真实数据 —— 现象极隐蔽：线上 0x281 位置一路在涨，ROS 侧 0x2020 恒定不变，
+  # 底盘因此永远"轮子转但位置不动"、里程计零、`read()` 判活却拿不到新值。
+  # TPDO 已经在 500 Hz SYNC 下稳定回传，不需要轮询兜底。
+  polling: false
+  period: 10
   diagnostics:
     enable: false              # 按板判活由 rak_chassis 薄桥做，避免双份诊断
 

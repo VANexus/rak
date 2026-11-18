@@ -7,7 +7,10 @@
 > 线缆与对象事实源仍是两个下位仓：`../vehical_rak_motion/docs/CANOPEN-V5.md` + `docs/canopen/chassis.json`
 > （底盘板）、`../vehical_rak_arm/docs/CANOPEN-V5.md` + `docs/canopen/arm.json`（机械臂板）。
 > 无下位机时的验证 = `python3 scripts/verify_canopen_vcan.py`（vcan0 + fake slave，实测记录见
-> `docs/status/canopen_vcan_2026-11-14.md`）。**真机 can0 仍未验收**；同一总线永远只能有一个主站。
+> `docs/status/canopen_vcan_2026-11-14.md`）。**真机 can0 已验收（2026-11-17：G0–G3 全过，
+> 四轮真实前移 10 s，轮序/极性 v5 首测闭合）**；记录见
+> `docs/how-to/chassis_canopen_bringup.md` §7、上位机接入见 `docs/how-to/remote_host_chassis_access.md`；
+> 同一总线永远只能有一个主站。
 
 
 Layered embodied robot system for Jetson Orin Nano (JetPack 7.2). C++/ROS 2 (Jazzy) + a
@@ -584,7 +587,8 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   底盘 1 / 臂 2) with `rak_canopen` 的 `bus.yaml` + `master.dcf`，`rak_chassis` 薄桥经 proxy
   driver 的 rpdo/tpdo 话题交换 OD 对象。v4 `PROTOCOL.md`、`CanSession`、`can_link_smoke.py`
   与 `canopen_bringup.launch.py` 都是历史（2026-11-14 删除）。**无下位机时的验收**是
-  `scripts/verify_canopen_vcan.py`（vcan0 + fake slave）；真机 can0 未验收；同一总线永远
+  `scripts/verify_canopen_vcan.py`（vcan0 + fake slave）；真机 can0 已验收（2026-11-17，
+  G0–G3，见 `docs/how-to/chassis_canopen_bringup.md` §7）；同一总线永远
   只能有一个主站（双主站会把从站踢出 Operational）。
 
 ## Gotchas
@@ -674,9 +678,98 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
     URDF 的 `<ros2_control>` 段与对应 spawner。只裁 bus.yaml 的话另一台的 hardware
     仍会被激活，永远收不到反馈 → `read()` ERROR → 连 joint_state_broadcaster 一起停。
   - 实测：`/arm/rpdo` 505 Hz，`/joint_states` 真实读数。
-    **底盘板（node 1）2026-11-15 不在总线上**（NMT/SDO 全无应答），待接线核查。
+    **底盘板（node 1）2026-11-17 已上线并全链验收**（端子重压后 G0–G3 全过，
+    见 `docs/how-to/chassis_canopen_bringup.md` §7；此前 11-15/11-16 的"不在总线"
+    是物理层接触不良，SWD 曾证明固件本身在跑）。
 - The lidar `lidar_name` must be `N10_P` (108 B @ 460800); `N10` fails CRC. Use the udev alias
   `/dev/wheeltec_lidar`, never `/dev/ttyUSB0` (other serial adapters may also claim ttyUSB).
+- **2026-11-17 装车实测：轮子"跑久就卡/走很乱"的根因在固件极性表，不在主机侧。**
+  `encoder_sign` 由固件"kick 自检"学习后存进 Flash（sector 11 / `0x08060000`，
+  append-only 记录），而 R38 的矛盾自检只要 `duty>40%` + 1 ms 窗增量反向就**立刻翻**
+  —— 车顶墙/受憋时窗增量是噪声，于是撞一次墙就把极性翻坏并落盘，重启也带着错的：
+  表象是四轮有反馈但车不走、或左右互顶打滑。2026-11-17 已打两处补丁（`openocd
+  program` 实测 **Verified OK**）：**R77** —— 矛盾必须**连续 5 拍(50 ms)且滤波转速
+  ≥10 counts/ms** 才翻；再加"有电不转 2 s 就把该轮极性清 0 重学"的兜底。
+  **R78** —— `app_sign_store.h` 的 `SIGN_STORE_SECTOR` 原来是 `FLASH_SECTOR_11`，
+  但本板是 **512 KB F407，`0x08060000` 落在 sector 7**：擦除永远失败 → 记录只能写进
+  最初几十个空槽，之后再也存不进去，每次开机都载入**最早那条**（往往是错的），
+  而且"已有记录"让 kick 自检不再重学。改 `FLASH_SECTOR_7` 后实测记录写入成功
+  （`magic=0x53474E31 seq=1 signs=(-1,1,1,-1)`）且**跨复位保持**。
+  实测正确极性 = **`[-1,+1,+1,-1]`（FL/RR 反、FR/RL 正）**，主机侧对应 `state_sign`
+  （`rak_chassis.urdf.xacro`），命令侧 `wheel_sign` 仍全 `+1`。**SWD 读符号前必须
+  重新 `nm` 解析地址**（重编译后变量会移位，本轮因用旧地址读出过"estop=200"这类鬼值）。取证套路：`openocd … -c "mdw 0x20009bc8 1"` 读 `encoder_sign`、
+  `0x20009c74` `wheel_speed`、`0x20009bd0` `duty_q8`；**`st-flash read` 会 halt 核**，
+  读完必须 `reset run`（本轮踩过，OLED/CAN 全停但看着像固件坏了）。
+- **两块 IMU 的轴/朝向都实测过（2026-11-17）**：
+  板载（chassis F407）`s_acc_mg=[35,3.6,956] mg` → 重力沿**芯片 +Z**，模块是**平装**；
+  R76 的倾角算法按"竖装、重力 +Y"写，实测 pitch=−89.8°/roll=+84.2°（垃圾）。改成
+  `pitch=atan2(-ax,az)`、`roll=atan2(-ay,az)` 后实测 **−2.14°/−0.21°**（R78）。
+  Jetson 直连 LSM6DSR 正常：`axis_map:="-z,-x,y"` 下 `acc=(0.02,0.15,9.84)`、
+  `|a|=9.84`、gyro≈0 —— **但 `i2c_imu` 是 lifecycle 节点**，`ros2 run` 起来是
+  unconfigured，必须 `ros2 lifecycle set /i2c_imu configure` + `activate` 才发
+  `/imu/data_raw`（正常由 `robot.launch.py` 的 system_manager 拉起）。
+- **2026-11-18 装车实测：三处会让底盘"轮子转但车不走/飞转"的根因**
+  （都已修，别回退）：
+  ① **`bus.yaml` 的 `chassis.polling` 必须是 `false`**。ros2_canopen 的 `ProxyDriver`
+  在 `polling: true` 时用 SDO 周期读把 OD 写回它自己的缓存，**覆盖掉 TPDO 收到的真值**。
+  现象极具误导性：`candump can0,281:7FF` 位置字节一路增长，而 ROS `/chassis/rpdo` 的
+  `0x2020` 恒定不变（实测 3739004 卡死），`~0x2010` 恒为 −1；底盘因此永远里程计为零。
+  TPDO 在 500 Hz SYNC 下已稳定，不需要轮询。
+  ② **URDF 轮关节 `state_sign` 必须是 `1`**。固件 `car_wheel_positions()` 里已经
+  `out[i] = position_counts[i] * encoder_sign[i]`，OD `0x2020..` 出来就是"正指令 → 正
+  counts"（悬空实测四轴增量 FL=+582816 FR=+610134 RL=+593716 RR=+583507）。主机再用
+  `-1` 翻一次等于抵消，直走被算成自转。改了 URDF 必须重编 `rak_chassis` 插件 ——
+  **旧 `.so` 不认 `state_sign`，会继续按老逻辑翻转**（本轮踩过：URDF 全 `1` 了但
+  `/joint_states` 仍是 `-,+,+,-`）。
+  ③ **固件不要再"自动改极性"**。R77 运行期翻转、R78「有电不转就清 `encoder_sign`」两条
+  都删了：架空/打滑/被顶住时它们同样触发，清 0 会让
+  `car_motor_output_gate` 走 `encoder_uninitialized` 分支 → **75% 开环直驱**，轮子飞转且
+  极性学不回来（实测 Flash 里攒出 seq=1..8 七条互相矛盾的记录，开机载入最后一条=错的）。
+  极性只保留两个来源：开机从 Flash 读（人工标定一次）、`encoder_sign==0` 时 kick 自学。
+  恢复办法：`openocd … -c "flash erase_sector 0 7 7"`，再
+  `mww <encoder_sign> 0xFF0101FF`（= `[-1,+1,+1,-1]`）后 `resume`。
+- **2026-11-18 底盘速度环标定：PI 其实跑在 1 kHz，不是 25 kHz。**
+  `car_control_isr()` 里整段 PI 在 `if (++win_cnt >= 25U)` 内 —— 每 25 个 40 µs 节拍
+  才跑一次，即 **1 ms 一次**。旧增益 `e/2 + e/4`（0.75 Q8/ms）换算成物理量只有
+  **0.85 %/s**：误差 30 counts/ms 时占空比 1 秒才涨 0.9%，爬满 85% 要 100 秒。
+  表象是"指令 0.12 m/s 只走出 0.04 m/s（30% 跟踪）"，且误差越大约明显。
+  修法（R81）：改 `SPEED_KI_NUM/DEN = 1/2`（e_q8/2 每毫秒，满误差 0.5 s 到限幅），
+  并把 `pi_scale` 改成"距上次 PI 的毫秒数"（ISR 被延迟时物理增益不变）。
+  实测：0.10 m/s 跟踪 98%（轮系）/88%（雷达）。
+- **2026-11-18 `wheels_radius` 实测回填 0.0275 → 0.0309**。0.0275 是轮盘本体半径，
+  mecanum 实际滚在**滚子外缘**。用 0.0275 时四轮 19.38 rad 只算 0.533 m，而雷达
+  0.599 m、深度 0.601 m 两路独立吻合 → 有效半径 0.0309。回填后再次实测：
+  轮系 0.523 / 雷达 0.519 / 深度 0.525 m，**轮系/雷达 = 1.007**，里程计与双传感器
+  真值一致（此前差 11%）。四轮转角同号且极差 <6%，说明是直线不是自转。
+- **2026-11-18 IMU 功能升级与航向保持（两项收尾）**：
+  ① **Jetson 直连 IMU 会"数据冻结"**：LSM6DSR 偶发掉回 power-down，但 I2C 仍 ACK、
+  寄存器回读正常（i2c_err=0），驱动只能从**数据**发现 —— 实测连续 30 s 全 0，把
+  EKF 的 vyaw 全程喂垃圾。修法（R82）：`i2c_imu.py` 加看门狗，连续 50 帧同一 12 字节
+  即重写 CTRL1_XL/CTRL2_G 并报 WARN（实测 2.5 s 内触发一次并自愈，12 s 观测零帧
+  比例 0.00%）。**多次 ros2 run 会叠多个 i2c_imu 实例**（本轮叠到 3 个，频率统计全废），
+  起节点前必须 `pgrep -af i2c_imu` 清点。
+  ② **陀螺零偏 2026-11-18 重标定**：`0.001186,-0.007734,-0.003310` rad/s
+  （60 s 静置、35786 帧、az=9.7182 确认未冻结；标准误 ~0.001 °/s）。旧值
+  （2026-10-29）Z 轴差 0.155 °/s ≈ 10 min 56°，是"航向不可信"的主要来源。
+  ③ **底盘直行航向漂移 −2.0°/m（无稳定器）→ +0.42°/m（开）**：固件已有轮域稳定器
+  （R74，`cmd_flags.bit1` 门控 + 板载 IMU yaw-rate 阻尼/航向保持），默认关。
+  打开 = launch 加 `stabilizer:=true`（URDF → bridge → flags bit1 → MCU）。
+  实测 0.453 m 内漂 +0.19°（改善 ~5 倍）；速度跟踪不受影响（稳态 93–107%）。
+  ④ rf2o 激光里程计**位姿与航向不自洽**（位移方向 +37.9° = lidar_yaw 量值，航向差
+  177°；航向**变化量**准）：接 EKF 前必须只取位姿、禁 yaw（ekf.yaml 已按此设计）。
+- **排查固件控制量的正确姿势（2026-11-18）**：不要用 `st-flash read` 逐次抓
+  （每次 halt 核会把 ISR 记账打断，曾据此误判"ISR 只有 1 kHz"，真实是满速 25 kHz）。
+  固件里有 `car_dbg_mirror[12]`（seqlock：`[0]` 奇数=写入中）：
+  `openocd -c init -c halt -c "mdw <mirror> 12" -c resume -c shutdown`，
+  字段 `[v_cmd v_ramp duty(0.01%) speed(counts/ms) e_q8 ff scale isr_tick gap_cyc gap_max phase|estop<<8]`。
+  `gap_cyc` 应恒为 **6720**（168 MHz × 40 µs）；`scale` 应恒为 **1**。
+- **`0x2010..0x2013`（轮速反馈）会冻结在旧值**，`0x2020..0x2023`（int32 编码器计数）
+  一路正确。所以 `CanopenChassis` 现在用 `velocity_from_position:=true` 由位置差分
+  出速度，`jr` 的 `aux_state_*` 把位置当第二路状态导出（否则 joint_states 位置是 NaN、
+  车轮 TF 被 robot_state_publisher 丢弃、控制器只能积分速度算里程计）。
+- **两套安装树并存会静默喂旧 URDF**：`install/` 与 `install/architecture/` 同时存在时，
+  launch 里的 `get_package_share_directory` 可能取到旧那份（本轮表现为改了 `sign`
+  但线上一直是旧值）。改 URDF 后要么两棵树一起 build，要么确认 `AMENT_PREFIX_PATH` 顺序。
 - Simulation task telemetry is a command-motion estimate, not measured odometry. A
   successful software pause/resume test is not hardware acceptance; see
   `docs/reference/hardware_acceptance.md`.
@@ -716,17 +809,21 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   numerics within bf16, argmax identical, same `Decision` contract) is recorded in
   `docs/how-to/laya_tensorrt_runbook.md` §Acceptance and pinned by
   `src/rak_agent/test/test_tensorrt_decider.py`; a *new* engine needs that pass again.
-- **Wheel polarity: the firmware owns it — measured again 2026-11-16.** The 2026-10-14
+- **Wheel polarity: the firmware owns it — final answer 2026-11-18.** The 2026-10-14
   conclusion ("left pair FL/RL wired inverted, fix it host-side with `wheel_sign=-1 1 -1 1`")
-  is **void**. Two-wheel visual re-test showed the real grouping is front-pair vs rear-pair,
-  not left vs right, so the firmware directive table
-  (`vehical_rak_motion/Core/Inc/wheel_config.h`, `WHEEL_FWD_DIR_LIST`) is now all `+1`
-  and the host must **not** stack a second sign on top. URDF defaults
-  (`src/rak_description/urdf/rak_chassis.urdf.xacro`) and
-  `chassis_bringup.launch.py wheel_sign:=` therefore default to `1 1 1 1`; the per-joint
-  `sign` mechanism still exists (negates command **and** feedback together, keeping the
-  loop self-consistent), but only as an override after a re-wiring, with the physical
-  authority staying in `wheel_config.h`. `canopen_contract.yaml` records
+  is **void**. Command side: with all `+1` directives the base drives straight (visual +
+  wire re-tests 2026-11-16/17), so the firmware directive table
+  (`vehical_rak_motion/Core/Inc/wheel_config.h`, `WHEEL_FWD_DIR_LIST`) stays all `+1`
+  and the host must **not** stack a second sign on top. URDF defaults and
+  `chassis_bringup.launch.py wheel_sign:=` are therefore `1 1 1 1`; the per-joint
+  `sign` mechanism still exists (negates command **and** feedback together) only as an
+  override after a re-wiring. Feedback side: the firmware `car_wheel_positions()` already
+  multiplies by `encoder_sign` (true values `[-1,+1,+1,-1]`, Flash record `seq=1`,
+  survives `reset run`), so OD `0x2020..` arrives as "positive command → positive
+  counts" and the host `state_sign` **must stay 1** — the previous host-side `-1`
+  flipped it a second time, which is exactly why straight driving was metered as
+  spin-in-place (measured in air 2026-11-18: all four wheel deltas positive
+  FL=+582816 FR=+610134 RL=+593716 RR=+583507). `canopen_contract.yaml` records
   `[FL,FR,RL,RR] ↔ W1..W4` and points at the firmware for values — do not restate the
   numbers in a third place. Re-calibrate after any wheel, motor or encoder change.
 - **历史坑，别再复活**：v4 时代 `read()` 曾把 `fault_bitmap` 里 `cmd_stale`（bit3）也当反馈否决，

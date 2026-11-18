@@ -61,3 +61,6 @@ frames_*.pdf
 #   （.claude/skills 是还原时生成的符号链接，见上面的 .claude/）
 .agents/skills/
 agent/skills/
+core
+candump-*.log
+*.bak-*

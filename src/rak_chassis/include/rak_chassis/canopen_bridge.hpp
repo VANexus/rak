@@ -27,17 +27,19 @@ namespace rak_chassis
  * 命令走 <driver_node>/tpdo（proxy driver 转成 RPDO 发给板子），反馈走
  * <driver_node>/rpdo（板子 TPDO 上来的对象）。 */
 
-/// OD 数据类型：只支持板上实际用到的两种 16 位类型。
+/// OD 数据类型。kInt32 只用于状态方向（轮位置 0x2020..0x2023 是 int32 counts），
+/// 命令方向仍是 16 位（板上速度指令对象就是 INT16）。
 enum class ObjectType
 {
   kInt16,
   kUint16,
+  kInt32,
 };
 
 /// 解析 "0x2040" / "2040"（十进制）/ "0X2040" 到 16 位对象索引。
 bool parse_object_index(const std::string & text, uint16_t & index);
 
-/// 解析 "int16" / "uint16"。
+/// 解析 "int16" / "uint16" / "int32"。
 bool parse_object_type(const std::string & text, ObjectType & type);
 
 /// 一个关节（= 一个 OD 对象对）的完整绑定，全部来自 URDF <param>。
@@ -54,8 +56,22 @@ struct JointSpec
   ObjectType state_type = ObjectType::kInt16;
   /// 每 1 count 对应多少 SI 单位（如 0.01 = 0.01 rad/s 分辨率）。
   double state_scale = 0.0;
-  /// 命令与反馈同时取反（旧 wheel_sign 语义）。
+  /// 命令取反（线上下发值 × sign）。
   double sign = 1.0;
+  /// 反馈取反。**默认跟随 sign**（旧 wheel_sign 语义：命令与反馈同时取反，
+  /// 闭环自洽）；单独给出时可以把"命令方向"和"编码器读数方向"分开 ——
+  /// 2026-11-17 装车遇到的就是这种：固件指令表与实际接线不一致，左侧两轮
+  /// 纯前进命令下反转（车斜着走）。那时只能改命令侧，反馈侧保持原始真值。 */
+  double state_sign = 1.0;
+  /* [AI] 2026-11-17 第二路状态（轮位置）：四个轮子除了速度反馈，板上还发布
+     0x2020..0x2023 的 int32 编码器计数。有它 joint_state_broadcaster 才发布数字
+     而不是 NaN（NaN 位置会让 robot_state_publisher 丢弃车轮 TF），
+     mecanum_drive_controller 也才能按"位置增量"算里程计而不是积分速度。 */
+  bool has_aux_state = false;
+  uint16_t aux_state_object = 0U;
+  ObjectType aux_state_type = ObjectType::kInt16;
+  double aux_state_scale = 0.0;   ///< 每 1 count 对应多少 SI 单位（rad/count）
+  std::string aux_state_interface;  ///< 接口名（轮 = "position"）
 };
 
 /// 命令编码结果。非 kOk 时 data 恒 0 且**不得下发**。
@@ -155,6 +171,22 @@ private:
    * 故不加锁；rpdo 状态由订阅回调（spin 线程）写入，用 mutex_ 保护。 */
   std::vector<double> command_;
   std::vector<double> state_;
+  /// 第二路状态（轮位置，rad）。无 aux 绑定的关节恒 0 且不导出。
+  std::vector<double> aux_state_;
+  /// cmd_flags.bit1 = 轮域陀螺稳定器（固件 R74，默认关）。开=用板上 IMU 的
+  /// yaw rate 闭环修四轮目标，直走抗偏的直接手段；风险见 docs/CANOPEN-V5.md §5。
+  bool stabilizer_ = false;
+  /// 速度反馈改用轮位置差分（需要 aux_state）。2026-11-17 装车实测：板上
+  /// 0x2010..0x2013 的速度对象会**冻结在旧值**（位置在动、速度仍是上一段的数），
+  /// 而 0x2020..0x2023 的编码器位置一路正确。里程计和闭环都只信可靠的那路。
+  bool velocity_from_position_ = false;
+  std::vector<double> prev_aux_state_;
+  Clock::time_point last_aux_time_{};
+  bool aux_prev_valid_ = false;
+  /// 命令周期性重发周期（0=只用事件驱动）。驱动/主站丢一帧 RPDO 时，
+  /// 下一个周期会把目标重新写下去，不必重启 bringup。
+  std::chrono::milliseconds command_refresh_{250};
+  Clock::time_point last_cmd_publish_{};
 
   mutable std::mutex mutex_;
   std::unordered_map<uint16_t, uint32_t> rpdo_values_;

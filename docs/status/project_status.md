@@ -1,8 +1,61 @@
 # 项目总体状态
 
-> 状态：现行 · 最后更新：2026-11-12
+> 状态：现行 · 最后更新：2026-11-18
 
-更新日期：2026-11-15
+更新日期：2026-11-18
+
+## 2026-11-18 增量：底盘直行全链路闭合（真机验收，四轮同向 + 双传感器里程计对齐）
+
+本轮把"前进很歪、抬起放下后乱跑"从现象追到六个独立根因并全部闭合。
+每条的现场证据与复现方法在 `AGENTS.md` § Gotchas 对应条目，这里只记结论与数值。
+
+**修复清单（主机侧）**
+
+| # | 根因 | 修复 | 文件 |
+|---|------|------|------|
+| 1 | `bus.yaml` `chassis.polling: true` 让 ProxyDriver 用 SDO 轮询覆盖 TPDO 写入的 OD，ROS 侧轮位置永久冻结 | `polling: false` | `src/rak_canopen/config/bus.yaml` |
+| 2 | 雷达斜装，`lidar_yaw=0.9460`（54.2°）差 90° | `-0.6561`（−37.6°，激光墙 1.02 m ↔ 深度 0.87 m 互证） | `urdf/rak_chassis.urdf.xacro` |
+| 3 | 轮位置反馈没进 ros2_control（joint_states 位置 NaN → 车轮 TF 被丢 → 里程计只能积分速度） | 每关节 `aux_state_*`（0x2020.. int32，rad/count=2π/61600）+ `state_interface position` | 同上 + `rak_chassis` |
+| 4 | `state_sign=-1` 与固件重复应用极性 → 直走被算成自转 | 全改 `1`（固件 `car_wheel_positions()` 已乘 `encoder_sign`） | 同上 |
+| 5 | `0x2010..` 轮速反馈会冻结 | `velocity_from_position:=true` 由位置差分出速度 | `chassis_bringup.launch.py` / URDF |
+| 6 | 轮命令 RPDO 事件驱动，丢一帧 OD 就停在旧值 | `command_refresh_ms=250` 强制周期重发 | `src/rak_chassis/src/canopen_bridge.cpp` |
+| 7 | `wheels_radius=0.0275` 是轮盘半径，麦轮实际滚在滚子外缘 | 实测回填 `0.0309` | `config/chassis_controllers.yaml` |
+| 8 | IMU 陀螺零偏是 10 月旧值，Z 轴差 0.155 °/s | 60 s 静置重标定 `0.001186,-0.007734,-0.003310` | `launch/sensors.launch.py` |
+
+**修复清单（固件 `~/vehical_rak_motion`，openocd 实烧 Verified OK）**
+
+| # | 根因 | 修复 |
+|---|------|------|
+| 1 | R38 矛盾自检撞一次墙就翻极性并落盘 | **R77**：须连续 5 拍 + 滤波转速 ≥10 counts/ms |
+| 2 | `SIGN_STORE_SECTOR=FLASH_SECTOR_11`，本板 512 KB 根本没有 → 擦除永远失败、每次开机载入最早那条 | **R78**：改 `FLASH_SECTOR_7` |
+| 3 | 「有电不转 2 s 清极性重学」会把车踢飞（清 0 → gate 走 `encoder_uninitialized` → 75% 开环直驱） | **R80 删除**；极性只留 Flash 预载 + kick 自学 |
+| 4 | PI 实际跑在 1 kHz（`if (++win_cnt >= 25U)`），旧增益只有 0.85 %/s，爬满要 100 s | **R81** `SPEED_KI_NUM/DEN=1/2` + 按毫秒折算 + 抗饱和 |
+| 5 | 摩擦前馈阈值公式写反（目标的 2% 而非 20%），静止时 `same_dir` 又判成反向 → 前馈永不触发 | **R79/R80** 相对阈值 + 静止算同向 |
+| 6 | 板载 IMU 倾角按"竖装重力 +Y"写，实测平装重力 +Z → pitch −89.8° | **R78** 改 `atan2(-ax,az)`/`atan2(-ay,az)`，实测 −2.14°/−0.21° |
+
+**主机侧新增**：`rak_imu_driver` 数据冻结看门狗（LSM6DSR 偶发掉回 power-down，I2C 仍
+ACK、寄存器回读正常，只能从数据发现；连续 50 帧同值即重配 CTRL1_XL/CTRL2_G 并报 WARN。
+实测 2.5 s 内触发并自愈）。
+
+**验收数据（真机落地，墙前，雷达 + 深度双独立真值）**
+
+| 测试 | 结果 |
+|------|------|
+| 0.5 m @0.12 m/s 直行 | 轮系 0.523 / 雷达 0.519 / 深度 0.525 m，**轮系/雷达 = 1.007** |
+| 四轮转角 | +17.44/+16.53/+16.63/+17.04 rad，同号、极差 5.3%（直线，非自转） |
+| 速度稳态跟踪 | 0.05 m/s → 94–107%；0.10 m/s → 98%（轮系）/88%（雷达） |
+| 航向漂移 | 稳定器关 **−2.0 °/m** → 开（`stabilizer:=true`，`cmd_flags.bit1` 实测 0x3）**+0.42 °/m** |
+| 极性持久化 | Flash `seq=1 signs=(-1,1,1,-1)`，kick 自学结果一致，`reset run` 后自动载入 |
+| 雷达/深度一致性 | 前方墙：雷达 1.02 m ↔ 深度 0.87 m（同一面墙，装位差）；行驶中两路差 <5% |
+
+**已知未闭合（诚实记录）**
+
+- rf2o 位姿与航向不自洽（位移方向 +37.9°≈lidar_yaw 量值，航向差 177°；航向变化量准）。
+  接 EKF 只可取位姿、禁 yaw —— `ekf.yaml` 已按此设计，但 **EKF 真机融合尚未验收**。
+- `0x2010..` 轮速反馈仍会在空闲时读到陈旧值（已由位置差分绕开，根因在固件上报路径，未修）。
+- `/chassis/rpdo` 话题 ~77 Hz 而线上 99 Hz（best_effort KEEP_LAST(1) + 驱动 drop 路径），不影响功能。
+- 板载 IMU 的 yaw 只用于固件稳定器；与 Jetson IMU 的航向互校还没做。
+- 打滑检测（DOB/滑移降权）只有固件骨架（`SLIP_*`），主机侧 `slip_watch` 未接真机。
 
 ## 2026-11-15 增量：4D 融合视觉导航 v2.0（ADR-0027，软件门禁全绿 / 真机未验证）
 

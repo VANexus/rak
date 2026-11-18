@@ -42,10 +42,13 @@
   <!-- [AI] 每轮极性（顺序 FL FR RL RR，经 launch 的 wheel_sign 单参数拆开）：
        +1 正常，-1 表示该轮命令与反馈同时取反。
        物理方向的唯一权威在固件 vehical_rak_motion/Core/Inc/wheel_config.h
-       （wheel_forward_dir / wheel_encoder_dir）。2026-11-16 两轮目视实测后，
-       固件把指令表收敛为全 +1（W1/W2 与 W3/W4 分组反，不是左右侧反），
-       因此 Jetson 侧不再叠加第二份符号，四个默认值统一 +1；
+       （wheel_forward_dir / wheel_encoder_dir）。2026-11-16/17 目视+线级实测：
+       指令全 +1 时车直着往前走，Jetson 不叠加第二份命令符号，四默认值统一 +1；
        2026-10-14“左侧 FL/RL 取反”的旧结论作废。
+       反馈侧同理：固件 car_wheel_positions() 已乘 encoder_sign（真值
+       [-1,+1,+1,-1]，Flash seq=1 实测保持），OD 0x2020.. 出来即"正指令→正
+       counts"，主机 state_sign 必须保持 1（2026-11-18 悬空实测四轮增量全正，
+       旧的 -1 会再翻一次，直走被里程计算成自转）。
        换轮/重接线后重新标定改 wheel_config.h（或 launch wheel_sign:=）。 -->
   <xacro:arg name="wheel_sign_fl" default="1"/>
   <xacro:arg name="wheel_sign_fr" default="1"/>
@@ -57,11 +60,23 @@
   <!-- [AI] 雷达扫描平面 base_link→laser_link 高度。2026-10-14 实测扫描平面离地
        0.18（确认为出光面，非壳顶）− base_height 0.0275 = 0.1525 -->
   <xacro:arg name="lidar_z" default="0.1525"/>
-  <!-- [AI] 雷达安装偏航。2026-10-17 重新斜放：雷达正方向相对车头往左≈30°
-       （REP-103：+z 朝上，向左 = +yaw）。同日用 RANSAC 实测校准：两面主墙相对
-       雷达 35.8°（互相垂直），要墙与车体轴对齐需 yaw = 90−35.8 = 54.2°
-       （0.9460 rad）；显示还歪就再调这一个数。 -->
-  <xacro:arg name="lidar_yaw" default="0.9460"/>
+  <!-- [AI] 雷达安装偏航（REP-103：+z 朝上，向左 = +yaw）。
+       2026-11-17 重标：旧值 0.9460 rad（54.2°）**错了 90°**，已作废。
+       证据（两路独立传感器互证）：
+       - 激光系 0..80° 有一段长直墙，垂直距离 1.02 m（RANSAC 162 点 / 4.10 m）；
+       - Gemini335L 深度图（424×240, fx=211.9）整幅 0.87 m 均匀、±42° 全覆盖，
+         且 0.87 + cam_x 0.15 ≈ 1.02 → 同一面墙；
+       - 该墙在激光系方位 ≈37.6°，要落到车头（base_link +x）需 yaw = −37.6°；
+         此时其余主墙法向恰为 90/180/270（残差 ≲2°）。
+       反证：若仍取 54.2°，这面墙落到 base 54..134°（车左），深度相机 ±45° 视野
+       根本看不到它、更不会算出 0.87 m —— 故 54.2 与相机结论互斥。
+       物理含义：雷达相对车头又被(or 一直)转了 ≈90°。**动了雷达就重标这个数**：
+       让它对准一面墙，令该墙在 /scan 上的激光方位 ≈ −(yaw)，即 base 0°。 -->
+  <xacro:arg name="lidar_yaw" default="-0.6561"/>
+  <!-- [AI] 2026-11-17 轮域陀螺稳定器（固件 R74，cmd_flags.bit1）。开着时板子用自己
+       IMU 的 yaw rate 闭环修四轮目标 —— 直走"很歪"的第一手段。默认关：它是跑在
+       MCU 里的内环，开之前先读 docs/CANOPEN-V5.md §5。用 launch 参数 A/B。 -->
+  <xacro:arg name="stabilizer" default="false"/>
 
   <!-- ===== 车体几何（2026-10-11 实测）===== -->
   <xacro:property name="wheelbase" value="0.245"/>  <!-- 轴距：前后轮最外点 30 − 轮径 5.5（2026-10-14） -->
@@ -237,6 +252,14 @@
       <param name="cmd_seq_object">0x2040</param>
       <param name="cmd_flags_object">0x2041</param>
       <param name="enable_bit">0</param>
+      <!-- 命令周期重发（ms）：事件驱动只在目标变化时发 RPDO1，丢一帧就停在旧值；
+           按这个周期无条件重发一遍。0 = 关闭（回到纯事件驱动）。 -->
+      <param name="command_refresh_ms">250</param>
+      <!-- 速度反馈 = 轮位置差分：板上 0x2010..0x2013 会冻结在旧值（实测），
+           0x2020..0x2023 的位置一路正确。里程计与闭环只信可靠的那路。 -->
+      <param name="velocity_from_position">true</param>
+      <!-- cmd_flags.bit1 = 轮域陀螺稳定器（见文件头 stabilizer 参数说明） -->
+      <param name="stabilizer">$(arg stabilizer)</param>
     </hardware>
     <!-- 轮命令 0x2000..0x2003 INT16，0.01 rad/s（counts = rad/s × 100）；
          反馈 0x2010..0x2013 INT16，0.01 rad/s（rad/s = counts × 0.01）。
@@ -248,13 +271,29 @@
       <param name="state_object">0x2010</param>
       <param name="state_type">int16</param>
       <param name="state_scale">0.01</param>
-      <param name="sign">$(arg wheel_sign_fl)</param>
+            <param name="sign">$(arg wheel_sign_fl)</param>
+      <!-- [AI] 2026-11-17 轮位置反馈 0x2020 INT32 = 编码器计数（固件 wheel_config.h
+           WHEEL_CPR_LIST = 61600 counts/rev）→ rad/count = 2π/61600 = 0.00010199976148018809。
+           没有这一路时 joint_state_broadcaster 只能发 NaN 位置：车轮 TF 被
+           robot_state_publisher 丢弃，mecanum 控制器也只能积分速度算里程计。 -->
+      <!-- [AI] R80 2026-11-18 悬空实测纠正：反馈**不要**再乘 encoder_sign。
+           固件 `car_wheel_positions()` 已经 `out[i] = position_counts[i] * sign`
+           （app_car.c），OD 0x2020.. 出来的就是"正指令 → 正 counts"。
+           实测：正向指令 1.5 s 四轴 OD 增量 FL=+582816 FR=+610134
+           RL=+593716 RR=+583507 —— 全为正。旧值 −1 再翻一次，正是
+           "直走被里程计算成自转"的根因。命令侧符号不动。 -->
+      <param name="state_sign">1</param>
+      <param name="aux_state_object">0x2020</param>
+      <param name="aux_state_type">int32</param>
+      <param name="aux_state_scale">0.00010199976148018809</param>
+      <param name="aux_state_interface">position</param>
       <!-- 显式 min/max：CM 的 JointSaturationLimiter 在无界 [nan,nan] 下会产生 NaN 指令 -->
       <command_interface name="velocity">
         <param name="min">-10</param>
         <param name="max">10</param>
       </command_interface>
       <state_interface name="velocity"/>
+      <state_interface name="position"/>
     </joint>
     <joint name="front_right_wheel">
       <param name="command_object">0x2001</param>
@@ -263,12 +302,25 @@
       <param name="state_object">0x2011</param>
       <param name="state_type">int16</param>
       <param name="state_scale">0.01</param>
-      <param name="sign">$(arg wheel_sign_fr)</param>
+            <param name="sign">$(arg wheel_sign_fr)</param>
+      <!-- [AI] 2026-11-17 轮位置反馈 0x2021 INT32 = 编码器计数（固件 wheel_config.h
+           WHEEL_CPR_LIST = 61600 counts/rev）→ rad/count = 2π/61600 = 0.00010199976148018809。
+           没有这一路时 joint_state_broadcaster 只能发 NaN 位置：车轮 TF 被
+           robot_state_publisher 丢弃，mecanum 控制器也只能积分速度算里程计。 -->
+      <!-- 反馈符号 = 固件实测编码器极性 encoder_sign（SWD 读出，
+           openocd 清 0 后 kick 自学得到）：[-1,+1,+1,-1]。
+           这一路不快照固件就会让里程计把"直走"算成自转。命令侧符号不动。 -->
+      <param name="state_sign">1</param>
+      <param name="aux_state_object">0x2021</param>
+      <param name="aux_state_type">int32</param>
+      <param name="aux_state_scale">0.00010199976148018809</param>
+      <param name="aux_state_interface">position</param>
       <command_interface name="velocity">
         <param name="min">-10</param>
         <param name="max">10</param>
       </command_interface>
       <state_interface name="velocity"/>
+      <state_interface name="position"/>
     </joint>
     <joint name="rear_left_wheel">
       <param name="command_object">0x2002</param>
@@ -277,12 +329,25 @@
       <param name="state_object">0x2012</param>
       <param name="state_type">int16</param>
       <param name="state_scale">0.01</param>
-      <param name="sign">$(arg wheel_sign_rl)</param>
+            <param name="sign">$(arg wheel_sign_rl)</param>
+      <!-- [AI] 2026-11-17 轮位置反馈 0x2022 INT32 = 编码器计数（固件 wheel_config.h
+           WHEEL_CPR_LIST = 61600 counts/rev）→ rad/count = 2π/61600 = 0.00010199976148018809。
+           没有这一路时 joint_state_broadcaster 只能发 NaN 位置：车轮 TF 被
+           robot_state_publisher 丢弃，mecanum 控制器也只能积分速度算里程计。 -->
+      <!-- 反馈符号 = 固件实测编码器极性 encoder_sign（SWD 读出，
+           openocd 清 0 后 kick 自学得到）：[-1,+1,+1,-1]。
+           这一路不快照固件就会让里程计把"直走"算成自转。命令侧符号不动。 -->
+      <param name="state_sign">1</param>
+      <param name="aux_state_object">0x2022</param>
+      <param name="aux_state_type">int32</param>
+      <param name="aux_state_scale">0.00010199976148018809</param>
+      <param name="aux_state_interface">position</param>
       <command_interface name="velocity">
         <param name="min">-10</param>
         <param name="max">10</param>
       </command_interface>
       <state_interface name="velocity"/>
+      <state_interface name="position"/>
     </joint>
     <joint name="rear_right_wheel">
       <param name="command_object">0x2003</param>
@@ -291,12 +356,28 @@
       <param name="state_object">0x2013</param>
       <param name="state_type">int16</param>
       <param name="state_scale">0.01</param>
-      <param name="sign">$(arg wheel_sign_rr)</param>
+            <param name="sign">$(arg wheel_sign_rr)</param>
+      <!-- [AI] 2026-11-17 轮位置反馈 0x2023 INT32 = 编码器计数（固件 wheel_config.h
+           WHEEL_CPR_LIST = 61600 counts/rev）→ rad/count = 2π/61600 = 0.00010199976148018809。
+           没有这一路时 joint_state_broadcaster 只能发 NaN 位置：车轮 TF 被
+           robot_state_publisher 丢弃，mecanum 控制器也只能积分速度算里程计。 -->
+      <!-- [AI] R80 2026-11-18 悬空实测纠正：反馈**不要**再乘 encoder_sign。
+           固件 `car_wheel_positions()` 已经 `out[i] = position_counts[i] * sign`
+           （app_car.c），OD 0x2020.. 出来的就是"正指令 → 正 counts"。
+           实测：正向指令 1.5 s 四轴 OD 增量 FL=+582816 FR=+610134
+           RL=+593716 RR=+583507 —— 全为正。旧值 −1 再翻一次，正是
+           "直走被里程计算成自转"的根因。命令侧符号不动。 -->
+      <param name="state_sign">1</param>
+      <param name="aux_state_object">0x2023</param>
+      <param name="aux_state_type">int32</param>
+      <param name="aux_state_scale">0.00010199976148018809</param>
+      <param name="aux_state_interface">position</param>
       <command_interface name="velocity">
         <param name="min">-10</param>
         <param name="max">10</param>
       </command_interface>
       <state_interface name="velocity"/>
+      <state_interface name="position"/>
     </joint>
   </ros2_control>
 

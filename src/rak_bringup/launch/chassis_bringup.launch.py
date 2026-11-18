@@ -58,6 +58,8 @@ def _launch_setup(context, *args, **kwargs):
     if slaves not in ("both", "chassis", "arm"):
         raise RuntimeError(f"slaves 必须是 both|chassis|arm，得到 {slaves!r}")
 
+    stabilizer = config("stabilizer").split()[0].lower()
+    assert stabilizer in ("true", "false"), f"stabilizer 只接受 true/false，得到 {stabilizer!r}"
     sign = config("wheel_sign").split()
     assert len(sign) == 4, f"wheel_sign 需 4 个值（FL FR RL RR），得到 {sign!r}"
     sign_fl, sign_fr, sign_rl, sign_rr = sign
@@ -67,7 +69,7 @@ def _launch_setup(context, *args, **kwargs):
             f"xacro {urdf_path} allow_motion:={allow_motion} "
             f'wheel_sign_fl:="{sign_fl}" wheel_sign_fr:="{sign_fr}" '
             f'wheel_sign_rl:="{sign_rl}" wheel_sign_rr:="{sign_rr}" '
-            f"slaves:={slaves}"
+            f"slaves:={slaves} stabilizer:={stabilizer}"
         ),
         value_type=str,
     )
@@ -170,6 +172,11 @@ def _launch_setup(context, *args, **kwargs):
             output="screen",
         ))
 
+    # [AI] 校验与 spawn 分离：slaves:=chassis 时 arm 写者不参与（没有臂段就
+    # 没有 position 接口），但值仍必须合法。2026-11-16 修复：旧 elif 链在
+    # chassis-only + jtc 时会把"该档不适用"误判成非法值而直接拒绝启动。
+    if arm_writer not in ("jtc", "wbc", "none"):
+        raise RuntimeError(f"arm_motion_writer 必须是 jtc|wbc|none，得到 {arm_writer!r}")
     if arm_writer == "jtc" and slaves in ("both", "arm"):
         nodes.append(
             Node(
@@ -194,8 +201,6 @@ def _launch_setup(context, *args, **kwargs):
                 output="screen",
             )
         )
-    elif arm_writer != "none":
-        raise RuntimeError(f"arm_motion_writer 必须是 jtc|wbc|none，得到 {arm_writer!r}")
 
     return nodes
 
@@ -233,9 +238,16 @@ def generate_launch_description():
             "urdf",
             default_value=description_share + "/urdf/rak_chassis.urdf.xacro"),
         DeclareLaunchArgument(
-            # 物理方向权威在固件 wheel_config.h；2026-11-16 起固件指令表全 +1，
-            # Jetson 侧不再叠加第二份符号（详见 rak_chassis.urdf.xacro 注释）。
+            # 物理方向权威在固件 wheel_config.h；2026-11-16/17 实测命令侧全 +1 时
+            # 车直行，Jetson 不再叠加第二份符号。反馈极性是每关节 state_sign 的事
+            # （固件已乘 encoder_sign，主机保持 +1），不要在这里改。注意负数会被
+            # ros2 launch 当选项，CLI 覆盖必须写成 wheel_sign:="1 1 1 1" 带引号形式。
             "wheel_sign", default_value="1 1 1 1",
             description="四轮极性 FL FR RL RR；+1 正常，-1 命令与反馈同时取反"),
+        DeclareLaunchArgument(
+            # 固件 R74 的 cmd_flags.bit1：盘上 IMU 的 yaw rate 闭环修四轮目标。
+            # 这是"直走很歪"的第一手段；默认关，A/B 用 true 打开。
+            "stabilizer", default_value="false",
+            description="轮域陀螺稳定器（固件内环）：true 打开，直走抗偏"),
         OpaqueFunction(function=_launch_setup),
     ])

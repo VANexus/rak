@@ -90,6 +90,11 @@ bool parse_object_type(const std::string & text, ObjectType & type)
     type = ObjectType::kUint16;
     return true;
   }
+  if (clean == "int32") {
+    /* [AI] 只用于状态方向（轮位置 0x2020..0x2023 是 int32 encoder counts）。 */
+    type = ObjectType::kInt32;
+    return true;
+  }
   return false;
 }
 
@@ -106,27 +111,46 @@ CommandValue encode_command(const JointSpec & spec, double value, bool allow_mot
     return {CommandStatus::kOutOfRange, 0U};
   }
   const long rounded = std::lround(scaled);
-  const long minimum = spec.command_type == ObjectType::kInt16 ? kInt16Min : kUint16Min;
-  const long maximum = spec.command_type == ObjectType::kInt16 ? kInt16Max : kUint16Max;
+  long minimum = kUint16Min;
+  long maximum = kUint16Max;
+  if (spec.command_type == ObjectType::kInt16) {
+    minimum = kInt16Min;
+    maximum = kInt16Max;
+  } else if (spec.command_type == ObjectType::kInt32) {
+    minimum = std::numeric_limits<int32_t>::min();
+    maximum = std::numeric_limits<int32_t>::max();
+  }
   if (rounded < minimum || rounded > maximum) {
     /* [AI] 越界显式失败：绝不静默饱和（夹爪/负角旧事故的教训）。 */
     return {CommandStatus::kOutOfRange, 0U};
   }
   const auto narrowed =
     spec.command_type == ObjectType::kInt16 ?
-    static_cast<uint16_t>(static_cast<int16_t>(rounded)) :
-    static_cast<uint16_t>(rounded);
+    static_cast<uint32_t>(static_cast<uint16_t>(static_cast<int16_t>(rounded))) :
+    static_cast<uint32_t>(rounded);
   return {CommandStatus::kOk, static_cast<uint32_t>(narrowed)};
+}
+
+double decode_state_raw(ObjectType type, double scale, double sign, uint32_t raw)
+{
+  double counts = 0.0;
+  switch (type) {
+    case ObjectType::kInt16:
+      counts = static_cast<double>(static_cast<int16_t>(raw & 0xFFFFU));
+      break;
+    case ObjectType::kUint16:
+      counts = static_cast<double>(raw & 0xFFFFU);
+      break;
+    case ObjectType::kInt32:
+      counts = static_cast<double>(static_cast<int32_t>(raw));
+      break;
+  }
+  return counts * scale * sign;
 }
 
 double decode_state(const JointSpec & spec, uint32_t raw)
 {
-  const auto low = static_cast<uint16_t>(raw & 0xFFFFU);
-  const double counts =
-    spec.state_type == ObjectType::kInt16 ?
-    static_cast<double>(static_cast<int16_t>(low)) :
-    static_cast<double>(low);
-  return counts * spec.state_scale * spec.sign;
+  return decode_state_raw(spec.state_type, spec.state_scale, spec.state_sign, raw);
 }
 
 std::string CanopenBridge::node_logger_name() const
@@ -190,6 +214,40 @@ bool CanopenBridge::parse_hardware_parameters(const hardware_interface::Hardware
       return false;
     }
     feedback_timeout_ = std::chrono::milliseconds(static_cast<long>(parsed));
+  }
+
+  /* [AI] 2026-11-17：稳定器开关 + 命令周期重发（两个都是硬件参数，默认保守）。 */
+  stabilizer_ = false;
+  const auto stab = params.find("stabilizer");
+  if (stab != params.end()) {
+    const std::string value = trimmed(stab->second);
+    if (value == "true") {
+      stabilizer_ = true;
+    } else if (value != "false") {
+      (void)fail("stabilizer 只接受 \"true\"/\"false\", got '" + stab->second + "'");
+      return false;
+    }
+  }
+  velocity_from_position_ = false;
+  const auto vfp = params.find("velocity_from_position");
+  if (vfp != params.end()) {
+    const std::string value = trimmed(vfp->second);
+    if (value == "true") {
+      velocity_from_position_ = true;
+    } else if (value != "false") {
+      (void)fail("velocity_from_position 只接受 \"true\"/\"false\", got '" + vfp->second + "'");
+      return false;
+    }
+  }
+  command_refresh_ = std::chrono::milliseconds(250);
+  const auto refresh = params.find("command_refresh_ms");
+  if (refresh != params.end()) {
+    unsigned long parsed = 0U;
+    if (!parse_unsigned(trimmed(refresh->second), parsed) || parsed > 10000U) {
+      (void)fail("command_refresh_ms 非法（0..10000）: '" + refresh->second + "'");
+      return false;
+    }
+    command_refresh_ = std::chrono::milliseconds(static_cast<long>(parsed));
   }
 
   for (const auto * key : {"cmd_seq_object", "cmd_flags_object"}) {
@@ -298,6 +356,43 @@ bool CanopenBridge::parse_joint(
     return false;
   }
 
+  /* [AI] 2026-11-17 第二路状态（轮位置）。三个参数要么都给要么都不给；
+     不给时行为与旧版完全一致（只有速度状态）。 */
+  spec.has_aux_state = false;
+  std::string aux_object, aux_type, aux_scale, aux_iface;
+  (void)get("aux_state_object", false, aux_object);
+  (void)get("aux_state_type", false, aux_type);
+  (void)get("aux_state_scale", false, aux_scale);
+  (void)get("aux_state_interface", false, aux_iface);
+  const bool aux_any = !aux_object.empty() || !aux_type.empty() ||
+    !aux_scale.empty() || !aux_iface.empty();
+  if (aux_any) {
+    if (aux_object.empty() || aux_type.empty() || aux_scale.empty() || aux_iface.empty()) {
+      (void)fail(tag + "aux_state_* 四个参数必须同时给出（object/type/scale/interface）");
+      return false;
+    }
+    if (!parse_object_index(aux_object, spec.aux_state_object)) {
+      (void)fail(tag + "aux_state_object 非法: '" + aux_object + "'");
+      return false;
+    }
+    if (!parse_object_type(aux_type, spec.aux_state_type)) {
+      (void)fail(tag + "aux_state_type 非法: '" + aux_type + "'");
+      return false;
+    }
+    if (!parse_double(aux_scale, spec.aux_state_scale) || spec.aux_state_scale == 0.0) {
+      (void)fail(tag + "aux_state_scale 必须是非零有限数: '" + aux_scale + "'");
+      return false;
+    }
+    const std::string primary_iface =
+      kind_ == InterfaceKind::kVelocity ? "velocity" : "position";
+    if (aux_iface == primary_iface) {
+      (void)fail(tag + "aux_state_interface 不能与主状态接口同名: '" + aux_iface + "'");
+      return false;
+    }
+    spec.aux_state_interface = aux_iface;
+    spec.has_aux_state = true;
+  }
+
   spec.sign = 1.0;
   if (!sign.empty()) {
     double parsed = 0.0;
@@ -306,6 +401,17 @@ bool CanopenBridge::parse_joint(
       return false;
     }
     spec.sign = parsed;
+  }
+  spec.state_sign = spec.sign;   // 默认跟随命令符号（旧语义）
+  std::string state_sign;
+  (void)get("state_sign", false, state_sign);
+  if (!state_sign.empty()) {
+    double parsed = 0.0;
+    if (!parse_double(state_sign, parsed) || (parsed != 1.0 && parsed != -1.0)) {
+      (void)fail(tag + "state_sign 只接受 1 / -1: '" + state_sign + "'");
+      return false;
+    }
+    spec.state_sign = parsed;
   }
   return true;
 }
@@ -360,8 +466,10 @@ hardware_interface::CallbackReturn CanopenBridge::on_init(
       return hardware_interface::CallbackReturn::ERROR;
     }
 
-    /* 状态接口必须与 state_object 声明一致：velocity 恒有 1 个；position 有反馈才 1 个。 */
-    const std::size_t wanted_states = spec.has_state ? 1U : 0U;
+    /* 状态接口必须与 state_object 声明一致：主状态（velocity/position）有反馈才算 1 个，
+       第二路状态（轮 position）有 aux_state_object 才算 1 个。 */
+    const std::size_t wanted_states =
+      (spec.has_state ? 1U : 0U) + (spec.has_aux_state ? 1U : 0U);
     if (joint.state_interfaces.size() != wanted_states) {
       return fail(
         "joint '" + joint.name + "': 状态接口数量与 state_object 声明不符（期望 " +
@@ -369,7 +477,9 @@ hardware_interface::CallbackReturn CanopenBridge::on_init(
         std::to_string(joint.state_interfaces.size()) + "）");
     }
     for (const auto & state : joint.state_interfaces) {
-      if (state.name != iface_kind) {
+      if (state.name != iface_kind &&
+        !(spec.has_aux_state && state.name == spec.aux_state_interface))
+      {
         return fail("joint '" + joint.name + "': 不支持的状态接口 '" + state.name + "'");
       }
     }
@@ -378,12 +488,24 @@ hardware_interface::CallbackReturn CanopenBridge::on_init(
 
   command_.assign(joints_.size(), 0.0);
   state_.assign(joints_.size(), 0.0);
+  aux_state_.assign(joints_.size(), 0.0);
+  prev_aux_state_.assign(joints_.size(), 0.0);
+  aux_prev_valid_ = false;
   last_sent_.assign(joints_.size(), std::nullopt);
   range_reported_.assign(joints_.size(), false);
 
   std::string summary = "joints:";
   for (const auto & spec : joints_) {
     summary += " " + spec.name;
+  }
+  for (const auto & spec : joints_) {
+    RCLCPP_INFO(
+      rclcpp::get_logger(node_logger_name()),
+      "[dbg] joint=%s sign=%g state_sign=%g cmd_obj=0x%04X state_obj=0x%04X aux_obj=0x%04X",
+      spec.name.c_str(), spec.sign, spec.state_sign,
+      static_cast<unsigned>(spec.command_object),
+      static_cast<unsigned>(spec.state_object),
+      static_cast<unsigned>(spec.aux_state_object));
   }
   RCLCPP_INFO(
     rclcpp::get_logger(node_logger_name()),
@@ -403,6 +525,12 @@ std::vector<hardware_interface::StateInterface> CanopenBridge::export_state_inte
         kind_ == InterfaceKind::kVelocity ? hardware_interface::HW_IF_VELOCITY :
         hardware_interface::HW_IF_POSITION,
         &state_[i]);
+    }
+    /* [AI] 第二路状态（轮位置）：接口名来自 URDF 参数，joint_state_broadcaster
+       因此能发布数字位置，robot_state_publisher 不再丢弃车轮 TF。 */
+    if (joints_[i].has_aux_state) {
+      interfaces.emplace_back(
+        joints_[i].name, joints_[i].aux_state_interface, &aux_state_[i]);
     }
   }
   return interfaces;
@@ -590,6 +718,8 @@ hardware_interface::return_type CanopenBridge::read(
       return hardware_interface::return_type::ERROR;
     }
     stale_reported_ = false;
+    const double dt = aux_prev_valid_ ?
+      std::chrono::duration<double>(now - last_aux_time_).count() : 0.0;
     for (std::size_t i = 0U; i < joints_.size(); ++i) {
       if (!joints_[i].has_state) {
         continue;
@@ -598,7 +728,33 @@ hardware_interface::return_type CanopenBridge::read(
       if (value.has_value()) {
         state_[i] = decode_state(joints_[i], *value);
       }
+      if (joints_[i].has_aux_state) {
+        const auto aux = lookup_locked(joints_[i].aux_state_object);
+        if (aux.has_value()) {
+          aux_state_[i] = decode_state_raw(joints_[i].aux_state_type,
+              joints_[i].aux_state_scale, joints_[i].state_sign, *aux);
+        }
+      }
     }
+    /* 速度状态 = 位置差分。dt 不合理（首拍、卡顿、回绕）时不更新，保留上一拍。 */
+    if (velocity_from_position_ && aux_prev_valid_ && dt > 1e-4 && dt < 0.5) {
+      for (std::size_t i = 0U; i < joints_.size(); ++i) {
+        if (!(joints_[i].has_state && joints_[i].has_aux_state)) {
+          continue;
+        }
+        const double derived = (aux_state_[i] - prev_aux_state_[i]) / dt;
+        /* 量化噪声 1 count/拍 = 0.01 rad/s（100 Hz），超过 50 rad/s 只可能是解码
+           错位或位置回绕 —— 丢掉这一拍，绝不把尖峰喂给控制器。 */
+        if (std::isfinite(derived) && std::abs(derived) < 50.0) {
+          state_[i] = derived;
+        }
+      }
+    }
+    for (std::size_t i = 0U; i < joints_.size(); ++i) {
+      prev_aux_state_[i] = aux_state_[i];
+    }
+    last_aux_time_ = now;
+    aux_prev_valid_ = true;
   }
   return hardware_interface::return_type::OK;
 }
@@ -633,7 +789,23 @@ hardware_interface::return_type CanopenBridge::write(
    * 使能位（allow_motion=false 时 bit0=0）。 */
   ++cmd_seq_;
   publish_object(cmd_seq_object_, cmd_seq_);
-  publish_object(cmd_flags_object_, motion_ok ? (1U << enable_bit_) : 0U);
+  uint32_t flags = motion_ok ? (1U << enable_bit_) : 0U;
+  /* [AI] bit1 = 轮域陀螺稳定器（只有底盘固件认；臂板无门控不看这个字节）。 */
+  if (motion_ok && stabilizer_ && kind_ == InterfaceKind::kVelocity) {
+    flags |= 0x0002U;
+  }
+  publish_object(cmd_flags_object_, flags);
+
+  /* [AI] 命令周期重发：事件驱动只在目标变化时发帧，一旦某一帧 RPDO 丢了
+     （主站/驱动重连、总线仲裁输掉），板子的 OD 会停在旧值而主机毫不知情。
+     按 command_refresh_ms 把 last_sent_ 清空一次，让本周期无条件重发一遍。 */
+  if (command_refresh_.count() > 0) {
+    const auto now = Clock::now();
+    if (now - last_cmd_publish_ >= command_refresh_) {
+      std::fill(last_sent_.begin(), last_sent_.end(), std::nullopt);
+      last_cmd_publish_ = now;
+    }
+  }
 
   const bool suppressed_now = kind_ == InterfaceKind::kPosition && arm_suppressed();
   if (suppressed_now && !suppress_reported_) {

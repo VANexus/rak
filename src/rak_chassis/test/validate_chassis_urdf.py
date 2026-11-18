@@ -187,10 +187,18 @@ def main():
         ci = j.findall("command_interface")
         si = j.findall("state_interface")
         if n in WHEELS:
+            # [AI] 2026-11-17：轮子现在有第二路状态 position（0x2020.. 的 int32
+            # 编码器计数）。没有它 joint_state_broadcaster 发 NaN 位置，车轮 TF
+            # 被丢弃、控制器只能积分速度算里程计。
             check([c.get("name") for c in ci] == ["velocity"]
-                  and [s.get("name") for s in si] == ["velocity"],
-                  f"{n}: 1 个 velocity 命令 + velocity 状态"
-                  "（轮 position counts 未标定，不导出）")
+                  and [s.get("name") for s in si] == ["velocity", "position"],
+                  f"{n}: 1 个 velocity 命令 + velocity/position 两路状态")
+            p = {e.get("name"): (e.text or "").strip() for e in j.findall("param")}
+            check(p.get("aux_state_object", "").lower().startswith("0x20")
+                  and p.get("aux_state_type") == "int32"
+                  and abs(float(p.get("aux_state_scale", "0")) - 0.00010199976148018809) < 1e-12
+                  and p.get("aux_state_interface") == "position",
+                  f"{n}: aux_state_* 绑定齐全且 rad/count = 2π/61600")
         elif n in ARM:
             ok = (len(ci) == 1 and ci[0].get("name") == "position"
                   and len(si) == 1 and si[0].get("name") == "position")

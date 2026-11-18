@@ -256,12 +256,18 @@ def generate_launch_description():
                 "frame_id": "imu_link",
                 "topic": "/imu/data_raw",
                 "axis_map": "-z,-x,y",
-                # [AI] 2026-10-29: 陀螺零偏，**本机静置 60 s 实测**（rad/s），
-                # 在 axis_map 之后施加。不补的后果：Z 轴 −0.27 °/s →
-                # 10 min 漂 −163°，EKF 的 vyaw 直接吃这个误差，地图整体转歪。
+                # [AI] 陀螺零偏（rad/s），在 axis_map 之后施加。
+                # 2026-11-18 重标定（**静置 60 s，35786 帧，596.5 Hz，az=9.7182 确认
+                # 传感器未冻结**）：gx=-0.0079 °/s、gy=+0.0108 °/s、gz=+0.0219 °/s。
+                # 标准误 ~0.001 °/s。不补的后果：仅 Z 轴 +0.022 °/s 就够在 10 min
+                # 累积 +13.2°，EKF 的 vyaw 直接吃这个误差，地图整体转歪。
                 # robot_localization 的 EKF **不会**自己估计零偏，只能在这里补。
-                # 重测：python3 debug/bias_measure.py 60（车必须完全静止）
-                "gyro_bias": "-0.002902,-0.006872,-0.002291",
+                # 重测（车必须完全静止，且先看 i2c_imu 日志的 freeze_reinit 不为异常增长）：
+                #   ros2 run rak_imu_driver i2c_imu &  # configure+activate
+                #   python3 /tmp/bias60.py             # 60 s 静置，输出即总零偏
+                # 旧值（2026-10-29）：-0.002902,-0.006872,-0.002291 —— Z 轴差 0.0027 rad/s
+                # ≈ 0.155 °/s，10 min 就是 56°，这是之前"航向不可信"的主要来源。
+                "gyro_bias": "0.001186,-0.007734,-0.003310",
             }],
         ), condition=IfCondition(LaunchConfiguration("imu"))),
 
