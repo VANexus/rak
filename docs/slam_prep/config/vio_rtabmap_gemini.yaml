@@ -1,0 +1,28 @@
+# rtabmap_odom RGB-D 里程计 — Gemini 335L VIO 档
+#
+# 与仓库现有 config/vio_rtabmap.yaml 的差别只有同步窗口：
+#   - 现有值 0.05 s 是按 424x240@10 depth / @5 color 的 wifi 档写的；
+#   - 本文件的 0.12 s 面向 640x480@15 的 gemini335l_vio.yaml；
+#   - 如果仍用 wifi 档（彩色 5 Hz，周期 0.2 s），把 approx_sync_max_interval
+#     改成 0.25，否则大量帧对会被同步器丢掉。
+#
+# 订阅与 TF 归属：
+#   - 输入：/camera/color/image_raw + /camera/depth/image_raw + 同一 camera_info
+#   - 输出：/odometry/vio（**不发布 TF**）
+#   - odom -> base_footprint 仍由 robot_localization EKF 独占发布
+#     （ekf_4d.yaml 的 odom2 输入），不要在这里把 publish_tf 打开。
+#
+# 已知参数类型坑（0.23.13，仓库 docs 已记录）：
+#   Odom/*、Vis/*、GFTT/* 被声明成 string；从 YAML 传 double/bool 会把节点打死。
+#   所以本文件只保留接线必需的键，算法参数走 rtabmap 参数数据库或后续实测再调。
+rgbd_odometry:
+  ros__parameters:
+    frame_id: base_footprint
+    odom_frame_id: odom
+    publish_tf: false
+    approx_sync: true
+    approx_sync_max_interval: 0.12
+    queue_size: 10
+    wait_for_transform: 0.2
+    subscribe_depth: true
+    subscribe_rgb: true

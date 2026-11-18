@@ -1,0 +1,65 @@
+# Gemini 335L — VIO 档（本地 SLAM 用，不是远程 RViz 档）
+#
+# 默认的 wifi 档为了跨机 RViz 把彩色压到 424x240@5、深度 424x240@10；
+# rtabmap rgbd_odometry 的输入是「彩色+深度+同一相机内参」，5 Hz 彩色会把
+# VO 输出限到 5 Hz。这里给 SLAM/VIO 一条 640x480@15 的本地档：
+#   depth 640x480 Y16 @15  ≈ 9.2 MB/s
+#   color 640x480 RGB @15  ≈ 13.8 MB/s
+#   IMU   200 Hz           ≈ 0.06 MB/s
+# 合计约 23 MB/s：本机 DDS / 有线可用，**不要**在 WiFi 远程 RViz 时用这档；
+# 远程看图继续用 gemini335l.yaml 的 wifi 档。
+#
+# 用法（部署时）：
+#   ros2 launch rak_bringup depth_camera.launch.py camera:=gemini335l \
+#       config_file_path:=$HOME/rak/src/rak_bringup/config/gemini335l_vio.yaml
+#   ros2 launch rak_bringup vio.launch.py source:=rgbd
+#
+# 注意：depth_registration 保持 false。深度图在深度光学坐标系下给出，
+# rtabmap_odom 用 CameraInfo 和出厂外参，不假设彩色/深度逐像素对齐。
+uvc_backend: v4l2
+enumerate_net_device: false
+device_num: 1
+device_preset: Default
+
+enable_color: true
+color_width: 640
+color_height: 480
+color_fps: 15
+color_format: RGB
+color_frame_queue_max_frames: 1
+"color.image_raw.enable_pub_plugins":
+  - image_transport/raw
+color_preset: ""
+
+enable_depth: true
+depth_width: 640
+depth_height: 480
+depth_fps: 15
+depth_format: Y16
+depth_registration: false
+"depth.image_raw.enable_pub_plugins":
+  - image_transport/raw
+
+enable_frame_sync: true
+enable_depth_scale: true
+time_domain: global
+enable_sync_host_time: true
+enable_publish_extrinsic: true
+
+enable_hardware_noise_removal_filter: true
+enable_noise_removal_filter: false
+
+# 相机自带 IMU 仍只做交叉校验；航向权威是 Jetson 直连 LSM6DSRTR（/imu/data_raw）。
+enable_accel: true
+enable_gyro: true
+enable_sync_output_accel_gyro: true
+accel_rate: 200hz
+accel_range: 4g
+gyro_rate: 200hz
+gyro_range: 1000dps
+enable_accel_data_correction: true
+enable_gyro_data_correction: true
+linear_accel_cov: 0.01
+
+# 点云默认仍由 orin 上的 depth_image_proc 生成；SDK 自建点云关闭。
+point_cloud_decimation_filter_factor: 4

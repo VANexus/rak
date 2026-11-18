@@ -90,9 +90,21 @@ def test_diagnostics_are_visible(params):
     assert params["print_diagnostics"] is True
 
 
-def test_wheel_odometry_slot_is_documented_as_not_connected():
-    """诚实门禁：轮式里程计（F1 的主力）当前**不在**配置里，因为链路等 P3。
-    将来有人接上时，这条测试会强制他同时给协方差与正确的 config 位。"""
+def test_wheel_odometry_slot_is_connected_and_honest(params):
+    """轮式里程计（F1 的主力）自 2026-11-18 起已接入。
+
+    这条测试原来断言 `odom1` **不存在**（"配置里有槽位不等于已接入"）；接入后它翻转
+    成守门：轮式那一路必须只贡献平移，且 yaw/vyaw 必须被排除——麦轮 FK 的 ω 项在
+    横向滚子打滑时系统性漂移（实测无稳定器直行 -2.0°/m），航向权威只能是陀螺。
+    """
     doc = (CONFIG / "ekf.yaml").read_text(encoding="utf-8")
-    assert "odom1:" not in doc, "odom1 出现就意味着已接入 —— 必须先补协方差与实测再打开"
-    assert "mecanum" in doc.lower() or "轮式" in doc, "必须注明轮式那一路为何缺席"
+    assert "odom1:" in doc, "轮式那一路必须接进来（P0-1）"
+    assert params["odom1"].startswith("/"), params["odom1"]
+    config = params["odom1_config"]
+    LABELS = ["x", "y", "z", "roll", "pitch", "yaw", "vx", "vy", "vz",
+              "vroll", "vpitch", "vyaw", "ax", "ay", "az"]
+    assert config[0] and config[1], "轮式必须提供 x/y 绝对位置"
+    assert config[6], "轮式必须提供 vx"
+    for index in (2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14):
+        assert not config[index], f"轮式不得贡献 {LABELS[index]}（打滑 + 位置差分不可信）"
+

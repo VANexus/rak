@@ -47,12 +47,16 @@ def managed(
     output: str = "screen",
     autostart: Any = None,
     ros_arguments: Sequence[str] | None = None,
+    condition: Any = None,
 ) -> list[Action]:
     """起一个受管节点，并按 `supervised` 决定是否自启到 active。
 
     ``autostart``：
       * ``None``（默认）—— 受 ``supervised`` 开关控制（它由 launch 声明，默认 false）；
       * ``True`` / ``False`` —— 硬编码自启与否（夹具、单节点测试用）。
+
+    ``condition``：节点与两个事件处理器共用的启动条件（如 ``IfCondition(...)``）。
+    必须作用在**三者**上：只挂节点会让事件处理器去 configure 一个没起来的节点。
     """
     node = LifecycleNode(
         package=package,
@@ -63,9 +67,10 @@ def managed(
         parameters=list(parameters or []),
         remappings=list(remappings or []),
         ros_arguments=list(ros_arguments or []),
+        condition=condition,
     )
-    condition = _autostart_condition(autostart)
-    if condition is False:
+    gate = _autostart_condition(autostart)
+    if gate is False:
         return [node]
     return [
         node,
@@ -77,7 +82,7 @@ def managed(
                 transition_id=Transition.TRANSITION_CONFIGURE,
             ))],
             ),
-            condition=condition,
+            condition=gate,
         ),
         RegisterEventHandler(
             OnStateTransition(
@@ -89,7 +94,7 @@ def managed(
                     transition_id=Transition.TRANSITION_ACTIVATE,
                 ))],
             ),
-            condition=condition,
+            condition=gate,
         ),
     ]
 

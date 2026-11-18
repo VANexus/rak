@@ -4,6 +4,7 @@
 import math
 import rclpy
 from rclpy.node import Node
+from geometry_msgs.msg import Quaternion, TransformStamped
 from nav_msgs.msg import Odometry
 from tf2_ros import TransformBroadcaster
 from rak_interfaces.msg import BaseTelemetry
@@ -20,11 +21,13 @@ class WheelOdom(Node):
         self.declare_parameter('telemetry_topic', '/base/telemetry')
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter('odom_topic', '/odom')  # nav2 controller default
         self.x = self.y = self.yaw = 0.0
         self._last_t = None
         self.create_subscription(BaseTelemetry,
             self.get_parameter('telemetry_topic').value, self._on_tel, 10)
-        self._odom_pub = self.create_publisher(Odometry, '/wheel/odom', 10)
+        self._odom_pub = self.create_publisher(Odometry,
+            self.get_parameter('odom_topic').value, 10)
         self._tf = TransformBroadcaster(self)
 
     def _on_tel(self, msg: BaseTelemetry):

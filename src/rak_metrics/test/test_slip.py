@@ -18,11 +18,17 @@ def test_kinematic_yaw_rate_pure_translation_is_zero():
 
 
 def test_kinematic_yaw_rate_rotation_sign():
-    d = _detector()
-    # 权重下 Σ w·ω = 20 > 0（逆时针 yaw 的正方向样本）
+    d = _detector(wheels_radius=0.0275, wheel_base_sum=0.26)
+    # 权重下 Σ w·ω = 20 > 0（逆时针 yaw 的正方向样本）；显式传几何，不跟默认值走
     w = d.kinematic_yaw_rate([-5.0, 5.0, -5.0, 5.0])
     assert w == pytest.approx(0.0275 * 20.0 / (4 * 0.26))
     assert w > 0.0
+
+
+def test_default_radius_is_measured_value():
+    """默认 wheels_radius 必须是 2026-11-18 实测的有效滚动半径（滚子外缘）。"""
+    d = SlipDetector()
+    assert d._r == pytest.approx(0.0309)
 
 
 def test_residual_is_kinematic_minus_gyro():

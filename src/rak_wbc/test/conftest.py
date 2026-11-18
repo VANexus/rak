@@ -36,8 +36,9 @@ _DEFAULT_PARAMS = dict(
     arm_qd_max=[1.57, 0.5, 0.5, 1.57, 0.5, 1.57],
     home_q=[0.0, 3.9269908169872414, 4.71238898038469, 0.0, 0.0, 0.0],             # 0/225/270/0/0/0°
     base_vmax=[0.25, 0.15, 0.5],
+    # 物理权威 wheel_config.h（WHEEL_RADIUS_UM / WHEEL_LEVER_UM）；geometry_gate 校验
     wheel_radius=0.0275,  # 2026-10-14 实测 Ø5.5
-    wheel_k=0.26,  # hw+ht = 0.1225+0.1375（2026-10-14 实测）
+    wheel_k=0.26,  # hw+ht = 0.1225+0.1375（= WHEEL_LEVER_UM/1000）
     wheel_wmax=10.0,
     support_half=[0.1225, 0.1375],  # 半轴距/半轮距（2026-10-14 实测）
     support_margin=0.02,

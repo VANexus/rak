@@ -90,3 +90,17 @@ def test_trail_buffer_capacity_never_zero():
     trail.push(45.0)
     assert trail.capacity == 1
     assert len(trail) == 1
+
+def test_main_does_not_drive_lifecycle_itself():
+    """The composition layer owns lifecycle transitions (ADR-0020 §3).
+
+    main() used to call configure()/activate() itself while sensors.launch.py
+    also sent CONFIGURE/ACTIVATE through managed(): two authorities racing the
+    same state machine, and supervised:=true was bypassed.
+    """
+    import inspect
+    from rak_speech import wake_doa_viz
+
+    source = inspect.getsource(wake_doa_viz.main)
+    assert ".configure(" not in source
+    assert ".activate(" not in source

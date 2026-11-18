@@ -64,3 +64,6 @@ agent/skills/
 core
 candump-*.log
 *.bak-*
+
+# 原始点云/调试导出（体积大，不入库）
+*.raw

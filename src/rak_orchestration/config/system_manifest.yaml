@@ -80,7 +80,7 @@ domains:
         role: motion_writer
         interface: base_twist            # ADR-0011 D1：base 唯一运动写者
         provides:
-          - {topic: /mecanum_drive_controller/odom, kind: exists}
+          - {topic: /mecanum_drive_controller/odometry, kind: exists}
       - node: /arm_controller
         package: joint_trajectory_controller
         executable: arm_controller
@@ -380,21 +380,33 @@ domains:
         enabled: false                   # 默认不随整车起；排障/调参时单独 launch 或打开本行
         provides:
           - {topic: /rak/metrics, kind: exists}
-      # slip_watch 是抗打滑 L1 检测（firmware-capability-spec §7.2）。它和
-      # rak_metrics 起在同一个 launch 文件里，且同样是 managed 节点 —— 但此前
-      # manifest 里没有它。后果不是"少一条记录"：LifecycleNode 默认停在
-      # unconfigured，没人 configure/activate 就什么都不做，节点看起来活着却
-      # 一个 topic 都不发（ADR-0020 §3 点名的"运行中、看着配好了、完全惰性"）。
-      # 测试 test_system_manifest 把它抓出来了。
+      # slip_watch 是抗打滑 L1 检测（firmware-capability-spec §7.2）。
+      # 2026-11-18 P1-1 起生命周期拥有者改为 **nav2.launch.py**（那里 managed
+      # autostart=True 自启，随导航链一起活）。本 manager 只读不写：owner 写
+      # external 就是为了让 system_manager 永远不发转移，避免第二个拥有者把节点
+      # configure 到一半。mode 仍是 managed —— 它是 LifecycleNode，这条不能省，
+      # 否则 test_system_manifest 会问"谁来激活它"。
       - node: /slip_watch
         package: rak_metrics
         executable: slip_watch
         mode: managed
-        owner: system_manager
-        launch: rak_metrics/rak_metrics.launch.py
-        enabled: false                   # 同 rak_metrics：随观测域一起手动开启
+        owner: "external:nav2.launch.py"
+        launch: rak_bringup/launch/nav2.launch.py
+        enabled: false                   # 由 nav2.launch.py 的 slip_watch:=true 控制
         provides:
-          - {topic: /rak/slip, kind: exists}
+          - {topic: /slip_watch/slip_suspected, kind: exists}
+      # odom_cov_guard 是抗打滑 L2 中继（轮式 odom 协方差膨胀），ekf 档才起。
+      # 拥有者是 slam.launch.py 的 ekf 档（与 EKF 同生：ekf.yaml 的 odom1 订阅它的
+      # 输出 /odom_wheel，少了它轮式那一路就断流）。
+      - node: /odom_cov_guard
+        package: rak_metrics
+        executable: odom_cov_guard
+        mode: managed
+        owner: "external:slam.launch.py"
+        launch: rak_bringup/launch/slam.launch.py
+        enabled: false                   # 由 slam.launch.py 的 slip_cov_guard:=true 控制
+        provides:
+          - {topic: /odom_wheel, kind: exists}
 
   # ---------------- L5：表达 ----------------
   - name: expression

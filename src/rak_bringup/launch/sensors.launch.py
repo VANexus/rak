@@ -17,7 +17,7 @@ What lands in RViz (config: config/sensors_rviz.rviz)
     mic array  /wake_doa (Marker) -- live bearing arrow + fading event trail
                (repainted continuously, see rak_speech/wake_doa_viz);
                audio itself has no RViz display, the DOA angle is its picture.
-    wheel odom /mecanum_drive_controller/odom (Odometry arrows, needs chassis:=true)
+    wheel odom /mecanum_drive_controller/odometry (Odometry arrows, needs chassis:=true)
 
 Ownership rules (ADR-0015: one publisher per frame, one publisher per topic)
     body tree (base_footprint -> base_link -> sensors/arm) : robot_state_publisher here,

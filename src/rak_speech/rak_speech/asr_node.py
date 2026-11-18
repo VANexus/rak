@@ -260,6 +260,15 @@ class SpeechAsr(ManagedNode):
             joiner=str(model_dir / "joiner-epoch-99-avg-1.onnx"),
             num_threads=2,
             provider="cpu",  # a CUDA/TensorRT sherpa wheel (JP7.x) flips this
+            # A live topic/arecord source never reaches EOF, so without
+            # endpoint detection the node only publishes in the final
+            # get_result() after the source ends -- i.e. never for a mic.
+            # sherpa-onnx defaults this to False. The trailing-silence
+            # rules are tighter than the 2.4/1.2 defaults so a spoken
+            # command commits in about a second; see TODO.md latency budget.
+            enable_endpoint_detection=True,
+            rule1_min_trailing_silence=1.2,
+            rule2_min_trailing_silence=0.6,
         )
 
     # -- recognition (activate) --------------------------------------------------

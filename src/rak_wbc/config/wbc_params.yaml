@@ -44,8 +44,11 @@ wbc:
     arm_qd_max: [1.57, 0.5, 0.5, 1.57, 0.5, 1.57]
 
     base_vmax: [0.25, 0.15, 0.5]
+    # 物理权威：vehical_rak_motion/Core/Inc/wheel_config.h
+    #   WHEEL_RADIUS_UM=27500 / WHEEL_LEVER_UM=260000（2026-10-14 实测）
+    # 跨仓一致性由伞形仓 tools/geometry_gate.py 校验，本文件不另立真值。
     wheel_radius: 0.0275   # 2026-10-14 实测 Ø5.5 cm
-    wheel_k: 0.26          # hw 0.1225 + ht 0.1375（2026-10-14 实测轴距 24.5/轮距 27.5）
+    wheel_k: 0.26          # hw 0.1225 + ht 0.1375（= WHEEL_LEVER_UM/1000）
     wheel_wmax: 10.0
     support_half: [0.1225, 0.1375]  # 半轴距/半轮距（2026-10-14 实测）
     support_margin: 0.02

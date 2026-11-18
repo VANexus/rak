@@ -35,6 +35,8 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>rak_motion_stub</exec_depend>
   <exec_depend>rak_lifecycle</exec_depend>
+  <!-- [AI] 抗打滑链（§7.2 / P1-1）：nav2.launch.py 起 slip_watch + odom_cov_guard -->
+  <exec_depend>rak_metrics</exec_depend>
   <exec_depend>rf2o_laser_odometry</exec_depend>
   <!-- [AI] launch 直引用声明（check_workspace 门禁） -->
   <exec_depend>robot_localization</exec_depend>

@@ -16,9 +16,11 @@ import struct
 import sys
 import threading
 import time
+import types
 import wave
 from pathlib import Path
 from queue import Empty
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -190,6 +192,106 @@ def test_intent_handoff_uses_the_task_layer_parser():
     # A sentence the robot cannot act on is a normal outcome, not an exception.
     assert SpeechAsr._parse("今天天气不错") is None
     assert SpeechAsr._parse("") is None
+
+
+def test_zipformer_enables_endpoint_detection():
+    """A live topic never reaches EOF. With sherpa-onnx's default
+    ``enable_endpoint_detection=False`` the node would only publish in the
+    final ``get_result()`` after the source ends -- i.e. never for a mic.
+    """
+    captured = {}
+
+    class _FakeOnlineRecognizer:
+        @staticmethod
+        def from_transducer(**kwargs):
+            captured.update(kwargs)
+            return object()
+
+    fake_module = types.SimpleNamespace(OnlineRecognizer=_FakeOnlineRecognizer)
+    asr = SpeechAsr.__new__(SpeechAsr)
+    asr._model_dir = "/fake/model/dir"  # _load_zipformer only checks non-empty
+
+    with patch.dict(sys.modules, {"sherpa_onnx": fake_module}):
+        SpeechAsr._load_zipformer(asr)
+
+    assert captured.get("enable_endpoint_detection") is True, (
+        "zipformer must enable endpoint detection or topic/arecord never publish"
+    )
+    assert captured.get("rule1_min_trailing_silence") == 1.2
+    assert captured.get("rule2_min_trailing_silence") == 0.6
+
+
+def test_topic_endpoint_publishes_transcript_without_eof():
+    """Feed a live topic and assert a transcript appears *before* stop.
+
+    This is the regression guard for the silent failure: the recogniser may
+    have decoded text, but if the endpoint never fires the node publishes
+    nothing and downstream sees an idle microphone forever.
+    """
+
+    class _FakeStream:
+        def accept_waveform(self, sample_rate, samples):
+            pass
+
+    class _FakeRecognizer:
+        def __init__(self):
+            self.endpoint_calls = 0
+
+        def create_stream(self):
+            return _FakeStream()
+
+        def is_ready(self, stream):
+            return False
+
+        def decode_stream(self, stream):
+            pass
+
+        def is_endpoint(self, stream):
+            self.endpoint_calls += 1
+            return self.endpoint_calls >= 2
+
+        def get_result(self, stream):
+            return "去厨房"
+
+        def reset(self, stream):
+            pass
+
+    class _QuietLogger:
+        def info(self, *args, **kwargs):
+            pass
+
+    asr = SpeechAsr.__new__(SpeechAsr)
+    asr._model = _FakeRecognizer()
+    asr._model_dir = "/fake/model"
+    asr._source_kind = "topic"
+    asr._wav_path = ""
+    asr._device = "default"
+    asr._inbox = AudioInbox()
+    asr._stop = threading.Event()
+    published = []
+    asr._publish = published.append
+
+    with patch.object(SpeechAsr, "get_logger", lambda self: _QuietLogger()):
+        worker = threading.Thread(
+            target=SpeechAsr._run_zipformer, args=(asr,), daemon=True
+        )
+        worker.start()
+        asr._inbox.put(b"\x00\x00" * 2000)  # 125 ms
+        asr._inbox.put(b"\x00\x00" * 2000)
+
+        deadline = time.monotonic() + 3.0
+        while not published and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+        assert published == ["去厨房"], (
+            "endpoint onset must publish a transcript; got "
+            f"{published!r} before the topic was stopped"
+        )
+        assert not asr._stop.is_set(), "transcript must not wait for EOF/stop"
+
+        asr._stop.set()
+        worker.join(timeout=3.0)
+        assert not worker.is_alive()
 
 
 def test_recognition_pipeline_runs_and_invents_nothing(tmp_path):

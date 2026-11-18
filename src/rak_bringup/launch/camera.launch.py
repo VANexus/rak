@@ -24,7 +24,7 @@ Measured on this robot (2026-11-15):
 
 `camera_info` needs intrinsics before AprilTag PnP or rtabmap produce metric poses:
 run `ros2 run camera_calibration cameracalibrator` once, save the yaml, then pass
-`camera_info_url:=file:///home/xrak/rak/data/calib/front_camera.yaml`.
+`camera_info_url:=file://$HOME/rak/data/calib/front_camera.yaml`（把 $HOME 展开成实际路径）。
 """
 import os
 

@@ -10,6 +10,10 @@
   <exec_depend>rak_intent</exec_depend>
   <!-- ADR-0020：managed 基类（ManagedNode）+ 生命周期转移返回值 -->
   <exec_depend>rak_lifecycle</exec_depend>
+
+  <!-- launch/asr.launch.py drives the managed node through the same helper as
+       speech.launch.py; a plain Node would leave it silently unconfigured. -->
+  <exec_depend>rak_orchestration</exec_depend>
   <!-- 受管节点的周期性健康上报（/diagnostics） -->
   <exec_depend>diagnostic_msgs</exec_depend>
   <exec_depend>python3-vosk</exec_depend>

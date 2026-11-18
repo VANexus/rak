@@ -1,0 +1,38 @@
+# Lightweight 2D local-costmap overlay for nav2_params.yaml.
+#
+# Purpose: consume /scan + /camera/depth/points with the standard
+# nav2_costmap_2d::ObstacleLayer, without the 4D voxel layer or global planner.
+#
+# Run one controller_server only (duplicate controller_server/local_costmap
+# instances make the probe read a stale all-free grid):
+#   ros2 run nav2_controller controller_server --ros-args \
+#     --params-file <install>/rak_bringup/share/rak_bringup/config/nav2_params.yaml \
+#     --params-file slam_prep/config/local_costmap_2d.yaml \
+#     -r __node:=controller_server -r cmd_vel:=cmd_vel_nav
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan depth_cloud
+        scan:
+          topic: /scan
+          sensor_frame: laser_link
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          obstacle_range: 6.0
+          raytrace_range: 6.5
+          min_obstacle_height: 0.0
+          max_obstacle_height: 1.2
+        depth_cloud:
+          topic: /camera/depth/points
+          data_type: "PointCloud2"
+          marking: true
+          clearing: true
+          obstacle_range: 3.0
+          raytrace_range: 3.5
+          min_obstacle_height: 0.06
+          max_obstacle_height: 1.2

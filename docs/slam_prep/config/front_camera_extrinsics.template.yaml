@@ -1,0 +1,27 @@
+# Front camera installation extrinsics — template for data/calib/front_camera_extrinsics.yaml
+#
+# Reference: docs/design/vision_line_follow_v1.md section 6.5 / 8.2.
+# C0 intrinsics are already done (~/.ros/camera_info/front_camera.yaml);
+# this file is the still-pending C1 installation extrinsics.
+#
+# calibrated=false makes line_detect_node refuse to start (I5). Do not fill
+# these numbers from "looks about right"; use the 5 ground control points.
+#
+# Control points (vehicle frame, x forward, y left):
+#   P0 (0.5, 0.0)  P1 (1.0, 0.0)  P2 (2.0, 0.0)
+#   P3 (1.5, -0.5) P4 (1.5, +0.5)
+# Acceptance: BEV reprojection RMS < 1.5 cm; pitch within +/-0.5 deg.
+calibrated: false
+date: ""
+method: "ground control points"
+camera:
+  height_m: 0.0        # TODO(measured): optical centre to ground
+  pitch_deg: 0.0       # TODO(measured): downward tilt is negative
+  roll_deg: 0.0        # TODO(measured)
+  x_m: 0.0             # TODO(measured): forward offset from base_link
+  y_m: 0.0             # TODO(measured): left offset from base_link
+track:
+  mode: "guide_line"   # guide_line | track_corridor (decision pending, design section 11 Q1)
+  width_m: 0.0         # TODO(measured): required for track_corridor
+  line_width_m: 0.0    # TODO(measured): reference for guide_line
+  polarity: "dark"     # dark | bright | color

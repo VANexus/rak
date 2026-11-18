@@ -6,11 +6,20 @@ sensors:=camera`, the chassis/controllers stay in `chassis_bringup.launch.py`.
 
 TF ownership (ADR-0002, one publisher per frame):
   map -> odom        : rtabmap (localization mode)  <- this launch
-  odom -> base_footprint : robot_localization EKF   <- slam.launch.py / ekf.yaml
+  odom -> base_footprint : robot_localization EKF   <- slam.launch.py odom_source:=ekf
   everything else    : robot_state_publisher (URDF)
 
-Do NOT run this together with `slam.launch.py` or `sensors:=lidar`: slam_toolbox also
-publishes map->odom, and two publishers make the map frame drift non-deterministically.
+分工与互斥（2026-11-18 P0-1 收口，写死在这里避免现场叠错）：
+- 本文件与 slam.launch.py 是 map→odom 的**二选一替代**：rtabmap（本文件）或
+  slam_toolbox（slam.launch.py），同时起 = 两个 map→odom 发布者，地图帧
+  非确定漂移。二者永不同时跑。
+- odom→base_footprint 只有 slam.launch.py odom_source:=ekf 里的 ekf_filter_node
+  一个发布者。本文件**从不**启动 EKF、从不发布 odom→base_footprint——它只把
+  /odometry/filtered（EKF 的输出）当重定位先验消费。所以用本入口前必须先把
+  `ros2 launch rak_bringup slam.launch.py odom_source:=ekf` 跑起来。
+- 禁止再起第二个 EKF 实例或别的 odom TF 发布者（identity_odom_tf、控制器
+  enable_odom_tf 等）；单一发布者不变量在 slam.launch.py 的文档串与启动
+  LogInfo 里也有写明。
 
 Camera model: v1.0 is MONOCULAR by design (vision_nav_v1.md §5A). Metric scale in
 localization mode comes from the EKF wheel/IMU odometry as the pose prior, and the
@@ -65,7 +74,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "odom_topic",
             default_value="/odometry/filtered",
-            description="EKF output used as the pose prior for relocalization.",
+            description="EKF 输出（/odometry/filtered），作为重定位位姿先验。"
+                        "注意：本入口不起 EKF；odom→base_footprint 必须已由"
+                        " slam.launch.py odom_source:=ekf 提供。",
         ),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument(

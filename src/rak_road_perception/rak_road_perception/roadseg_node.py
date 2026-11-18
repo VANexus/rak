@@ -13,21 +13,22 @@ from the depth camera to base_footprint.
 from __future__ import annotations
 
 import copy
+import io
 import math
+import os
 import struct
 import time
 from pathlib import Path
 
-import cv2
 import numpy as np
+from PIL import Image as PilImage
 
 import rclpy
-from cv_bridge import CvBridge
 from rclpy.duration import Duration
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import Image, PointCloud2, PointField
+from sensor_msgs.msg import CompressedImage, Image, PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -46,16 +47,16 @@ class RoadSegNode(Node):
         super().__init__("roadseg_node")
         self._declare_parameters()
         self._warned_at: dict[str, float] = {}
-        self._bridge = CvBridge()
         self._last_probability: np.ndarray | None = None
         self._last_mask_wall_time = 0.0
         self._last_sequence: int | None = None
         self._frames = 0
         self._fps_started = time.monotonic()
+        self._overlay_wall_time = 0.0
 
         self._input_mode = str(self.get_parameter("input_mode").value)
-        if self._input_mode not in {"ros_image", "shared_memory"}:
-            raise ValueError("input_mode must be 'ros_image' or 'shared_memory'")
+        if self._input_mode not in {"ros_image", "shared_memory", "compressed"}:
+            raise ValueError("input_mode must be 'ros_image', 'compressed' or 'shared_memory'")
 
         self._threshold = float(self.get_parameter("road_threshold").value)
         self._height = int(self.get_parameter("model_height").value)
@@ -81,11 +82,17 @@ class RoadSegNode(Node):
             f"normalize={self._normalize}, threshold={self._threshold:.2f}"
         )
 
+        # RViz2's Image display subscribes with RELIABLE, so these publishers must
+        # offer RELIABLE too; depth 1 keeps latency low and avoids queue build-up.
+        image_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
         self._mask_pub = self.create_publisher(
-            Image, "/road_perception/road_mask", qos_profile_sensor_data
+            Image, "/road_perception/road_mask", image_qos
         )
         self._overlay_pub = self.create_publisher(
-            Image, "/road_perception/overlay", qos_profile_sensor_data
+            Image, "/road_perception/overlay", image_qos
+        )
+        self._overlay_compressed_pub = self.create_publisher(
+            CompressedImage, "/road_perception/overlay/compressed", image_qos
         )
 
         self._image_sub = None
@@ -96,6 +103,13 @@ class RoadSegNode(Node):
                 Image, image_topic, self._image_callback, qos_profile_sensor_data
             )
             self.get_logger().info(f"RoadSeg image input: {image_topic}")
+        elif self._input_mode == "compressed":
+            compressed_topic = str(self.get_parameter("compressed_topic").value)
+            self._image_sub = self.create_subscription(
+                CompressedImage, compressed_topic, self._compressed_callback,
+                qos_profile_sensor_data,
+            )
+            self.get_logger().info(f"RoadSeg compressed input: {compressed_topic}")
         else:
             poll_ms = max(5.0, float(self.get_parameter("shared_memory_poll_ms").value))
             self._shm_timer = self.create_timer(poll_ms / 1000.0, self._poll_shared_memory)
@@ -140,18 +154,24 @@ class RoadSegNode(Node):
 
     def _declare_parameters(self) -> None:
         defaults = {
-            "engine_path": "/home/xrak/rak/data/models/roadseg/twinlite_plus_small_fp16_384x672.plan",
+            "engine_path": os.path.join(
+                os.environ.get("RAK_DATA_DIR", os.path.expanduser("~/rak/data")),
+                "models", "roadseg", "twinlite_plus_small_fp16_384x672.plan"),
             "engine_output_name": "",
             "normalize": "unit",
             "input_mode": "shared_memory",
             "image_topic": "/camera/color/image_raw",
+            "compressed_topic": "/camera/image_raw/compressed",
             "image_frame_id": "camera_color_frame",
             "shared_memory_frame": "/dev/shm/cam_frame.bin",
             "shared_memory_sequence": "/dev/shm/cam_seq",
             "shared_memory_poll_ms": 10.0,
             "model_width": 672,
             "model_height": 384,
-            "road_threshold": 0.40,
+            # 0.90：BDD 训练出的模型对"真路面"极度确信（p>0.99），而地面上的
+            # 印刷航拍图/地图只到 0.5~0.8，高阈值正好把它们滤掉。
+            "road_threshold": 0.90,
+            "overlay_fps": 2.0,
             "adaptive_gamma": True,
             "low_light_threshold": 110.0,
             "low_light_gamma": 0.60,
@@ -198,41 +218,73 @@ class RoadSegNode(Node):
             rgb = np.frombuffer(raw, dtype=np.uint8, count=size, offset=16).reshape(
                 height, width, 3
             )
-            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             header = Header()
             header.stamp = self.get_clock().now().to_msg()
             header.frame_id = str(self.get_parameter("image_frame_id").value)
             self._last_sequence = sequence
-            self._infer_and_publish(bgr, header)
+            self._infer_and_publish(rgb, header)
         except (OSError, ValueError, struct.error) as exc:
             self._warn("shm_read", f"Shared-memory frame unavailable: {exc}")
 
     def _image_callback(self, message: Image) -> None:
         try:
-            bgr = self._bridge.imgmsg_to_cv2(message, desired_encoding="bgr8")
+            height, width = int(message.height), int(message.width)
+            pixels = np.frombuffer(bytes(message.data), dtype=np.uint8)
+            rows = pixels.reshape(height, int(message.step))
+            channels = 3
+            if message.encoding == "mono8":
+                channels = 1
+            frame = rows[:, : width * channels].reshape(height, width, channels)
+            if message.encoding == "rgb8":
+                rgb = frame
+            elif message.encoding == "bgr8":
+                rgb = frame[:, :, ::-1]
+            elif message.encoding == "mono8":
+                rgb = np.repeat(frame, 3, axis=2)
+            else:
+                self._warn("image_encoding", f"Unsupported encoding '{message.encoding}'")
+                return
             header = copy.copy(message.header)
             if not header.frame_id:
                 header.frame_id = str(self.get_parameter("image_frame_id").value)
-            self._infer_and_publish(bgr, header)
+            self._infer_and_publish(np.ascontiguousarray(rgb), header)
         except Exception as exc:
             self._warn("image_decode", f"Could not decode input image: {exc}")
 
-    def _infer_and_publish(self, bgr: np.ndarray, header: Header) -> None:
-        if bgr is None or bgr.ndim != 3 or bgr.shape[2] != 3:
+    def _compressed_callback(self, message: CompressedImage) -> None:
+        """Decode JPEG with Pillow; the vision chain deliberately avoids OpenCV."""
+        try:
+            with PilImage.open(io.BytesIO(bytes(message.data))) as picture:
+                rgb = np.asarray(picture.convert("RGB"))
+            header = copy.copy(message.header)
+            if not header.frame_id:
+                header.frame_id = str(self.get_parameter("image_frame_id").value)
+            self._infer_and_publish(rgb, header)
+        except Exception as exc:
+            self._warn("compressed_decode", f"Could not decode compressed image: {exc}")
+
+    def _infer_and_publish(self, rgb: np.ndarray, header: Header) -> None:
+        if rgb is None or rgb.ndim != 3 or rgb.shape[2] != 3:
             self._warn("bad_image", "RoadSeg received an invalid color image")
             return
+        image_h, image_w = rgb.shape[:2]
+        frame = rgb  # keep the full-resolution frame for the overlay
         if bool(self.get_parameter("adaptive_gamma").value):
-            luminance = float(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).mean())
+            luminance = float(rgb.mean())
             gamma = float(self.get_parameter("low_light_gamma").value)
             if gamma <= 0.0:
                 self._warn("bad_gamma", "low_light_gamma must be positive; skipping frame")
                 return
             if luminance < float(self.get_parameter("low_light_threshold").value):
-                lut = (np.arange(256, dtype=np.float32) / 255.0) ** gamma * 255.0
-                bgr = cv2.LUT(bgr, lut.astype(np.uint8))
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        rgb = cv2.resize(rgb, (self._width, self._height), interpolation=cv2.INTER_LINEAR)
-        normalized = rgb.astype(np.float32) / 255.0
+                table = (np.arange(256, dtype=np.float32) / 255.0) ** gamma * 255.0
+                frame = table.astype(np.uint8)[rgb]
+        if (image_w, image_h) != (self._width, self._height):
+            model_input = np.asarray(
+                PilImage.fromarray(frame).resize((self._width, self._height), PilImage.BILINEAR)
+            )
+        else:
+            model_input = frame
+        normalized = model_input.astype(np.float32) / 255.0
         if self._normalize == "imagenet":
             normalized = (normalized - _MEAN) / _STD
         chw = np.ascontiguousarray(normalized.transpose(2, 0, 1)[None, ...])
@@ -242,28 +294,57 @@ class RoadSegNode(Node):
             self._warn("inference", f"RoadSeg inference failed: {exc}")
             return
 
-        image_h, image_w = bgr.shape[:2]
-        probability = cv2.resize(
-            probability, (image_w, image_h), interpolation=cv2.INTER_LINEAR
-        ).astype(np.float32, copy=False)
-        mask = (probability > self._threshold).astype(np.uint8) * 255
-        self._last_probability = probability
+        probability = np.ascontiguousarray(probability, dtype=np.float32)
+        full_probability = np.asarray(
+            PilImage.fromarray(probability, mode="F").resize(
+                (image_w, image_h), PilImage.BILINEAR
+            ),
+            dtype=np.float32,
+        )
+        mask = (full_probability > self._threshold).astype(np.uint8) * 255
+        self._last_probability = full_probability
         self._last_mask_wall_time = time.monotonic()
 
-        mask_message = self._bridge.cv2_to_imgmsg(mask, encoding="mono8")
+        mask_message = Image()
         mask_message.header = copy.copy(header)
+        mask_message.height = image_h
+        mask_message.width = image_w
+        mask_message.encoding = "mono8"
+        mask_message.is_bigendian = 0
+        mask_message.step = image_w
+        mask_message.data = mask.tobytes()
         self._mask_pub.publish(mask_message)
 
-        if self._overlay_pub.get_subscription_count() > 0:
-            overlay = bgr.copy()
+        now = time.monotonic()
+        overlay_period = 1.0 / max(0.5, float(self.get_parameter("overlay_fps").value))
+        if (now - self._overlay_wall_time >= overlay_period
+                and (self._overlay_pub.get_subscription_count() > 0
+                     or self._overlay_compressed_pub.get_subscription_count() > 0)):
+            self._overlay_wall_time = now
+            overlay = frame.copy()
             selected = mask != 0
-            tint = np.array([0, 0, 255], dtype=np.float32)
             overlay[selected] = (
-                overlay[selected].astype(np.float32) * 0.55 + tint * 0.45
+                overlay[selected].astype(np.float32) * 0.55
+                + np.array([255, 0, 0], dtype=np.float32) * 0.45
             ).astype(np.uint8)
-            overlay_message = self._bridge.cv2_to_imgmsg(overlay, encoding="bgr8")
-            overlay_message.header = copy.copy(header)
-            self._overlay_pub.publish(overlay_message)
+            if self._overlay_pub.get_subscription_count() > 0:
+                raw_message = Image()
+                raw_message.header = copy.copy(header)
+                raw_message.height = image_h
+                raw_message.width = image_w
+                raw_message.encoding = "rgb8"
+                raw_message.is_bigendian = 0
+                raw_message.step = image_w * 3
+                raw_message.data = overlay.tobytes()
+                self._overlay_pub.publish(raw_message)
+            if self._overlay_compressed_pub.get_subscription_count() > 0:
+                buffer = io.BytesIO()
+                PilImage.fromarray(overlay).save(buffer, format="JPEG", quality=80)
+                overlay_message = CompressedImage()
+                overlay_message.header = copy.copy(header)
+                overlay_message.format = "jpeg"
+                overlay_message.data = buffer.getvalue()
+                self._overlay_compressed_pub.publish(overlay_message)
 
         self._frames += 1
         elapsed = time.monotonic() - self._fps_started

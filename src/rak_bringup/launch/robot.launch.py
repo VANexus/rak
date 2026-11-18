@@ -111,16 +111,26 @@ def _launch_setup(context, *args, **kwargs):
         # 之前这里同时显式 include slam，等于两份 slam_toolbox + 两个 rf2o
         # + 两个 odom→base_footprint 发布者（违反 ADR-0015）。
         actions.append(_include("nav2.launch.py", {
+            # sensors.launch.py 已起雷达（顶层 lidar:=true 时），slam 不再重复起第二个驱动。
+            # 雷达由 sensors（lidar:=true）或外部 lidar.launch.py（lidar:=false）提供，slam 里不再起第二个。
+            "start_lidar": "false",
             "motion_backend": motion_backend,
             "publish_robot_tf": "false",
             "odom_source": LaunchConfiguration("odom_source"),
+            # L3 限幅门透传（§7.2）：默认 false，阈值标定后才能开；slip_watch/
+            # odom_cov_guard 的生命周期归 nav2.launch.py（manifest /slip_watch 保持 enabled:false）。
+            "slip_gate": LaunchConfiguration("slip_gate"),
         }))
 
     if stage == "full":
         # supervised 必须一路传下去：漏传就会"节点自启 + manager 也想驱动"，
-        # 出现两个生命周期权威源（ADR-0020 §3）。今天只有 task 传了，其余三个是漏的。
+        # 出现两个生命周期权威源（ADR-0020 §3）。
+        #
+        # Do NOT include speech.launch.py here. sensors.launch.py already owns it
+        # under mic:=true, and a second include starts a second full speech chain
+        # (two audio_capture fighting for the ALSA device, duplicate /speech_asr,
+        # /speech_tts, /speech_vtn nodes and /speech/say services).
         actions.append(_include("agent.launch.py", {"supervised": supervise}))
-        actions.append(_include("speech.launch.py", {"supervised": supervise}))
         actions.append(_include("task.launch.py", {"supervised": supervise}))
 
     if stage == "teleop":
@@ -138,6 +148,12 @@ def _launch_setup(context, *args, **kwargs):
 
     if supervise == "true":
         domains = list(STAGE_DOMAINS[stage])
+        # full's expression domain (tts/audio_play) is provided by the same
+        # speech.launch.py that sensors owns under mic. Without the mic chain
+        # there is no expression chain either, so do not ask the supervisor to
+        # expect nodes that cannot exist.
+        if stage == "full" and config("mic") != "true":
+            domains.remove("expression")
         domains += [
             domain for arg, domain in SENSOR_DOMAINS
             if stage != "teleop" and config(arg) == "true"
@@ -175,6 +191,9 @@ def generate_launch_description():
             description="nav2 运动后端；真机联调时不传（走 nav2 默认）"),
         DeclareLaunchArgument("odom_source", default_value="rf2o",
                               choices=["rf2o", "ekf", "none"]),
+        DeclareLaunchArgument(
+            "slip_gate", default_value="false", choices=["true", "false"],
+            description="L3 /cmd_vel 限幅门（透传 nav2.launch.py；默认关闭，阈值标定后才能开）"),
         # ---- 传感器开关：同时决定该传感器域是否进 manager 的期望集 ----
         DeclareLaunchArgument("lidar", default_value="true"),
         DeclareLaunchArgument("camera_on", default_value="true"),

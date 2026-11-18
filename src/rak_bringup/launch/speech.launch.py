@@ -143,6 +143,58 @@ def generate_launch_description():
                     "GStreamer can negotiate. kokoro=24000, vits-aishell3=8000."
                 ),
             ),
+
+            # ADR-0018 TTS knobs. These nine were declared when the three-tier
+            # TTS landed (9344a36) but were dropped during the 92b5a8b merge
+            # while tts_node's parameter block kept referencing them, so the
+            # default `tts:=true` launch died on "tts_speaker does not exist".
+            # Defaults mirror tts_node.declare() so the launch changes nothing
+            # unless the operator overrides them.
+            DeclareLaunchArgument(
+                "tts_speaker",
+                default_value="serena",
+                description="qwentts voice name (ADR-0018 canonical voice).",
+            ),
+            DeclareLaunchArgument(
+                "tts_instruct",
+                default_value="",
+                description="qwentts instruct/emotion text; empty = backend default.",
+            ),
+            DeclareLaunchArgument(
+                "qwentts_server",
+                default_value="",
+                description="qwentts tts-server path; empty = tools/qwentts.cpp build.",
+            ),
+            DeclareLaunchArgument(
+                "qwentts_model",
+                default_value="",
+                description="qwentts talker GGUF; empty = auto-pick under tools/qwentts.cpp/models.",
+            ),
+            DeclareLaunchArgument(
+                "qwentts_codec",
+                default_value="",
+                description="qwentts tokenizer/codec GGUF; empty = auto-pick.",
+            ),
+            DeclareLaunchArgument(
+                "qwentts_device",
+                default_value="CPU",
+                description="qwentts device; GPU path is upstream-blocked (qwentts.cpp#40).",
+            ),
+            DeclareLaunchArgument(
+                "qwentts_max_seq",
+                default_value="2048",
+                description="qwentts KV-cache length (QT_MAX_SEQ); 4096 costs ~896MB.",
+            ),
+            DeclareLaunchArgument(
+                "quick_spec",
+                default_value="",
+                description="quick-phrase manifest; empty = repo src/rak_speech/config/quick_phrases.toml.",
+            ),
+            DeclareLaunchArgument(
+                "quick_wav_dir",
+                default_value="",
+                description="quick-phrase wav dir; empty = acoustic/models/quick.",
+            ),
             DeclareLaunchArgument(
                 "speaker_device",
                 default_value=SPEAKER_DEVICE,

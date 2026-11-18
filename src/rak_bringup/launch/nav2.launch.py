@@ -8,6 +8,20 @@ the package dependency direction:
   - sim        cmd_vel_sim      (sim-only /base/telemetry mirror)
   - stub       cmd_vel_stub     (Twist relay -> /cmd_vel_raw)
   - none       no adapter in this launch
+
+抗打滑接线（firmware-capability-spec §7.2，P1-1）：
+  L1  slip_watch：残差检测（默认随本 launch 启动，生命周期拥有者 = 本 launch，
+      managed 自启；system_manifest.yaml 里 /slip_watch 条目必须保持 enabled:false，
+      否则出现第二个生命周期拥有者——移交 system_manager 时须先摘下面的自启）。
+  L2  odom_cov_guard：/mecanum_drive_controller/odometry --原样转发(时间戳不动)-->
+      /odom_wheel（EKF odom1 消费）；slip_watch 的 /slip_watch/slip_suspected
+      为 true 期间把 pose(x,y)/twist(vx,vy) 协方差 ×cov_factor(默认10)，恢复后
+      斜坡回落。信号缺失按无打滑 fail-open，诊断报 missing。
+  L3  默认关闭（slip_gate:=false）。slip_gate:=true 才换线：
+      collision_monitor --/cmd_vel_pre_slip--> slip_watch gate(平移×0.5,恢复斜坡)
+      --/cmd_vel--> 后端适配器/真底盘。打开条件：真打滑阈值标定完成后
+      （slip_sigma 基线工具回填 sigma_baseline 再置 sigma_baseline>0）。
+      关闭时链路与改造前完全一致（collision_monitor 直接发 /cmd_vel）。
 """
 
 import os
@@ -20,6 +34,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, EqualsSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+from rak_orchestration.launch_helpers import managed
 
 #: The servers `navigate_to_pose_w_replanning_and_recovery.xml` actually resolves.
 #: `nav2_bringup`'s navigation_launch.py always starts ten; the four dropped here were
@@ -41,7 +57,8 @@ _NAV2_SERVERS = (
 )
 
 
-def _navigation_servers(params_file, use_sim_time, camera_mode=False, planner_lattice=""):
+def _navigation_servers(params_file, use_sim_time, camera_mode=False, planner_lattice="",
+                        slip_gate=False):
     """Start the lifecycle servers and their manager directly, minus the dead weight.
 
     ``camera_mode`` drops the lidar observation sources: with no /scan there is nothing
@@ -58,6 +75,12 @@ def _navigation_servers(params_file, use_sim_time, camera_mode=False, planner_la
         # 4D 档：omni 状态格文件由 launch 解析（参数文件里不写死 distro 路径）。
         if name == "planner_server" and planner_lattice:
             parameters.append({"GridBased": {"lattice_filepath": planner_lattice}})
+        # L3 gate（slip_gate:=true 才换线）：collision_monitor 的输出从 /cmd_vel
+        # 让位给 slip_watch，链路变成 /cmd_vel_pre_slip → slip_watch gate → /cmd_vel。
+        # 其余 server 的 cmd_vel 一律不动（它们的 cmd_vel 在链路上游，归 remap_cmd_vel 管）。
+        extra_remappings = []
+        if name == "collision_monitor" and slip_gate:
+            extra_remappings = [("cmd_vel", "cmd_vel_pre_slip")]
         nodes.append(
             Node(
                 package=package,
@@ -65,7 +88,8 @@ def _navigation_servers(params_file, use_sim_time, camera_mode=False, planner_la
                 name=name,
                 output="screen",
                 parameters=parameters,
-                remappings=remappings + ([("cmd_vel", "cmd_vel_nav")] if remap_cmd_vel else []),
+                remappings=remappings + ([("cmd_vel", "cmd_vel_nav")] if remap_cmd_vel else [])
+                + extra_remappings,
             )
         )
     nodes.append(
@@ -150,7 +174,9 @@ def _compose(context, nav_share, nav2_params):
             PythonLaunchDescriptionSource(os.path.join(nav_share, "launch", "slam.launch.py")),
             launch_arguments={
                 "lidar_z": LaunchConfiguration("lidar_z"),
+                "start_lidar": LaunchConfiguration("start_lidar"),
                 "odom_source": LaunchConfiguration("odom_source"),
+                "slip_cov_guard": LaunchConfiguration("slip_cov_guard"),
                 "publish_robot_tf": LaunchConfiguration("publish_robot_tf"),
             }.items() | slam_extra.items(),
         ))
@@ -182,9 +208,30 @@ def _compose(context, nav_share, nav2_params):
     overlay = LaunchConfiguration("params_overlay").perform(context).strip()
     if overlay:
         params_files.append(overlay)
+    slip_gate = LaunchConfiguration("slip_gate").perform(context) == "true"
+    # ---- 抗打滑链（§7.2）：L1 检测 + L2 协方差中继常驻；L3 gate 仅 slip_gate:=true 换线。
+    # 生命周期拥有者 = 本 launch（managed autostart=True 自启，与 supervised 无关）：
+    # system_manifest.yaml 的 /slip_watch 条目保持 enabled:false，勿造第二个拥有者。
+    if LaunchConfiguration("slip_watch").perform(context) == "true":
+        slip_remappings = (
+            [("cmd_vel_in", "cmd_vel_pre_slip"), ("cmd_vel_gated", "cmd_vel")]
+            if slip_gate else [])
+        entities.extend(managed(
+            package="rak_metrics",
+            executable="slip_watch",
+            name="slip_watch",
+            output="screen",
+            autostart=True,
+            parameters=[{"gate_enabled": slip_gate}],
+            remappings=slip_remappings,
+        ))
+    # odom_cov_guard 不在这里起：它由 slam.launch.py 的 ekf 档拥有（单一生命周期
+    # 拥有者，ADR-0020 §3）。本文件只把 slip_cov_guard 透传下去，双起会得到两个
+    # 同名节点，后者的 /odom_wheel 覆盖前者、打滑膨胀被随机绕过。
     entities.extend(_navigation_servers(
         params_files, use_sim_time, camera_mode,
         LaunchConfiguration("lattice_filepath").perform(context).strip(),
+        slip_gate=slip_gate,
     ))
     return entities
 
@@ -204,7 +251,26 @@ def generate_launch_description():
         # [AI] 实测高度（2026-10-14：激光扫描面距地 0.18m，减 base 高 0.0275）。
         # 旧默认 0.10 是占位值；URDF 默认已同步，这里保持一致。
         DeclareLaunchArgument("lidar_z", default_value="0.1525"),
+        DeclareLaunchArgument(
+            "start_lidar", default_value="true",
+            description="start the lidar inside slam.launch.py; false when sensors already did",
+        ),
         DeclareLaunchArgument("odom_source", default_value="rf2o", choices=["rf2o", "ekf", "none"]),
+        # [AI] 抗打滑链开关（§7.2 / P1-1）：slip_watch/odom_cov_guard 常驻，
+        # slip_gate 默认 false——真打滑阈值标定完成后才允许置 true（接线图见文件头注释）。
+        DeclareLaunchArgument(
+            "slip_watch", default_value="true", choices=["true", "false"],
+            description="L1 残差检测 + slip_suspected 信号源（本 launch 拥有其生命周期）",
+        ),
+        DeclareLaunchArgument(
+            "slip_cov_guard", default_value="true", choices=["true", "false"],
+            description="L2 轮式 odom 协方差中继（透传给 slam.launch.py 的 ekf 档；"
+                        "/mecanum_drive_controller/odometry -> /odom_wheel）",
+        ),
+        DeclareLaunchArgument(
+            "slip_gate", default_value="false", choices=["true", "false"],
+            description="L3 /cmd_vel 限幅门换线；默认关闭，阈值标定后才能开",
+        ),
         # [AI] 与 chassis_bringup 同跑时必须传 false——否则两个
         # robot_state_publisher 都发 base_footprint->base_link（ADR-0015 一帧一发布者）。
         DeclareLaunchArgument(

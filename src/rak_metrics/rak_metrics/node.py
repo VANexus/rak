@@ -349,14 +349,15 @@ def _fmt(value: Any) -> str:
 
 
 def main(args=None) -> None:
+    import rclpy
+
     rclpy.init(args=args)
     node = MetricsNode()
-    if (node.configure() != TransitionCallbackReturn.SUCCESS
-            or node.activate() != TransitionCallbackReturn.SUCCESS):
-        node.get_logger().error("rak_metrics failed to reach active")
-        node.destroy_node()
-        rclpy.shutdown()
-        raise SystemExit(1)
+    # 不要在 main() 里自己 trigger_configure/activate：受管节点由 launch 的
+    # managed()（或 system_manager）驱动转移，自己再来一次会和它抢同一个状态机，
+    # 结果是 "Transition is not registered" 直接退出（本轮实测）。
+    # 单独 `ros2 run` 调试时才手工驱动：
+    #   ros2 lifecycle set /rak_metrics configure && ros2 lifecycle set /rak_metrics activate
     try:
         rclpy.spin(node)
     finally:

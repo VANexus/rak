@@ -18,6 +18,8 @@
   <exec_depend>ros2controlcli</exec_depend>
   <!-- 台架 launch 的生命周期写法与 task.launch.py 同一份助手 -->
   <exec_depend>rak_orchestration</exec_depend>
+  <!-- [AI] launch/bench_mcp.launch.py 用 rak_bringup 的 chassis 控制器清单 -->
+  <exec_depend>rak_bringup</exec_depend>
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
 

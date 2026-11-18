@@ -1,0 +1,134 @@
+{
+  "purpose": "SLAM/导航参数准备清单：只记录待部署时改什么、为什么、怎么验证；本轮不执行。",
+  "calibration_status": "slam_prep/calibration_status.json",
+  "source_of_truth": {
+    "repo": "VANexus/rak",
+    "github_todo": "https://github.com/VANexus/rak/blob/main/TODO.md (2026-11-16)",
+    "line_follow_design": "https://github.com/VANexus/rak/blob/main/docs/design/vision_line_follow_v1.md",
+    "robot_workspace": "/home/xrak/rak",
+    "slam_launch": "src/rak_bringup/launch/slam.launch.py",
+    "nav2_4d": "src/rak_bringup/config/nav2_4d.yaml",
+    "ekf_4d": "src/rak_bringup/config/ekf_4d.yaml",
+    "vio": "src/rak_bringup/config/vio_rtabmap.yaml",
+    "rtabmap_localization": "src/rak_bringup/config/rtabmap_localization.yaml"
+  },
+  "items": [
+    {
+      "id": "vio_sync_window",
+      "priority": "P1",
+      "current": "approx_sync_max_interval = 0.05 s",
+      "proposed": "0.12 s（640x480@15 VIO 档）；仍用 wifi 档（彩色 5 Hz）时 0.25 s",
+      "rationale": "wifi 档彩色 5 Hz 周期 0.2 s，5 Hz 彩色与 10 Hz 深度的帧对在 0.05 s 窗口内可能被丢弃；VIO 档 15 Hz 周期 66 ms，0.12 s 留出余量。",
+      "verification": "ros2 topic hz /odometry/vio 稳定 >= 10 Hz；rtabmap_odom 日志无大量 sync dropped；EKF odom2 有输入。",
+      "artifact": "slam_prep/config/vio_rtabmap_gemini.yaml"
+    },
+    {
+      "id": "vio_stream_profile",
+      "priority": "P1",
+      "current": "gemini335l.yaml: color 424x240@5, depth 424x240@10",
+      "proposed": "本地 SLAM 用 gemini335l_vio.yaml: color/depth 640x480@15；远程 RViz 仍用 wifi 档",
+      "rationale": "VIO 的输入是彩色+深度；5 Hz 彩色把 VO 上限压到 5 Hz。640x480@15 合计约 23 MB/s，本机 DDS 可用，WiFi 远程不可用。",
+      "verification": "ros2 topic hz /camera/color/image_raw ≈15 Hz；/camera/depth/image_raw ≈15 Hz；Orin CPU/内存不超预算；/odometry/vio >= 10 Hz。",
+      "artifact": "slam_prep/config/gemini335l_vio.yaml"
+    },
+    {
+      "id": "depth_cloud_for_4d",
+      "priority": "P0",
+      "current": "2026-11-18: 4D 全栈的 local/global voxel costmap 都订阅了 /camera/depth/points，但 local 一直 occupied=0。根因是同时存在两个 controller_server / 两个 local_costmap，探针读到的是旧的全空闲实例。清掉旧实例、只保留一个 controller_server + 2D obstacle_layer 后，墙测试 local costmap occupied=1596、free=4804、max=100；深度点云 53k 有效点、41.8k 候选点。",
+      "proposed": "点云识别先用轻量 2D local costmap（slam_prep/config/local_costmap_2d.yaml）跑 scan + depth 占据；必须保证只有一个 controller_server/local_costmap。4D voxel/global 栈以后需要时再干净启动，禁止在重名节点存在时判断融合效果。",
+      "rationale": "参数、QoS、TF 都已经正确；之前的全空闲来自残留的旧 local_costmap 实例。判断深度融合前必须先检查 node list 中没有重名的 controller_server/local_costmap。",
+      "verification": "只有一个 /controller_server 和一个 /local_costmap；墙/箱子在 local costmap 中产生 occupied>0；/camera/depth/points 有订阅；节点图无重名 controller_server。",
+      "artifact": "slam_prep/config/local_costmap_2d.yaml"
+    },
+    {
+      "id": "slam_map_owner",
+      "priority": "P0",
+      "current": "slam_toolbox 拥有 map->odom（slam.launch.py）；localization.launch.py 用 rtabmap 纯定位时也发 map->odom",
+      "proposed": "同一时刻只选一个：A) 激光 slam_toolbox 建图/定位；B) RTAB-Map RGB-D 建图/定位。不能同时跑。",
+      "rationale": "两个节点同时发布 map->odom 会让地图帧非确定漂移（ADR-0002 一帧一发布者）。",
+      "verification": "ros2 run tf2_ros tf2_monitor map odom 只显示一个 authority；ros2 node list 不同时含 slam_toolbox 与 rtabmap。",
+      "artifact": "slam_prep/launch/rtabmap_mapping.launch.py"
+    },
+    {
+      "id": "rtabmap_mapping_mode",
+      "priority": "P1",
+      "current": "仓库只有 rtabmap 纯定位档（localization:=true, Mem/IncrementalMemory=false）",
+      "proposed": "如需纯深度 SLAM，使用 rtabmap_rgbd_mapping.yaml + rtabmap_mapping.launch.py（IncrementalMemory=true）",
+      "rationale": "当前 localization 档不新增地图节点；没有 RGB-D 建图入口，深度相机无法独立建图。",
+      "verification": "rtabmap 日志出现 map update / loop closure；~/.ros/rtabmap_rgbd.db 增长；/map 出现；map->odom 由 rtabmap 发布。",
+      "artifact": "slam_prep/config/rtabmap_rgbd_mapping.yaml"
+    },
+    {
+      "id": "offline_map",
+      "priority": "P0",
+      "current": "~/.ros/rak/maps、~/.ros/rtabmap.db、~/rak/data/maps 都不存在",
+      "proposed": "先用 slam.launch.py 手推/低速建一张图，再用 nav2_map_server map_saver_cli 保存 PGM/YAML；RTAB-Map 路线则保存 .db",
+      "rationale": "Nav2 的 map_yaml 和 RTAB-Map 纯定位都需要已存在的图；没有图只能跑 SLAM 建图，不能跑固定地图导航。",
+      "verification": "map_saver_cli 生成 .pgm + .yaml；map_server 能加载；static_layer 有地图；Nav2 goal 能规划。",
+      "artifact": "src/rak_bringup/launch/slam.launch.py"
+    },
+    {
+      "id": "april_tag_anchor",
+      "priority": "P2",
+      "current": "没有 36h11 标签；/detections 为空",
+      "proposed": "打印 36h11 标签并贴在已知坐标（拐角/路口/直道两端），尺寸按打印后实测回填，不用标称值",
+      "rationale": "前端内参已于 2026-11-15 标定完成（ChArUco，hold-out 0.381 px），不阻塞标签布设；缺的是 36h11 标签实体和 tag_id -> (x,y,yaw) 布局。没有标签时 RTAB-Map 纯定位没有绝对锚点。",
+      "verification": "/apriltag/detections 非空；同一标签静止 30 s 的 PnP 位姿抖动 < 5 cm；与 RTAB-Map 位姿差 < 5 cm。",
+      "artifact": "src/rak_bringup/config/apriltag.yaml"
+    },
+    {
+      "id": "front_camera_extrinsics",
+      "priority": "P1",
+      "current": "data/calib/front_camera_extrinsics.yaml 不存在；vision_line_follow_v1 规定 calibrated=false 时 line_detect_node 拒绝启动。",
+      "proposed": "按 design section 8.2 做 5 点地面控制点标定，写 data/calib/front_camera_extrinsics.yaml（calibrated: true + 日期 + 方法）。",
+      "rationale": "C0 内参已完成，但 IPM/BEV 的米制比例完全依赖 height/pitch/roll/x/y；内参标定不能代替安装外参。",
+      "verification": "5 点 BEV 重投影 RMS < 1.5 cm；pitch 误差在 ±0.5° 内；line_detect_node 以 calibrated:=true 启动。",
+      "artifact": "slam_prep/config/front_camera_extrinsics.template.yaml"
+    },
+    {
+      "id": "camera_runtime_wiring",
+      "priority": "P0",
+      "current": "内参文件在 ~/.ros/camera_info/front_camera.yaml；camera.launch.py 默认 camera_info_url 为空，docstring 指向不存在的 ~/rak/data/calib/front_camera.yaml；Gemini 占 /dev/video0-7，前视相机在 /dev/video8，launch 默认 /dev/video0。",
+      "proposed": "安装 slam_prep/udev/99-front-camera.rules 生成 /dev/front_camera；用 slam_prep/scripts/front_camera.sh 启动（自动带 camera_info_url 并在 /dev/front_camera 缺失时回退 /dev/video8）。",
+      "rationale": "标定文件存在不等于运行时用上；CameraInfo 为空时 AprilTag PnP 和 rtabmap 都拿不到米制位姿；设备号会随 UVC 枚举顺序变化。",
+      "verification": "ros2 topic echo /camera/camera_info 的 K 与 front_camera.yaml 一致；/apriltag/detections 有非空位姿；RViz 中相机内参生效。",
+      "artifact": "slam_prep/scripts/front_camera.sh"
+    },
+    {
+      "id": "ekf_covariance",
+      "priority": "P1",
+      "current": "ekf_4d.yaml 协方差全部是占位值（TODO(measured)）",
+      "proposed": "Allan 静态噪声 + 直行 2 m 回归，回填 imu0/odom0/odom1/odom2 协方差",
+      "rationale": "协方差决定四路融合权重；占位值会让 EKF 过度信任某一路，直行横向偏差和航向漂移不可解释。",
+      "verification": "scripts/calibrate_imu.py 输出回填；直行 2 m 横向偏差 < 5 cm；/odometry/filtered 的 p95 抖动在预算内。",
+      "artifact": "src/rak_bringup/config/ekf_4d.yaml"
+    },
+    {
+      "id": "chassis_motion",
+      "priority": "P0",
+      "current": "GitHub TODO 2026-11-16：node 1 已恢复（心跳 701=05、SDO/TPDO 正常、R76 在板）；但四轮不响应速度脉冲（1.5 s 内 /joint_states.velocity 仅 ±0.01 rad/s，期望约 2.18 rad/s），且四轮 TF 为 NaN。",
+      "proposed": "先抓 /chassis/tpdo 的 0x2000..0x2003 与 reference 对比，区分量纲/比例错误与驱动器未真正使能；再补轮角位置或调整 URDF 轮关节 TF。",
+      "rationale": "node 1 已不再是阻断项；现在阻断真机导航的是速度脉冲不跟踪和轮 TF NaN，不能用 launch 可解析或 allow_motion=true 代替验收。",
+      "verification": "脉冲期间四轮 TPDO 与 reference 同号、量级匹配；tf2_echo base_link <wheel>_link 输出有限值并随轮子转动连续变化；直道 MPPI 10 m 往返横向偏差 < 5 cm。",
+      "artifact": "src/rak_bringup/launch/chassis_bringup.launch.py"
+    },
+    {
+      "id": "roadseg_domain",
+      "priority": "P1",
+      "current": "TwinLiteNet+ Small DA 已在 BDD100K 上完成 3 epoch 微调：官方 10k val mIoU 0.9056、drivable IoU 0.8451（baseline 0.8613/0.7753）；仍只有 BDD 标签，彩色农田/贴图区域域不匹配。",
+      "proposed": "把微调模型作为 BDD baseline；按 field_data_protocol.json 采集/标注场地可行驶区域，做第二轮场地微调；部署前用官方 10k val + 场地 overlay 双评估。",
+      "rationale": "BDD 以城市沥青为主，模型语义先验是灰色路面；仅靠 BDD 微调不能把彩色农田变成道路。",
+      "verification": "场地 val mIoU 不低于 BDD-only 基线；官方 10k BDD val 回退不超过 1 个点；场地 overlay 中彩色可行驶区域被正确覆盖；TensorRT 引擎在 Orin 上延迟在预算内。",
+      "artifact": "slam_prep/model_manifest.json"
+    },
+    {
+      "id": "power_memory",
+      "priority": "P1",
+      "current": "10 W 模式；4 GB 板；相机出流时 CmaFree ~0.5 MB；dsh web 常驻约 600 MB",
+      "proposed": "部署前测 4D 全栈 RSS/最低可用内存；必要时关 dsh web、降相机档位或砍全局体素层",
+      "rationale": "仓库实测全栈峰值 2.0–2.9 GB；再加 600 MB dsh 会把 3.4 GB 预算压穿。",
+      "verification": "/proc/meminfo 最低可用 > 300 MB；无 OOM；top 组件 RSS 合计 + peak 在预算内；CmaFree 足够相机缓冲。",
+      "artifact": "docs/reference/machine_baseline.md"
+    }
+  ]
+}

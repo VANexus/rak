@@ -228,6 +228,30 @@ bool CanopenBridge::parse_hardware_parameters(const hardware_interface::Hardware
       return false;
     }
   }
+  /* [AI] velocity_from_position —— 轮速反馈来源开关（文档齐全，别盲改）。
+   *
+   * true（当前 URDF rak_chassis.urdf.xacro <ros2_control> 里的字面量）：
+   *   轮速 = 0x2020..0x2023（INT32 编码器计数）在 controller_manager 周期
+   *   （100 Hz，dt=0.01 s）上的位置差分。为什么不用 0x2010 直读：
+   *   板上 0x2010..0x2013（轮速反馈）空闲时会冻结在旧值（2026-11-18 实测），
+   *   位置却一路正确 —— 里程计与速度闭环只信可靠的那一路。
+   *   代价：差分附带 ±1 count 量化噪声。换算：1 count = 2π/61600 rad =
+   *   1.0200e-4 rad，dt=0.01 s → 每轮 σ_ω ≈ 1.02e-2 rad/s；麦轮 FK
+   *   vx = r/4·Σω → σ_vx ≈ 1.6e-4 m/s（量化底，真实误差以速度环残差与
+   *   打滑为主，见 src/rak_bringup/config/ekf.yaml 的 odom1 协方差推导）。
+   *   另一副作用：位置差分出的"轮速"推不出可信的麦轮 yaw —— 打滑本来就让
+   *   轮系航向漂移（实测直行 -2.0°/m），EKF 里 yaw/vyaw 已明确关掉。
+   *
+   * 关掉它的前提（0x2010 根因修复后，另一名 teammate 在查）：
+   *   1) 真机验证 0x2010..0x2013 连续 ≥60 s（含静止→匀速→静止）不冻结、
+   *      数值与位置差分一致（差 ≤2%）；
+   *   2) 把 URDF 里的字面量改成 false 并重编 rak_chassis 插件（改 URDF 后
+   *      旧 .so 不认新参数，会静默沿用旧逻辑）；
+   *   3) 用 `ros2 topic hz /mecanum_drive_controller/odometry` 与直行实测
+   *      复核里程比仍是 1.007 量级，才准恢复默认直读。
+   * 关掉后：速度直接读 0x2010（INT16 × state_scale），量化噪声消失，
+   * 但 feedback_timeout_/jr 的 aux_state_* 位置导出路径不变（位置仍来自
+   * 0x2020，joint_states 不会变 NaN）。 */
   velocity_from_position_ = false;
   const auto vfp = params.find("velocity_from_position");
   if (vfp != params.end()) {
@@ -736,7 +760,11 @@ hardware_interface::return_type CanopenBridge::read(
         }
       }
     }
-    /* 速度状态 = 位置差分。dt 不合理（首拍、卡顿、回绕）时不更新，保留上一拍。 */
+    /* 速度状态 = 位置差分。dt 不合理（首拍、卡顿、回绕）时不更新，保留上一拍。
+       [AI] 2026-11-18 P0-1：此路径的来历、量化噪声量级（±1 count/拍 ≈
+       0.01 rad/s @100 Hz）与"0x2010 修好后如何关掉"的完整前提，见上方
+       on_init 里 velocity_from_position 参数的注释块。0x2010 直读修好后，
+       这里整段按开关自动失效，不需要动代码。 */
     if (velocity_from_position_ && aux_prev_valid_ && dt > 1e-4 && dt < 0.5) {
       for (std::size_t i = 0U; i < joints_.size(); ++i) {
         if (!(joints_[i].has_state && joints_[i].has_aux_state)) {

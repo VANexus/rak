@@ -51,6 +51,10 @@ def _lidar_node(context):
             executable="lslidar_driver_node",
             name="lslidar_driver_node",
             output="screen",
+            # vendor 驱动的 N10_P 分支偶发 malloc 堆破坏（已实测与启动方式无关）；
+            # 崩溃后 2 s 自动拉起，scan 短暂中断但导航栈不必重启。
+            respawn=True,
+            respawn_delay=2.0,
             parameters=[
                 os.path.join(share, "config", "lslidar_n10.yaml"),
                 {"serial_port_": ParameterValue(port, value_type=str)},
@@ -65,6 +69,8 @@ def _lidar_node(context):
             executable="scan_to_scan_filter_chain",
             name="scan_to_scan_filter_chain",
             output="screen",
+            respawn=True,
+            respawn_delay=2.0,
             parameters=[os.path.join(share, "config", "lidar_scan_filter.yaml")],
             remappings=[("scan", "/scan_raw"), ("scan_filtered", "/scan")],
         ),

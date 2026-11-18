@@ -2,12 +2,22 @@
 
     ros2 launch rak_bringup slam.launch.py                    # rf2o (current default)
     ros2 launch rak_bringup slam.launch.py odom_source:=none  # identity odom, for testing
-    ros2 launch rak_bringup slam.launch.py odom_source:=ekf   # once encoders + IMU exist
+    ros2 launch rak_bringup slam.launch.py odom_source:=ekf   # 轮式+IMU EKF（2026-11-18 P0-1 收口）
 
 `odom_source` is the seam. slam_toolbox only ever consumes the
 `odom -> base_footprint` transform (REP-120) and does not care who publishes it,
 so swapping rf2o for a robot_localization EKF later is a flag on this command
 line -- the slam_toolbox config file is untouched.
+
+ekf 档的"单一发布者"自证（REP-120，2026-11-18 P0-1）：odom → base_footprint
+在一条链里只允许一个发布者。本文件以三种档位各自保证：rf2o 档 = rf2o 自己
+发布 TF；ekf 档 = rf2o 仍运行但 publish_tf 被下面的 PythonExpression 强制为
+False（只喂 /odom 话题给 EKF），TF 由 ekf_filter_node 发布；none 档 = 只有
+identity_odom_tf。因此：不要把本文件与第二个 EKF 实例、
+mecanum_drive_controller 的 enable_odom_tf（chassis_controllers.yaml 已固定
+false）、或单独再起的 rf2o 叠在一起——两个发布者会让 TF 抖动，slam_toolbox
+无告警地漂。localization.launch.py 不在这条链里：它只管 map→odom（rtabmap），
+从不发布 odom→base_footprint，也从不启动第二个 EKF，两边注释已写死这层分工。
 
 Frame tree this launch guarantees (the single static-geometry authority):
 
@@ -33,6 +43,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
     IncludeLaunchDescription,
+    LogInfo,
     RegisterEventHandler,
 )
 from launch.conditions import IfCondition
@@ -46,6 +57,8 @@ from launch.substitutions import (
 )
 from launch_ros.actions import LifecycleNode, Node
 from launch_ros.parameter_descriptions import ParameterValue  # [AI] 布尔参数
+
+from rak_orchestration.launch_helpers import managed  # [AI] odom_cov_guard 的受管启动
 from launch_ros.event_handlers import OnStateTransition
 from launch_ros.events.lifecycle import ChangeState
 from lifecycle_msgs.msg import Transition
@@ -65,6 +78,7 @@ def generate_launch_description():
     # value is a small, silent, permanent error in every map.
     lidar_z = LaunchConfiguration("lidar_z")
     odom_source = LaunchConfiguration("odom_source")
+    ekf_params = LaunchConfiguration("ekf_params")
     publish_robot_tf = LaunchConfiguration("publish_robot_tf")
     publish_world_tf = LaunchConfiguration("publish_world_tf")
 
@@ -111,7 +125,17 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "ekf_params",
                 default_value=os.path.join(share, "config", "ekf.yaml"),
-                description="robot_localization params file; empty means config/ekf.yaml (v1: rf2o + IMU).",
+                description="robot_localization params file. 默认 config/ekf.yaml"
+                            "（odom0=rf2o 全关 P1-2、odom1=轮式 /mecanum_drive_controller/"
+                            "odometry 的 x/y/vx、imu0 只取 vyaw）；原地旋转测试裁决通过后"
+                            "换 config/ekf_rf2o_yaw_only.yaml 开 rf2o 航向差分。"
+                            "ekf 档下 odom→base_footprint 的唯一发布者就是本 EKF"
+                            "（rf2o publish_tf 已关，identity_odom_tf 只在 none 档）。",
+            ),
+            DeclareLaunchArgument(
+                "slip_cov_guard", default_value="true", choices=["true", "false"],
+                description="L2 轮式 odom 协方差中继（ekf 档才起；"
+                            "/mecanum_drive_controller/odometry -> /odom_wheel）",
             ),
             DeclareLaunchArgument(
                 "publish_robot_tf", default_value="true",
@@ -121,9 +145,14 @@ def generate_launch_description():
                 "publish_world_tf", default_value="true",
                 description="publish world -> map anchor; false if another node owns it",
             ),
-            # The lidar, always.
+            # The lidar, unless the outer bringup layer already started one.
+            DeclareLaunchArgument(
+                "start_lidar", default_value="true",
+                description="start lidar here; false when the outer layer already did",
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(os.path.join(sensors, "launch", "lidar.launch.py")),
+                condition=IfCondition(LaunchConfiguration("start_lidar")),
             ),
             # Body tree (base_footprint -> base_link -> wheels/sensors/arm mount).
             # One authority for the whole static skeleton; the sensor mounts live
@@ -151,6 +180,16 @@ def generate_launch_description():
             # rf2o defaults to /odom_rf2o.
             # [AI] 2026-10-09: odom_source:=ekf 档下 rf2o 仍然运行(喂 EKF 的
             # odom0), 但 publish_tf=False —— odom->base_footprint 由 EKF 独占发布。
+            # [AI] 2026-11-18 P1-2 坐标系语义（实测 0.453 m 直行）：rf2o 发布的
+            # 位姿不自洽——位移方向 +37.9° = -lidar_yaw 的量值（URDF
+            # laser_mount_joint = -0.6561 rad），即位移仍处在激光系；绝对航向差
+            # 177°，但航向"变化量"是准的。上游无安装旋转参数、twist.linear.y
+            # 硬编码 0，launch 层修不了 → EKF 侧显式降级（odom0 全关），裁决
+            # 开关见 config/ekf_rf2o_yaw_only.yaml 与
+            # scripts/rf2o_frame_audit.py（判据脚本，一条命令出结论）。
+            # 这里不改 base_frame_id/odom_frame_id：改成激光系别名只能修"直行"
+            # 的位移方向，原地旋转时雷达挂在 (0.11, 0) 处的圆弧项
+            # |(I-Rot)·t_m| = 2·0.11·sin45° ≈ 0.16 m（90°）无法用静态偏置表达。
             Node(
                 package="rf2o_laser_odometry",
                 executable="rf2o_laser_odometry_node",
@@ -182,8 +221,16 @@ def generate_launch_description():
                     PythonExpression(["'", odom_source, "' in ('rf2o', 'ekf')"])
                 ),
             ),
-            # [AI] EKF: ekf 档下接管 odom->base_footprint(唯一发布者, 团队 ADR 规矩);
-            # 融合 odom0=/odom(rf2o 激光里程计) + imu0=/imu/data_raw(LSM6DSRTR 航向速率)
+            # [AI] EKF: ekf 档下接管 odom->base_footprint（唯一发布者，团队 ADR 规矩）。
+            # 融合（2026-11-18 P0-1 收口，详见 config/ekf.yaml 注释）：
+            #   odom0 = /odom（rf2o；位姿按 P1-2 全关——位移 +37.9° 是激光系泄漏）
+            #   odom1 = /mecanum_drive_controller/odometry（轮式 x/y/vx，yaw/vyaw 关）
+            #   imu0  = /imu/data_raw（只取 vyaw）
+            # 单一发布者自证：ekf 档下 rf2o 的 publish_tf 由上面 PythonExpression
+            # 强制为 False，identity_odom_tf 只在 none 档 —— 全链只有本节点发布
+            # odom→base_footprint。不要再叠加：第二个 EKF 实例、rf2o 单独启动、
+            # 或 mecanum_drive_controller enable_odom_tf（已固定 false）。
+            # 启动时下面的 LogInfo 会把这条不变量打在屏幕上，便于现场核对。
             Node(
                 package="robot_localization",
                 executable="ekf_node",
@@ -191,6 +238,29 @@ def generate_launch_description():
                 output="screen",
                 parameters=[LaunchConfiguration("ekf_params")],
                 condition=IfCondition(EqualsSubstitution(odom_source, "ekf")),
+            ),
+            # [AI] L2 协方差中继（§7.2 / P1-1）：轮式 odom 的唯一来源。
+            # ekf.yaml 的 odom1 订阅 /odom_wheel，所以本节点**必须**与 EKF 同生：
+            # 它由本 launch 拥有（单一生命周期拥有者），nav2.launch.py 不再起第二份
+            # （那里只保留 slip_cov_guard 透传开关，避免双拥有者）。
+            # 打滑期间把 pose(x,y)/twist(vx,vy) 协方差 ×cov_factor，信号来自
+            # slip_watch 的 /slip_watch/slip_suspected；信号缺失时 fail-open 原样转发。
+            *managed(
+                package="rak_metrics",
+                executable="odom_cov_guard",
+                name="odom_cov_guard",
+                output="screen",
+                autostart=True,
+                condition=IfCondition(PythonExpression([
+                    "'", odom_source, "' == 'ekf' and '",
+                    LaunchConfiguration("slip_cov_guard"), "' == 'true'"])),
+            ),
+            LogInfo(
+                condition=IfCondition(EqualsSubstitution(odom_source, "ekf")),
+                msg=["[slam.launch] odom_source=ekf: odom->base_footprint 唯一发布者 = ",
+                     "ekf_filter_node, params=", ekf_params,
+                     "; rf2o 仅喂 /odom 话题, publish_tf 已关; ",
+                     "identity_odom_tf 仅 none 档。勿再叠加第二个 odom TF 发布者。"],
             ),
             # Identity odom for testing the slam_toolbox chain with nothing
             # else in the loop. Quality is poor by design.

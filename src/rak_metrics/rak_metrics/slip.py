@@ -16,7 +16,9 @@ wᵢ 是每轮 URDF 轴速度对逆时针 yaw 的贡献符号。**符号未现�
 
 阈值依据（AGENTS §4 事实分级）：``sigma_baseline`` 是 placeholder，
 由 rak_metrics 首日基线（p50/p95 分布）标定后回填；baseline=0 时检测
-只记数不判嫌疑（发布指标，不产生打滑判定）。
+只记数不判嫌疑（发布指标，不产生打滑判定）。回填工具：``slip_sigma
+<baseline.csv|json>``（见 cov_guard.suggest_sigma）吃一段记录下来的
+残差序列，建议 σ = p95(|residual|)。
 """
 
 from __future__ import annotations
@@ -27,8 +29,13 @@ class SlipDetector:
 
     def __init__(
         self,
-        wheels_radius: float = 0.0275,
+        # 物理权威 wheel_config.h（WHEEL_RADIUS_UM / WHEEL_LEVER_UM）；此处仅为指标默认值。
+        # 2026-11-18 实测回填：0.0275 是轮盘本体半径，mecanum 实际滚在滚子外缘，
+        # 有效滚动半径 0.0309（与 chassis_controllers.yaml mecanum kinematics 同步）。
+        wheels_radius: float = 0.0309,
         wheel_base_sum: float = 0.26,
+        # yaw 贡献权重（左 -1 / 右 +1），与固件 wheel_config.h 的
+        # WHEEL_YAW_DIR_LIST 同一物理事实；与“前进方向表”无关。
         wheel_weights: tuple[float, float, float, float] = (-1.0, 1.0, -1.0, 1.0),
         n_sigma: float = 3.0,
         sigma_baseline: float = 0.0,

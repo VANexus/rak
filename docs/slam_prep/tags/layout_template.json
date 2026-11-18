@@ -1,0 +1,33 @@
+{
+  "family": "36h11",
+  "edge_m": 0.16,
+  "print_dpi": 300,
+  "scale_bar_m": 0.1,
+  "tag_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "positions": {
+    "0": null,
+    "1": null,
+    "2": null,
+    "3": null,
+    "4": null,
+    "5": null,
+    "6": null,
+    "7": null,
+    "8": null,
+    "9": null
+  },
+  "position_format": "tag_id -> [x_m, y_m, yaw_rad] in the fixed-venue frame",
+  "note": "Fill positions after placing tags at corners/junctions; measure the printed black edge and update apriltag.yaml size if needed.",
+  "detection_topic": "/apriltag/detections"
+}

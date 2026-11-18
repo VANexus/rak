@@ -1,0 +1,19 @@
+# Standalone rf2o odometry for the lightweight local-costmap stack.
+#
+# Keep exactly one odom -> base_footprint publisher. The chassis controller
+# keeps enable_odom_tf=false; this file is the odom source when the full
+# slam.launch.py stack is not running.
+#
+#   ros2 run rf2o_laser_odometry rf2o_laser_odometry_node --ros-args \
+#     -r __node:=rf2o_laser_odometry --params-file slam_prep/config/rf2o_lite.yaml
+rf2o_laser_odometry:
+  ros__parameters:
+    laser_scan_topic: /scan
+    odom_topic: /odom
+    base_frame_id: base_footprint
+    odom_frame_id: odom
+    publish_tf: true
+    freq: 10.0
+    # Must be empty: upstream defaults to a Gazebo ground-truth topic and
+    # silently ignores every scan until that topic arrives.
+    init_pose_from_topic: ""

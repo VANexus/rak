@@ -1,0 +1,165 @@
+{
+  "updated": "2026-11-17",
+  "status": "prepared_not_executed",
+  "compute_policy": "Do not start training, evaluation or TensorRT builds while another task owns the GPU.",
+  "phases": [
+    {
+      "id": "preflight",
+      "steps": [
+        {
+          "id": "repo_align",
+          "command": "cd ~/rak && git fetch && git status -sb",
+          "evidence": "GitHub main (2026-11-16) aligned; local uncommitted changes preserved",
+          "blocking": true
+        },
+        {
+          "id": "device_topology",
+          "command": "lsusb -t; v4l2-ctl --list-devices",
+          "evidence": "Gemini on direct USB3, not a hub; front camera node identified",
+          "blocking": true
+        },
+        {
+          "id": "calibration_files",
+          "command": "ls -l ~/.ros/camera_info/front_camera.yaml ~/rak/data/calib/front_camera_extrinsics.yaml",
+          "evidence": "C0 intrinsics exists; C1 extrinsics is optional for pure SLAM, required for IPM line following",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "front_camera",
+      "steps": [
+        {
+          "command": "sudo cp 99-front-camera.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=video4linux --action=change",
+          "evidence": "/dev/front_camera exists and points to the AX camera capture node",
+          "blocking": true
+        },
+        {
+          "command": "./front_camera.sh",
+          "evidence": "/camera/camera_info K matches ~/.ros/camera_info/front_camera.yaml",
+          "blocking": true
+        }
+      ]
+    },
+    {
+      "id": "depth_camera",
+      "steps": [
+        {
+          "command": "ros2 launch rak_bringup sensors.launch.py camera:=gemini335l camera_profile:=wifi mic:=false lidar:=false rviz:=false",
+          "evidence": "depth ~10 Hz, color ~5 Hz, camera IMU ~200 Hz; /camera/depth/image_raw and /camera/color/image_raw alive",
+          "blocking": true
+        },
+        {
+          "command": "ros2 topic hz /camera/depth/points",
+          "evidence": "depth_image_proc cloud present and stable",
+          "blocking": true
+        },
+        {
+          "command": "ros2 run tf2_ros tf2_echo base_link camera_depth_optical_frame",
+          "evidence": "finite TF at camera rate",
+          "blocking": true
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "steps": [
+        {
+          "command": "python3 scripts/build_roadseg_engine.py --onnx twinlite_plus_small_da_finetuned.onnx --engine data/models/roadseg/twinlite_plus_small_da_finetuned_fp16_384x672.plan",
+          "evidence": "trtexec PASSED; engine + manifest written; official 10k mIoU 0.9056 / drivable IoU 0.8451",
+          "blocking": true
+        },
+        {
+          "command": "ros2 run rak_road_perception roadseg_node --ros-args -p engine_path:=<engine>",
+          "evidence": "/road_perception/road_mask and overlay at target rate; Orin latency recorded",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "slam",
+      "steps": [
+        {
+          "command": "ros2 launch rak_bringup slam.launch.py",
+          "evidence": "Option A: /map + map->odom single publisher + /scan ~10 Hz",
+          "blocking": true
+        },
+        {
+          "command": "ros2 run nav2_map_server map_saver_cli -f ~/rak/data/maps/venue",
+          "evidence": "PGM + YAML saved; map_server loads them",
+          "blocking": true
+        },
+        {
+          "command": "ros2 launch rak_bringup rtabmap_mapping.launch.py",
+          "evidence": "Option B: rtabmap database grows, map->odom single publisher; never run with slam_toolbox",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "nav",
+      "steps": [
+        {
+          "command": "ros2 launch rak_bringup 4d_nav.launch.py map_yaml:=<map.yaml> motion_backend:=sim",
+          "evidence": "depth cloud marks the voxel costmap; ComputePathToPose SUCCEEDED",
+          "blocking": true
+        },
+        {
+          "command": "ros2 launch rak_bringup nav2.launch.py sensors:=lidar start_lidar:=false publish_robot_tf:=false odom_source:=rf2o params_overlay:=<share>/config/nav2_4d.yaml lattice_filepath:=<nav2_smac_planner>/sample_primitives/5cm_resolution/0.5m_turning_radius/omni/output.json motion_backend:=sim",
+          "evidence": "local/global voxel costmaps subscribe /camera/depth/points; global costmap occupied>0; local costmap occupied>0 when a >6 cm object is within 3 m",
+          "blocking": true
+        },
+        {
+          "command": "ros2 launch slam_prep/launch/local_costmap_2d.launch.py publish_robot_tf:=false",
+          "evidence": "single-entry launch starts one rf2o, one controller_server/local_costmap and a lifecycle manager; wall/box gives occupied>0",
+          "blocking": true
+        },
+        {
+          "command": "ros2 launch rak_bringup chassis_bringup.launch.py allow_motion:=true",
+          "evidence": "four wheels track reference; wheel TF finite; straight 10 m lateral error < 5 cm",
+          "blocking": true
+        }
+      ]
+    },
+    {
+      "id": "field_calibration",
+      "steps": [
+        {
+          "command": "5-point ground control point calibration per front_camera_extrinsics_worksheet.json",
+          "evidence": "BEV RMS < 1.5 cm; front_camera_extrinsics.yaml calibrated=true",
+          "blocking": false
+        },
+        {
+          "command": "Allan static noise + straight 2 m regression",
+          "evidence": "ekf_4d.yaml covariance replaced with measured values",
+          "blocking": false
+        },
+        {
+          "command": "Wheel diameter and lx/ly measurement",
+          "evidence": "URDF values updated",
+          "blocking": false
+        },
+        {
+          "command": "Print and place 36h11 tags; fill layout_template.json",
+          "evidence": "/apriltag/detections non-empty; PnP vs RTAB-Map < 5 cm over 30 s",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "acceptance",
+      "steps": [
+        {
+          "command": "Peak memory / CMA measurement during the full stack",
+          "evidence": "peak < 3.4 GB, no OOM",
+          "blocking": true
+        },
+        {
+          "command": "MPPI straight 10 m round trip",
+          "evidence": "lateral error < 5 cm",
+          "blocking": true
+        }
+      ]
+    }
+  ]
+}

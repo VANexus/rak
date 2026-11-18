@@ -1,0 +1,37 @@
+{
+  "purpose": "C1 installation extrinsics worksheet for the front camera / IPM line following.",
+  "status": "not_done",
+  "reference": "https://github.com/VANexus/rak/blob/main/docs/design/vision_line_follow_v1.md section 8.2",
+  "intrinsics_status": "done (C0): ~/.ros/camera_info/front_camera.yaml, fx=844.4026 fy=851.4632 cx=614.1975 cy=401.1832",
+  "frame_convention": "vehicle frame: x forward, y left, origin base_link",
+  "camera": {
+    "height_m": null,
+    "pitch_deg": null,
+    "roll_deg": null,
+    "x_m": null,
+    "y_m": null,
+    "measurement_point": "record whether height was measured to the CMOS plane or the lens front"
+  },
+  "control_points": [
+    {"id": "P0", "x_forward_m": 0.5, "y_left_m": 0.0, "image_px": null, "bev_error_m": null},
+    {"id": "P1", "x_forward_m": 1.0, "y_left_m": 0.0, "image_px": null, "bev_error_m": null},
+    {"id": "P2", "x_forward_m": 2.0, "y_left_m": 0.0, "image_px": null, "bev_error_m": null},
+    {"id": "P3", "x_forward_m": 1.5, "y_left_m": -0.5, "image_px": null, "bev_error_m": null},
+    {"id": "P4", "x_forward_m": 1.5, "y_left_m": 0.5, "image_px": null, "bev_error_m": null}
+  ],
+  "procedure": [
+    "Measure height_m, x_m, y_m with a tape; record the measurement point.",
+    "Place the 5 ground markers at the coordinates above.",
+    "Fill an initial pitch/roll from measurement + visual estimate, project the markers to BEV.",
+    "1-D search pitch (0.1 deg step) to minimise BEV X error.",
+    "Adjust roll until the +/-0.5 m markers are symmetric in BEV Y.",
+    "Accept when 5-point BEV RMS < 1.5 cm and the pitch residual curve is flat within +/-0.5 deg.",
+    "Write data/calib/front_camera_extrinsics.yaml with calibrated: true + date + method."
+  ],
+  "acceptance": {
+    "bev_rms_m_max": 0.015,
+    "pitch_tolerance_deg": 0.5,
+    "position_tolerance_m": 0.01
+  },
+  "template": "slam_prep/config/front_camera_extrinsics.template.yaml"
+}

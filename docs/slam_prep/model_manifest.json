@@ -1,0 +1,104 @@
+{
+  "name": "twinlite_plus_small_da_finetuned",
+  "status": "fine_tuned_and_exported",
+  "fine_tune": "3 epochs, EMA, run small_da_v2, started from pretrained/small_da_single.pth",
+  "task": "drivable_area_binary",
+  "architecture": "TwinLiteNet+ SingleLiteNetPlus",
+  "config": "small",
+  "parameters": 117792,
+  "input": {
+    "shape": [1, 3, 384, 672],
+    "color_order": "RGB",
+    "resize": "direct resize to 672x384, no letterbox padding",
+    "scale": "float32 / 255.0",
+    "layout": "NCHW"
+  },
+  "output": {
+    "shape": [1, 2, 384, 672],
+    "classes": ["background", "drivable"],
+    "activation": "softmax over channel, use class 1",
+    "runtime_threshold": 0.4
+  },
+  "training": {
+    "run": "D:\\Desktop\\navigator\\roadseg_train\\runs\\small_da_v2",
+    "epochs": 3,
+    "batch_size": 16,
+    "iters_per_epoch": 3770,
+    "lr": 0.0001,
+    "ema": true,
+    "checkpoint_epoch": 3,
+    "ema_updates": 11310,
+    "train_log": "D:\\Desktop\\navigator\\roadseg_train\\runs\\small_da_v2\\train.log"
+  },
+  "training_data": {
+    "train": "BDD100K train; small_da_v2 used 3,770 iters/epoch at batch 16 (about 60.3k images/epoch). The clean 65k split below is for future runs and full-val comparisons.",
+    "val": "official BDD100K val images, 10000, no overlap with train",
+    "clean_split_manifest": "D:\\Desktop\\navigator\\roadseg_train\\bdd100k_split\\split.json",
+    "official_val_manifest": "D:\\Desktop\\navigator\\roadseg_train\\bdd100k_val\\manifest.json",
+    "field_data_protocol": "D:\\Desktop\\navigator\\roadseg_train\\field_data_protocol.json",
+    "dataset_checker": "D:\\Desktop\\navigator\\roadseg_train\\check_dataset.py"
+  },
+  "artifacts": {
+    "onnx": "D:\\Desktop\\navigator\\roadseg_train\\export\\twinlite_plus_small_da_finetuned.onnx",
+    "onnx_bytes": 522490,
+    "onnx_sha256": "AC6AA7AB44D599FFDA25D2DFEC215F0E571656EBC71F5C7B279CBDA249329CF9",
+    "weight": "D:\\Desktop\\navigator\\roadseg_train\\runs\\small_da_v2\\model_2.pth",
+    "weight_bytes": 555451,
+    "weight_sha256": "1318B5F79A5439880F59E364EF01FD82DD971FF3E870CDD053B1082C852DFFEB"
+  },
+  "metrics": {
+    "dataset": "official BDD100K val, all 10000 images",
+    "pixel_accuracy": 0.9714085960751488,
+    "drivable_iou": 0.8450677042129315,
+    "miou": 0.9055968225041372,
+    "soft_boundary_ratio": null,
+    "latency_ms_mean": 16.143221979995722,
+    "latency_ms_p50": 16.959700000370503,
+    "fps": 61.94550265363228,
+    "threshold": 0.4,
+    "device": "RTX 4080 Laptop, PyTorch CUDA",
+    "note": "soft-boundary skipped for full-split speed; see the 500-image parity block."
+  },
+  "baseline_comparison": {
+    "dataset": "official BDD100K val, all 10000 images",
+    "baseline_weight": "D:\\Desktop\\navigator\\roadseg_train\\pretrained\\small_da_single.pth",
+    "baseline": {
+      "pixel_accuracy": 0.9553172905815972,
+      "drivable_iou": 0.7753478945944627,
+      "miou": 0.8612590246743694,
+      "latency_ms_mean": 16.924352279998494,
+      "fps": 59.086456217400894
+    },
+    "delta": {
+      "miou": 0.0443377978297678,
+      "drivable_iou": 0.0697198096184688,
+      "pixel_accuracy": 0.0160913054935516
+    }
+  },
+  "onnx_parity_500": {
+    "dataset": "official BDD100K val, first 500 images",
+    "torch_miou": 0.904958381588705,
+    "onnx_miou": 0.9049583735446385,
+    "torch_drivable_iou": 0.8434709458703965,
+    "onnx_drivable_iou": 0.8434718125276564,
+    "onnx_latency_ms_mean": 21.0487145999723,
+    "onnx_latency_ms_p50": 20.240749999175023,
+    "onnx_fps": 47.50883932842702,
+    "device": "RTX 4080 Laptop, onnxruntime CPUExecutionProvider",
+    "max_metric_diff": "below 1e-5"
+  },
+  "tensorrt": {
+    "build_on": "Jetson Orin Nano, JetPack 7.2, TensorRT 10.16",
+    "not_built": true,
+    "command": "python3 scripts/build_roadseg_engine.py --onnx twinlite_plus_small_da_finetuned.onnx --engine data/models/roadseg/twinlite_plus_small_da_finetuned_fp16_384x672.plan",
+    "engine_input": "1x3x384x672",
+    "expected_latency": "TBD on Orin"
+  },
+  "domain_gap": "BDD100K is urban/asphalt-heavy. The robot venue has coloured ground/farmland textures; this model is expected to under-segment those areas. Field labels are still required for the real domain.",
+  "next_steps": [
+    "build the TensorRT FP16 engine on the Jetson from the fine-tuned ONNX",
+    "check real camera overlays on the robot venue",
+    "collect and label field data for coloured ground per field_data_protocol.json; validate with check_dataset.py",
+    "fine-tune on field data and keep the official 10k BDD val as the regression gate"
+  ]
+}

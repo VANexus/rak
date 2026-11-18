@@ -41,6 +41,10 @@ def generate_launch_description():
         DeclareLaunchArgument("waypoints_file", default_value=""),
         DeclareLaunchArgument("lidar_z", default_value="0.1525"),  # 2026-10-14 实测
         DeclareLaunchArgument("odom_source", default_value="rf2o", choices=["rf2o", "ekf", "none"]),
+        # [AI] L3 /cmd_vel 限幅门（§7.2）：透传给 nav2.launch.py。默认关闭，
+        # 真打滑阈值标定完成后才允许 slip_gate:=true（接线图见 nav2.launch.py 头注释）。
+        DeclareLaunchArgument(
+            "slip_gate", default_value="false", choices=["true", "false"]),
         DeclareLaunchArgument(
             "supervised", default_value="false",
             description="true = 任务层由 system_manager 驱动（ADR-0020）",
@@ -51,6 +55,7 @@ def generate_launch_description():
                 "motion_backend": LaunchConfiguration("motion_backend"),
                 "lidar_z": LaunchConfiguration("lidar_z"),
                 "odom_source": LaunchConfiguration("odom_source"),
+                "slip_gate": LaunchConfiguration("slip_gate"),
                 "use_sim_time": "false",
             }.items(),
         ),

@@ -1,0 +1,47 @@
+# RTAB-Map RGB-D 建图档（草稿，部署前先评审）
+#
+# 与仓库现有 localization.launch.py 的区别：
+#   - 本文件是 **mapping** 模式（Mem/IncrementalMemory=true），会新增地图节点；
+#   - 现有 localization 档是固定地图纯定位（IncrementalMemory=false）。
+#
+# 互斥：本档的 rtabmap 节点会发布 map -> odom，和 slam_toolbox 是同一帧的
+# 两个发布者。**不要**和 slam.launch.py / nav2.launch.py sensors:=lidar 同时跑。
+# 选这条路线时，map->odom 归 rtabmap，odom->base_footprint 仍归 EKF。
+#
+# 输入契约：
+#   /camera/color/image_raw + /camera/depth/image_raw + /camera/color/camera_info
+#   /odometry/filtered（EKF 位姿先验；没有 EKF 时传 odom_topic:=/odom）
+#
+# 输出：
+#   map -> odom TF、/map、RTAB-Map 数据库（默认 ~/.ros/rtabmap_rgbd.db）
+#
+# 参数值沿用 localization 档的保守预算（4 GB Orin / 10 W），
+# 只把 IncrementalMemory 打开；真机后再按 CPU/内存实测调整。
+rtabmap:
+  ros__parameters:
+    # ---- 建图模式（核心两行）----
+    Mem/IncrementalMemory: "true"
+    Mem/InitWMWithAllNodes: "false"
+
+    # ---- 回环/重定位检测频率：1 Hz，省 CPU ----
+    Rtabmap/DetectionRate: "1.0"
+
+    # ---- 特征预算：与现有 localization 档一致，先保守 ----
+    Kp/MaxFeatures: "500"
+    Vis/MaxFeatures: "1000"
+    Kp/DetectorStrategy: "6"
+    Vis/FeatureType: "6"
+
+    # ---- 建图触发距离 ----
+    RGBD/LinearUpdate: "0.1"
+    RGBD/AngularUpdate: "0.1"
+    RGBD/OptimizeMaxError: "3.0"
+
+    # ---- 工作记忆与回环 ----
+    Rtabmap/TimeThr: "0"
+    Rtabmap/MemoryThr: "0"
+    Mem/RehearsalSimilarity: "0.45"
+
+    # ---- AprilTag 锚点（若启用）----
+    Optimizer/PriorsIgnored: "false"
+    Marker/CornerRadius: "0.01"

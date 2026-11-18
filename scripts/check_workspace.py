@@ -29,6 +29,7 @@ EXPECTED = {
     "rak_imu_driver",
     "rak_harness",
     "rak_intent",
+    "rak_mcp",
     "rak_canopen", "rak_interfaces", "rak_lifecycle", "rak_motion_stub", "rak_moveit_config",
     "rak_metrics", "rak_orchestration",
     "rak_pointcloud", "rak_road_perception", "rak_speech", "rak_stereo_driver",

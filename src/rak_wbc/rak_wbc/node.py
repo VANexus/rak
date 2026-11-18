@@ -75,8 +75,9 @@ PARAM_DEFAULTS = {
     "arm_qd_max": [1.57, 0.5, 0.5, 1.57, 0.5, 1.57],
     # 底盘速度盒：ADR-0006 记录的占位口径（第一道线在 mecanum 控制器参数）
     "base_vmax": [0.25, 0.15, 0.5],
+    # 物理权威 wheel_config.h（WHEEL_RADIUS_UM / WHEEL_LEVER_UM）；geometry_gate 校验
     "wheel_radius": 0.0275,  # 2026-10-14 实测 Ø5.5（与 chassis_controllers.yaml 同步）
-    "wheel_k": 0.26,  # hw+ht = 0.1225+0.1375（2026-10-14 实测）
+    "wheel_k": 0.26,  # hw+ht = 0.1225+0.1375（= WHEEL_LEVER_UM/1000）
     "wheel_wmax": 10.0,  # URDF command clamp 口径
     "support_half": [0.1225, 0.1375],  # 半轴距/半轮距（2026-10-14 实测）
     "support_margin": 0.02,

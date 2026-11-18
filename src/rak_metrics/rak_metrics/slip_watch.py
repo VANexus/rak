@@ -4,12 +4,15 @@
 职责边界（AGENTS/架构红线）：
   - L1（本节点核心）：残差 = ω_kinematic(四轮速+几何) − ω_gyro_z（权威 =
     Jetson LSM6DSR /imu/data_raw），p50/p95 进 /rak/metrics（DiagnosticArray）。
-  - L2（不在这里）：robot_localization 不支持动态协方差 —— 静态保守回退
-    （切 differential / 降 odom0 权重）写在 `rak_bringup/config/ekf.yaml` 注释块。
+  - L2（不在这里）：robot_localization 不支持动态协方差 —— 运行期保护由同包的
+    odom_cov_guard 做：消费本节点的 ~/slip_suspected（std_msgs/Bool），打滑嫌疑
+    期间把轮式 odom 的 pose(x,y)/twist(vx,vy) 协方差 ×K 后转发 /odom_wheel。
+    静态保守回退（切 differential / 降 odom0 权重）写在 ekf.yaml 注释块。
   - L3（本节点提供通路，**默认不接线**）：打滑嫌疑期间把 cmd_vel_in 的
     平移分量 ×0.5 发到 cmd_vel_out（恢复期每帧 +1/8 斜坡回 1.0）。
-    bringup 重接线（collision_monitor → 本节点 → 控制器）是**落地期**动作：
-    架空期真打滑不可复现，先只验证数据通路（§7.2 架空期限制）。
+    bringup 接线在 nav2.launch.py（slip_gate:=true 时 collision_monitor 输出
+    换线到 /cmd_vel_pre_slip → 本节点 → /cmd_vel），默认关闭：真打滑阈值
+    标定（slip_sigma 基线工具回填 sigma_baseline）后才能开（§7.2 落地期）。
 
 新鲜度：/joint_states ≈100 Hz 为计算节拍，取最近一次 gyro-z；
 IMU 年龄 > imu_max_age_ms 视为不新鲜，该拍不计残差（计数器上报）。
@@ -27,6 +30,7 @@ from geometry_msgs.msg import Twist
 from rclpy.lifecycle import TransitionCallbackReturn
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Imu, JointState
+from std_msgs.msg import Bool
 
 from rak_lifecycle.managed_node import ManagedNode
 
@@ -59,11 +63,16 @@ class SlipWatchNode(ManagedNode):
         self._gate_scale = 1.0
         self._metrics_pub = None
         self._gate_pub = None
+        self._flag_pub = None
+        self._gate_sub = None
+        self._flag_last: bool | None = None
 
     # ---------------------------------------------------------------- lifecycle
     def on_configure(self, state):
         super().on_configure(state)
-        radius = float(self.declare("wheels_radius", 0.0275))
+        # 物理权威 wheel_config.h；此处仅为 ROS 参数默认值，geometry_gate 校验。
+        # 2026-11-18 实测回填：有效滚动半径 0.0309（滚子外缘），见 chassis_controllers.yaml。
+        radius = float(self.declare("wheels_radius", 0.0309))
         wheel_base_sum = float(self.declare("wheel_base_sum", 0.26))
         n_sigma = float(self.declare("n_sigma", 3.0))
         sigma = float(self.declare("sigma_baseline", 0.0))
@@ -98,10 +107,14 @@ class SlipWatchNode(ManagedNode):
         self._metrics_pub = self.lifecycle_publisher(
             DiagnosticArray, "/rak/metrics", 10)
         self._gate_pub = self.lifecycle_publisher(Twist, "cmd_vel_gated", 10)
+        # 打滑嫌疑标准消息（std_msgs/Bool，无自定义 msg）：L2 中继 odom_cov_guard
+        # 消费这个话题做协方差膨胀；信号缺失时下游按"无打滑"fail-open。
+        self._flag_pub = self.lifecycle_publisher(Bool, "slip_suspected", 10)
         if gate:
-            # L3 接线由 bringup 完成：cmd_vel_in 重映射到 /cmd_vel（上游），
-            # cmd_vel_gated 重映射到 /cmd_vel（下游）。未重映射时本订阅指向
-            # 一个无人发布的私有话题 = 安全的空转。
+            # L3 接线由 nav2.launch.py 的 slip_gate:=true 完成：cmd_vel_in 重映射到
+            # /cmd_vel_pre_slip（collision_monitor 输出），cmd_vel_gated 重映射到
+            # /cmd_vel（下游适配器/真底盘）。未重映射时本订阅指向一个无人发布的
+            # 私有话题 = 安全的空转。
             self._gate_sub = self.create_subscription(
                 Twist, "cmd_vel_in", self._on_cmd_vel, 10)
         self.get_logger().info(
@@ -119,6 +132,10 @@ class SlipWatchNode(ManagedNode):
         self._evaluated = 0
         self._slip = False
         self._gate_scale = 1.0
+        # 发布一次初始 False：让下游（odom_cov_guard）立刻能区分"信号在、无打滑"
+        # 与"信号缺失"，而不是等第一帧数据到来。
+        self._flag_last = None
+        self._publish_flag()
         self.add_timer(2.0, self._publish_metrics)
         return TransitionCallbackReturn.SUCCESS
 
@@ -126,6 +143,8 @@ class SlipWatchNode(ManagedNode):
         self._subs.clear()
         self._metrics_pub = None
         self._gate_pub = None
+        self._flag_pub = None
+        self._gate_sub = None
         self._wheel_vel.clear()
         self._gyro_z = None
         self._gyro_at = None
@@ -160,6 +179,14 @@ class SlipWatchNode(ManagedNode):
         self._residuals.add(residual * 1e3)   # mrad/s，和其它 metrics 的 ms 习惯一致
         self._evaluated += 1
         self._slip = slip
+        self._publish_flag()
+
+    def _publish_flag(self) -> None:
+        """slip_suspected 变化沿发布（std_msgs/Bool；稳态不发，靠下游超时兜底）。"""
+        if self._flag_pub is None or self._flag_last == self._slip:
+            return
+        self._flag_last = self._slip
+        self.publish(Bool(data=self._slip), publisher=self._flag_pub)
 
     def _ordered_speeds(self) -> tuple[float, float, float, float] | None:
         """按 FL FR RL RR 顺序取四轮 URDF 轴速度；缺任一轮返回 None。"""
@@ -219,12 +246,11 @@ def main(args=None) -> None:
 
     rclpy.init(args=args)
     node = SlipWatchNode()
-    if (node.configure() != TransitionCallbackReturn.SUCCESS
-            or node.activate() != TransitionCallbackReturn.SUCCESS):
-        node.get_logger().error("slip_watch failed to reach active")
-        node.destroy_node()
-        rclpy.shutdown()
-        raise SystemExit(1)
+    # 不要在 main() 里自己 trigger_configure/activate：受管节点由 launch 的
+    # managed()（或 system_manager）驱动转移，自己再来一次会和它抢同一个状态机，
+    # 结果是 "Transition is not registered" 直接退出（本轮实测）。
+    # 单独 `ros2 run` 调试时才手工驱动：
+    #   ros2 lifecycle set /slip_watch configure && ros2 lifecycle set /slip_watch activate
     try:
         rclpy.spin(node)
     finally:

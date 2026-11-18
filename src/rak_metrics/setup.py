@@ -23,6 +23,8 @@ setup(
         "console_scripts": [
             "rak_metrics = rak_metrics.node:main",
             "slip_watch = rak_metrics.slip_watch:main",
+            "odom_cov_guard = rak_metrics.odom_cov_guard:main",
+            "slip_sigma = rak_metrics.cov_guard:main",
         ],
     },
 )

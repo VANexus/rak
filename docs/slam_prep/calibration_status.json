@@ -1,0 +1,86 @@
+{
+  "updated": "2026-11-17",
+  "purpose": "标定现状核对：区分已完成的内参标定与仍未完成的 IPM 外参 / EKF 协方差 / AprilTag 布设。",
+  "source": {
+    "github_todo": "https://github.com/VANexus/rak/blob/main/TODO.md (2026-11-16)",
+    "vision_nav_v1": "https://github.com/VANexus/rak/blob/main/docs/design/vision_nav_v1.md section 5A.7",
+    "line_follow_design": "https://github.com/VANexus/rak/blob/main/docs/design/vision_line_follow_v1.md section 8.2",
+    "camera_launch": "/home/xrak/rak/src/rak_bringup/launch/camera.launch.py",
+    "apriltag_config": "/home/xrak/rak/src/rak_bringup/config/apriltag.yaml"
+  },
+  "front_camera_intrinsics": {
+    "status": "done",
+    "date": "2026-11-15",
+    "method": "ChArUco 5x7, 24 views",
+    "residual_in_sample_px": 0.401,
+    "residual_holdout_px": 0.381,
+    "resolution": [1280, 720],
+    "camera_name": "front_camera",
+    "file": "~/.ros/camera_info/front_camera.yaml",
+    "fx": 844.4026417,
+    "fy": 851.4632493,
+    "cx": 614.197504,
+    "cy": 401.1831601,
+    "distortion_model": "plumb_bob",
+    "distortion": [0.2427693968, -1.44429119, 0.00111948994, -5.606192935e-05, 0.0],
+    "note": "This is the front mono UVC camera at 1280x720. It is not the Gemini depth camera and not the arm eye-in-hand stereo."
+  },
+  "gemini_depth_intrinsics": {
+    "status": "factory",
+    "source": "Orbbec Gemini 335L driver CameraInfo",
+    "resolution": [424, 240],
+    "fx": 211.94869995117188,
+    "fy": 211.94869995117188,
+    "cx": 212.0,
+    "cy": 119.50625610351562,
+    "distortion": [0.0, 0.0, 0.0, 0.0, 0.0],
+    "note": "Factory calibration; no manual depth calibration was performed. If the stream resolution changes, use the CameraInfo published at that resolution."
+  },
+  "front_camera_extrinsics": {
+    "status": "not_done",
+    "needed_for": "IPM / pure vision line following (height, pitch, roll, x, y)",
+    "expected_file": "~/rak/data/calib/front_camera_extrinsics.yaml (absent)",
+    "acceptance": "5-point ground calibration, reprojection RMS < 1.5 cm, calibrated: true + date/method",
+    "reference": "docs/design/vision_line_follow_v1.md section 8.2",
+    "template": "slam_prep/config/front_camera_extrinsics.template.yaml",
+    "worksheet": "slam_prep/calibration/front_camera_extrinsics_worksheet.json"
+  },
+  "ekf_covariance": {
+    "status": "not_done",
+    "note": "ekf_4d.yaml still uses placeholders; needs Allan static noise + straight 2 m regression."
+  },
+  "wheel_geometry": {
+    "status": "not_done",
+    "note": "Wheel diameter and lx/ly are not measured; TODO P1b."
+  },
+  "april_tags": {
+    "status": "assets_ready_placement_pending",
+    "family": "36h11",
+    "edge_m": 0.16,
+    "print_dpi": 300,
+    "assets": "slam_prep/tags/tag36h11_id0.png ... id9.png",
+    "layout": "slam_prep/tags/layout_template.json",
+    "note": "Intrinsic calibration does not place tags. /apriltag/detections stays empty until tags are printed, placed at known coordinates, and the layout is filled."
+  },
+  "runtime_wiring_issues": [
+    {
+      "id": "camera_info_url_path",
+      "current": "camera.launch.py default camera_info_url is empty; its docstring points to ~/rak/data/calib/front_camera.yaml, which does not exist.",
+      "actual_file": "~/.ros/camera_info/front_camera.yaml",
+      "fix": "pass camera_info_url:=file:///home/xrak/.ros/camera_info/front_camera.yaml; keep camera_name:=front_camera"
+    },
+    {
+      "id": "front_camera_device",
+      "current": "camera.launch.py default video_device=/dev/video0. With Gemini 335L enumerated first, /dev/video0-7 belong to Gemini and the front AX USB2.0 camera is /dev/video8 (observed 2026-11-17).",
+      "fix": "install slam_prep/udev/99-front-camera.rules to create /dev/front_camera, or pass video_device:=/dev/video8 explicitly"
+    },
+    {
+      "id": "gemini_usb_topology",
+      "current": "GitHub TODO 2026-11-16 says Gemini is direct USB3; current lsusb shows it behind VIA USB3.1 Hub 2-1.3.",
+      "fix": "confirm the physical port and prefer direct USB3; this hub topology has produced tegra-xusb TRB DMA errors and re-enumeration."
+    }
+  ],
+  "recommended_front_camera_launch": "ros2 launch rak_bringup camera.launch.py video_device:=/dev/front_camera camera_info_url:=file:///home/xrak/.ros/camera_info/front_camera.yaml",
+  "front_camera_launch_script": "slam_prep/scripts/front_camera.sh",
+  "udev_rule": "slam_prep/udev/99-front-camera.rules"
+}

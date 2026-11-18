@@ -311,12 +311,12 @@ class WakeDoaViz(ManagedNode):
 def main(args=None):
     rclpy.init(args=args)
     node = WakeDoaViz()
-    if (node.configure() != TransitionCallbackReturn.SUCCESS
-            or node.activate() != TransitionCallbackReturn.SUCCESS):
-        node.get_logger().error("wake_doa_viz failed to reach active")
-        node.destroy_node()
-        rclpy.shutdown()
-        raise SystemExit(1)
+    # Lifecycle is driven by the composition layer: `managed()` in
+    # sensors.launch.py, or system_manager when supervised:=true. Do not
+    # configure/activate here -- doing so races those events and creates a
+    # second lifecycle authority (ADR-0020 §3). For a bare `ros2 run`,
+    # drive it explicitly with `ros2 lifecycle set /wake_doa_viz configure`
+    # and `... activate`.
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
