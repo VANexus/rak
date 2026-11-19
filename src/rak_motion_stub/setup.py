@@ -28,7 +28,6 @@ setup(
             # measured roller-layout sign inversion (invert_angular_z) that no
             # other node may re-implement.
             'cmd_vel_omni = rak_motion_stub.cmd_vel_omni:main',
-            'cmd_vel_omni = rak_motion_stub.cmd_vel_omni:main',
         ],
     },
 )
