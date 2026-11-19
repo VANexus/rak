@@ -29,8 +29,14 @@ import glob
 import os
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    LogInfo,
+    OpaqueFunction,
+)
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -86,6 +92,9 @@ def _nodes(context, *args, **kwargs):
     allow_motion = allow_motion in ("1", "true", "yes", "on")
     enabled = LaunchConfiguration("enabled").perform(context).strip().lower()
     enabled = enabled in ("1", "true", "yes", "on")
+    controller = LaunchConfiguration("controller").perform(context).strip().lower()
+    if controller not in ("direct", "nav2"):
+        raise RuntimeError(f"controller 只接受 direct|nav2，得到 {controller!r}")
 
     image_topic = LaunchConfiguration("image_topic").perform(context)
     engine_path = LaunchConfiguration("engine_path").perform(context)
@@ -155,40 +164,74 @@ def _nodes(context, *args, **kwargs):
 
     # ---------------- 逻辑端：trace + 控制 + 预览（工作站） ----------------
     if role in ("logic", "both"):
-        follow_params = dict([
-            _param("mask_topic", str),
-            _param("cmd_topic", str),
-            _param("max_vx", float),
-            _param("max_vy", float),
-            _param("max_wz", float),
-            _param("turn_policy", str),
-            _param("corner_follow", bool),
-            _param("lookahead_frac", float),
-            _param("k_lateral", float),
-            _param("k_vy", float),
-            _param("k_heading", float),
-            _param("debug_image", bool),
-            _param("debug_topic", str),
-            ("enabled", bool(enabled)),
-            ("publish_reference", bool(enabled and allow_motion)),
-            ("reference_topic", LaunchConfiguration("reference_topic").perform(context)),
-            ("reference_frame", LaunchConfiguration("reference_frame").perform(context)),
-            ("control_hz", ParameterValue(
-                LaunchConfiguration("control_hz"), value_type=float)),
-        ])
-        actions.append(
-            Node(
+        if controller == "nav2":
+            # Stock Nav2 execution layer: road_goal_node publishes the traced
+            # path, RotationShim + MPPI track it. Needs odom -> base_footprint.
+            nav2_share = os.path.dirname(_CONFIG_DIR)
+            actions.append(IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(nav2_share, "launch", "nav2.launch.py")),
+                launch_arguments={
+                    "sensors": "camera",
+                    "odom_source": LaunchConfiguration("odom_source"),
+                    "motion_backend": LaunchConfiguration("motion_backend"),
+                    "params_overlay": os.path.join(
+                        _CONFIG_DIR, "vision_follow_params.yaml"),
+                    "publish_robot_tf": LaunchConfiguration("publish_robot_tf"),
+                    "slip_watch": "false",
+                    "use_sim_time": "false",
+                }.items(),
+                condition=IfCondition(LaunchConfiguration("start_nav2")),
+            ))
+            actions.append(Node(
+                package="rak_road_perception",
+                executable="road_goal_node",
+                name="road_goal_node",
+                parameters=[dict([
+                    _param("mask_topic", str),
+                    _param("follow_action", str),
+                    _param("odom_frame", str),
+                    _param("base_frame", str),
+                    _param("turn_policy", str),
+                    ("enabled", bool(enabled)),
+                ])],
+                output="screen",
+            ))
+        else:
+            follow_params = dict([
+                _param("mask_topic", str),
+                _param("cmd_topic", str),
+                _param("max_vx", float),
+                _param("max_vy", float),
+                _param("max_wz", float),
+                _param("turn_policy", str),
+                _param("corner_follow", bool),
+                _param("lookahead_frac", float),
+                _param("k_lateral", float),
+                _param("k_vy", float),
+                _param("k_heading", float),
+                _param("debug_image", bool),
+                _param("debug_topic", str),
+                ("enabled", bool(enabled)),
+                ("publish_reference", bool(enabled and allow_motion)),
+                ("reference_topic",
+                 LaunchConfiguration("reference_topic").perform(context)),
+                ("reference_frame",
+                 LaunchConfiguration("reference_frame").perform(context)),
+                ("control_hz", ParameterValue(
+                    LaunchConfiguration("control_hz"), value_type=float)),
+            ])
+            actions.append(Node(
                 package="rak_road_perception",
                 executable="road_follow_node",
                 name="road_follow_node",
                 parameters=[follow_params],
                 output="screen",
-            )
-        )
+            ))
         if enabled and not allow_motion:
             actions.append(LogInfo(msg=(
-                "road_follow: 解算中但 allow_motion:=false —— 只发 /cmd_vel，"
-                "不写 mecanum_drive_controller/reference。"
+                "road_follow: 解算中但 allow_motion:=false —— 只发命令话题，"
+                "不写执行器。真机动车还需 chassis_bringup allow_motion:=true。"
             )))
         actions.append(
             Node(
@@ -210,6 +253,21 @@ def generate_launch_description() -> LaunchDescription:
         _arg("enabled", "false"),
         _arg("allow_motion", "false"),
         _arg("rviz", "true"),
+        # 执行层二选一（唯一入口，不再有第二个 launch 文件）：
+        #   direct —— road_follow_node 直接发 Twist/TwistStamped。不需要 TF、
+        #             不背 Nav2 的 12+ 进程；跟踪质量是手写 P 控制的水平。
+        #   nav2   —— road_goal_node 发 FollowPath，RotationShim + MPPI 跟踪。
+        #             需要 odom -> base_footprint（EKF / 轮式里程计）。
+        _arg("controller", "direct"),
+        _arg("start_nav2", "true"),
+        # nav2 档透传：odom_source 真机用 ekf，桌面夹具用 none（自己灌假里程计）；
+        # motion_backend none 把 /cmd_vel 留给外层，sim 用 cmd_vel_sim 闭环。
+        _arg("odom_source", "ekf"),
+        _arg("motion_backend", "none"),
+        _arg("follow_action", "/follow_path"),
+        _arg("odom_frame", "odom"),
+        _arg("base_frame", "base_link"),
+        _arg("publish_robot_tf", "false"),
         _arg("rviz_config", _DEFAULT_RVIZ),
         _arg("mask_topic", "/road_perception/road_mask"),
         _arg("cmd_topic", "/cmd_vel"),

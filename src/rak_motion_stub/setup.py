@@ -23,6 +23,7 @@ setup(
         'console_scripts': [
             'cmd_vel_stub = rak_motion_stub.cmd_vel_stub:main',
             'cmd_vel_sim = rak_motion_stub.cmd_vel_sim:main',
+            'wheel_odom = rak_motion_stub.wheel_odom:main',
             'cmd_vel_omni = rak_motion_stub.cmd_vel_omni:main',
         ],
     },

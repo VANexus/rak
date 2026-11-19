@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+# 轮式里程计（测试夹具，不是硬件驱动）
+#
+# [AI] 2026-11-19 从 scripts/wheel_odom.py 迁入：AGENTS.md 要求 rclpy 节点必须是
+# setup.py 入口，不得是裸脚本。语义未变。
+#
 # [AI] 轮式里程计:订阅 /base/telemetry 的实测体速度,积分发布 /wheel/odom
 # 单位: BaseTelemetry.measured_twist 已是 SI(m/s, rad/s)。不发 TF(EKF 是权威)。
 import math
@@ -75,9 +79,14 @@ class WheelOdom(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = WheelOdom()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
