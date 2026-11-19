@@ -28,7 +28,7 @@ import time
 
 import numpy as np
 
-from geometry_msgs.msg import Twist, TwistStamped
+from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import Image
@@ -52,12 +52,6 @@ NODE_DEFAULTS = {
     "debug_image": True,
     "debug_topic": "/road_perception/centerline_debug",
     "debug_hz": 10.0,
-    # TwistStamped output for mecanum_drive_controller (~/reference takes
-    # TwistStamped, verified against jazzy's header on the board 2026-11-19).
-    # Two motion gates: enabled AND publish_reference. Both default false.
-    "publish_reference": False,
-    "reference_topic": "/mecanum_drive_controller/reference",
-    "reference_frame": "base_link",
 }
 
 PARAM_DEFAULTS = {
@@ -87,16 +81,6 @@ class RoadFollowNode(Node):
         self._warned_at = {}
 
         self._cmd_pub = self.create_publisher(Twist, self._params["cmd_topic"], 10)
-        self._ref_pub = None
-        if bool(self._params["publish_reference"]):
-            self._ref_pub = self.create_publisher(
-                TwistStamped, self._params["reference_topic"], 10
-            )
-            self.get_logger().warning(
-                "publish_reference:=true — writing "
-                f"{self._params['reference_topic']} (mecanum_drive_controller). "
-                "This is a motion path: allow_motion:=true on chassis_bringup too."
-            )
         self._mask_sub = self.create_subscription(
             Image,
             self._params["mask_topic"],
@@ -162,14 +146,12 @@ class RoadFollowNode(Node):
             twist.linear.x = vx
             twist.linear.y = vy
             twist.angular.z = wz
+            # ONLY /cmd_vel. This node must never write
+            # mecanum_drive_controller/reference itself: that path needs the
+            # measured roller-layout sign inversion (invert_angular_z) which
+            # lives in exactly one place, rak_motion_stub/cmd_vel_omni.
             self._cmd_pub.publish(twist)
             self._last_cmd = (vx, vy, wz)
-            if self._ref_pub is not None:
-                stamped = TwistStamped()
-                stamped.header.stamp = self.get_clock().now().to_msg()
-                stamped.header.frame_id = str(self._params["reference_frame"])
-                stamped.twist = twist
-                self._ref_pub.publish(stamped)
 
         self._maybe_publish_debug(now)
 

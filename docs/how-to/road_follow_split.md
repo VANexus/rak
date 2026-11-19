@@ -16,27 +16,37 @@
 | 跟踪 / 转弯 / 原地转 | Nav2 | `nav2_rotation_shim_controller`、`nav2_mppi_controller` |
 | 选左右（固定赛道） | Nav2 | `nav2_route` Route Graph（GeoJSON） |
 
-## 2. 主用档：Nav2 现成件
+## 2. 唯一入口
+
+**只有一个 launch 文件**：`road_follow.launch.py`。里面有 `controller:=direct|nav2`
+两档执行层，其余（相机、分割、`/cmd_vel` 桥、RViz）全部共用。
 
 ```bash
 # 驱动端（Jetson，headless）
-ros2 launch rak_bringup road_follow_nav2.launch.py role:=driver
+ros2 launch rak_bringup road_follow.launch.py role:=driver
 
 # 逻辑端（工作站）
-ros2 launch rak_bringup road_follow_nav2.launch.py role:=logic enabled:=true
+ros2 launch rak_bringup road_follow.launch.py role:=logic controller:=direct enabled:=true
+
+# 单机 / 真机（相机+分割+控制全在板上）
+ros2 launch rak_bringup road_follow.launch.py role:=both enabled:=true allow_motion:=true
 ```
 
-内部接线：
+两档执行层：
 
-```
-roadseg_node --/road_perception/road_mask--> road_goal_node
-                                                | FollowPath (nav2 action)
-                                                v
-                     controller_server: RotationShim -> MPPI(Omni)
-                                                | /cmd_vel
-                                                v
-                                        外层底盘适配器
-```
+| `controller:=` | 节点 | 需要什么 |
+|---|---|---|
+| `direct`（默认） | `road_follow_node` 直发 `/cmd_vel` | 无 TF、无 Nav2 |
+| `nav2` | `road_goal_node` 发 `FollowPath`，RotationShim + MPPI 跟踪 | `odom -> base_footprint` |
+
+**`/cmd_vel` 到执行器只有一条路**：`rak_motion_stub/cmd_vel_omni`。它携带实测的
+滚子排布取反（`invert_angular_z=true`，2026-11-18：`angular.z=+0.30` → IMU 实测
+−37°），`allow_motion:=true` 时由 launch 自动拉起。**任何其他节点都不得直接写
+`mecanum_drive_controller/reference`**——绕过它就绕过了这个符号修正。
+
+薄封装（只做清理 + `exec ros2 launch`，接线一律回 launch）：
+`scripts/start_road_follow.sh`（单机）、`scripts/start_road_mppi_sim.sh`（桌面夹具）、
+`scripts/start_road_real.sh` + `scripts/stop_road_real.sh`（真机/急停）。
 
 关键参数在 `config/vision_follow_params.yaml`（覆盖层，**不改** `nav2_params.yaml`）：
 

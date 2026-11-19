@@ -213,11 +213,6 @@ def _nodes(context, *args, **kwargs):
                 _param("debug_image", bool),
                 _param("debug_topic", str),
                 ("enabled", bool(enabled)),
-                ("publish_reference", bool(enabled and allow_motion)),
-                ("reference_topic",
-                 LaunchConfiguration("reference_topic").perform(context)),
-                ("reference_frame",
-                 LaunchConfiguration("reference_frame").perform(context)),
                 ("control_hz", ParameterValue(
                     LaunchConfiguration("control_hz"), value_type=float)),
             ])
@@ -228,6 +223,21 @@ def _nodes(context, *args, **kwargs):
                 parameters=[follow_params],
                 output="screen",
             ))
+            if enabled and allow_motion:
+                # The ONLY writer of mecanum_drive_controller/reference. It
+                # carries the measured roller-layout sign inversion; no other
+                # node may publish to that topic (2026-11-19 unification).
+                actions.append(Node(
+                    package="rak_motion_stub",
+                    executable="cmd_vel_omni",
+                    name="cmd_vel_omni",
+                    parameters=[dict([
+                        _param("cmd_topic", str),
+                        _param("reference_topic", str),
+                        _param("reference_frame", str),
+                    ])],
+                    output="screen",
+                ))
         if enabled and not allow_motion:
             actions.append(LogInfo(msg=(
                 "road_follow: 解算中但 allow_motion:=false —— 只发命令话题，"

@@ -24,6 +24,10 @@ setup(
             'cmd_vel_stub = rak_motion_stub.cmd_vel_stub:main',
             'cmd_vel_sim = rak_motion_stub.cmd_vel_sim:main',
             'wheel_odom = rak_motion_stub.wheel_odom:main',
+            # The ONLY writer of mecanum_drive_controller/reference. It owns the
+            # measured roller-layout sign inversion (invert_angular_z) that no
+            # other node may re-implement.
+            'cmd_vel_omni = rak_motion_stub.cmd_vel_omni:main',
             'cmd_vel_omni = rak_motion_stub.cmd_vel_omni:main',
         ],
     },
