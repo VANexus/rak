@@ -18,6 +18,14 @@ CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 BASE = os.path.join(CONFIG_DIR, "nav2_params.yaml")
 OVERLAY = os.path.join(CONFIG_DIR, "vision_follow_params.yaml")
 
+# Keys the vision stack is ALLOWED to differ in, with a reason. Everything else
+# must mirror nav2_params.yaml.
+#
+# motion_model / vy_*: mecanum strafe was measured not to translate on the
+# competition mat (2026-11-19), so the vision stack runs DiffDrive. Plain Nav2
+# keeps Omni for the places that still legitimately strafe.
+_DELIBERATE = {"plugin", "motion_model", "vy_std", "vy_max", "vy_min"}
+
 _SHIM = "nav2_rotation_shim_controller::RotationShimController"
 _MPPI = "nav2_mppi_controller::MPPIController"
 
@@ -40,11 +48,11 @@ def test_overlay_wraps_mppi_with_the_rotation_shim():
 def test_mppi_parameters_mirror_nav2_params():
     base = _follow_path(BASE)
     overlay = _follow_path(OVERLAY)
-    missing = sorted(k for k in base if k != "plugin" and k not in overlay)
+    missing = sorted(k for k in base if k not in _DELIBERATE and k not in overlay)
     assert not missing, f"overlay 缺这些 MPPI 键：{missing}"
     drifted = {
         k: (base[k], overlay[k]) for k in base
-        if k != "plugin" and overlay[k] != base[k]
+        if k not in _DELIBERATE and overlay[k] != base[k]
     }
     assert not drifted, f"这两份 MPPI 参数不一致（nav2_params vs overlay）：{drifted}"
 

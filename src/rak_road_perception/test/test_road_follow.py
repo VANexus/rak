@@ -40,11 +40,15 @@ def test_straight_centered():
 
 
 def test_offset_road_strafes_right():
-    # Road to the RIGHT of heading: mecanum strafes right (vy<0), little yaw.
+    # Road to the RIGHT of heading -> steer right. Since 2026-11-19 lateral
+    # correction is YAW-ONLY (k_vy=0): mecanum strafe was measured not to
+    # translate on the competition mat, so vy must stay at zero.
     m = band(np.zeros((H, W), np.uint8), 380, 460)
     pts, spin, has = run(m)
     vx, vy, wz = follow_command(pts, spin, has, P)
-    assert vy < -0.05 and abs(wz) < 0.2 and vx > 0
+    assert abs(vy) < 1e-9, f"strafe must stay disabled, got vy={vy:+.4f}"
+    assert wz < -0.03, f"should yaw right toward the road, got wz={wz:+.4f}"
+    assert vx > 0
 
 
 def test_sharp_gradual_bend_followed_and_slowed():
@@ -56,8 +60,9 @@ def test_sharp_gradual_bend_followed_and_slowed():
     pts, spin, has = run(m)
     assert has and len(pts) > 20 and pts[-1][1] < -0.2  # trace reaches the bend
     vx, vy, wz = follow_command(pts, spin, has, P)
-    # Corrective LEFT action: yaw or mecanum strafe (vy>0 = glide left).
-    assert wz > 0.1 or vy > 0.05
+    # Corrective LEFT action. Yaw only -- strafe is disabled by default.
+    assert wz > 0.05, f"should yaw left, got wz={wz:+.4f}"
+    assert abs(vy) < 1e-9
     assert vx < P["max_vx"] * 0.8  # curvature slowdown
 
 
@@ -315,8 +320,8 @@ def test_narrow_lane_corrects_a_lateral_offset():
         pts, spin, has = trace_centerline(m, p)
         cmd = follow_command(pts, spin, has, p)
         assert has and pts
-        # road sits to the right -> strafe right (vy<0) and yaw right (wz<0)
-        assert cmd[1] < -0.01, (shift, cmd)
+        # road sits to the right -> steer right; strafe is disabled by default
+        assert abs(cmd[1]) < 1e-9, (shift, cmd)
         assert cmd[2] < -0.01, (shift, cmd)
 
 

@@ -45,8 +45,16 @@ FOLLOW_DEFAULTS = {
     "max_vx": 0.12,
     "max_vy": 0.08,            # mecanum strafe cap (kept below vx: rollers slip)
     "max_wz": 0.5,
-    "k_lateral": 0.7,          # wz share of lateral error (vy handles most)
-    "k_vy": 0.9,               # strafe gain: e>0 (road right) -> vy<0 (go right)
+    "k_lateral": 0.7,          # wz share of lateral error
+    # 0.0 by default since 2026-11-19. MEASURED on the competition mat (PU/喷绘
+    # cloth): a pure `linear.y` command does NOT translate -- the wheels form the
+    # diagonal strafe pattern but with ~4x amplitude imbalance, and the robot
+    # pivots around a corner instead of sliding sideways (numbers in
+    # rak_motion_stub/cmd_vel_omni.py). Mecanum strafe depends on the rollers
+    # slipping sideways; on soft cloth that friction wins. So all lateral
+    # correction goes through yaw and the robot steers onto the lane centre like
+    # a car. Raise this only after a clean strafe is shown on the real surface.
+    "k_vy": 0.0,               # strafe gain: e>0 (road right) -> vy<0 (go right)
     "k_heading": 0.9,
     "lookahead_frac": 0.70,    # pursuit target this far above the bottom row
     "curv_slow": 1.5,          # vx scale = 1 - curv_slow * normalized curvature

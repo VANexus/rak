@@ -52,14 +52,18 @@ controller_server:
       iteration_count: 1
       temperature: 0.3
       gamma: 0.015
-      motion_model: "Omni"
+      # DiffDrive, not Omni: mecanum strafe was measured NOT to translate on
+      # the competition mat (2026-11-19, see rak_motion_stub/cmd_vel_omni.py) --
+      # a pure vy command makes the robot pivot instead of sliding. Omni would
+      # spend its control authority on a motion the surface cannot produce.
+      motion_model: "DiffDrive"
       vx_std: 0.10
-      vy_std: 0.08
+      vy_std: 0.0
       wz_std: 0.12
       vx_max: 0.25
       vx_min: 0.02
-      vy_max: 0.15
-      vy_min: -0.15
+      vy_max: 0.0
+      vy_min: 0.0
       wz_max: 0.50
       ax_max: 0.8
       ax_min: -0.8
