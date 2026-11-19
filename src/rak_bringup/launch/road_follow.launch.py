@@ -226,20 +226,16 @@ def _nodes(context, *args, **kwargs):
                 output="screen",
             ))
             if enabled and allow_motion:
-                # The ONLY writer of mecanum_drive_controller/reference. It
-                # carries the measured roller-layout sign inversion; no other
-                # node may publish to that topic (2026-11-19 unification).
-                actions.append(Node(
-                    package="rak_motion_stub",
-                    executable="cmd_vel_omni",
-                    name="cmd_vel_omni",
-                    parameters=[dict([
-                        _param("cmd_topic", str),
-                        _param("reference_topic", str),
-                        _param("reference_frame", str),
-                    ])],
-                    output="screen",
-                ))
+                # NOTE: cmd_vel_omni is owned by chassis_bringup.launch.py (the
+                # base's own motion path), NOT by this file. Starting it here
+                # too would put two writers on
+                # /mecanum_drive_controller/reference -- measured 2026-11-19,
+                # the chassis then saw interleaved commands. One owner.
+                actions.append(LogInfo(msg=(
+                    "road_follow: allow_motion:=true -> 写 /cmd_vel；"
+                    "它到执行器要经 chassis_bringup 起的 cmd_vel_omni，"
+                    "本 launch 不起第二个。"
+                )))
         if enabled and not allow_motion:
             actions.append(LogInfo(msg=(
                 "road_follow: 解算中但 allow_motion:=false —— 只发命令话题，"
@@ -283,8 +279,6 @@ def generate_launch_description() -> LaunchDescription:
         _arg("rviz_config", _DEFAULT_RVIZ),
         _arg("mask_topic", "/road_perception/road_mask"),
         _arg("cmd_topic", "/cmd_vel"),
-        _arg("reference_topic", "/mecanum_drive_controller/reference"),
-        _arg("reference_frame", "base_link"),
         _arg("image_topic", "/camera/image_raw"),
         _arg("engine_path", ""),
         _arg("camera_device", "/dev/video0"),
