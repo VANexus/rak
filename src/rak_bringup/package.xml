@@ -21,6 +21,10 @@
   <exec_depend>ros2lifecycle</exec_depend>
   <!-- 组装契约层（清单 / 编排入口 / 档位），本包只负责硬件全栈组合（ADR-0026） -->
   <exec_depend>rak_orchestration</exec_depend>
+  <!-- road_follow.launch.py 起 roadseg_node / road_follow_node（纯视觉寻路） -->
+  <exec_depend>rak_road_perception</exec_depend>
+  <!-- 可选：rectify:=true 时由 image_proc/rectify_node 做镜头畸变矫正 -->
+  <exec_depend>image_proc</exec_depend>
   <!-- 传感器链（原 rak_sensor_bringup） -->
   <exec_depend>lslidar_driver</exec_depend>
   <exec_depend>laser_filters</exec_depend>

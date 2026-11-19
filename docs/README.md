@@ -43,6 +43,7 @@
 | [`how-to/laya_tensorrt_runbook.md`](how-to/laya_tensorrt_runbook.md) | 现行（TensorRT 导出/验收 runbook） | 2026-10-17 |
 | [`how-to/chassis_canopen_bringup.md`](how-to/chassis_canopen_bringup.md) | 现行（底盘 CANopen v5 验收 G0–G3） | 2026-11-16 |
 | [`how-to/remote_host_chassis_access.md`](how-to/remote_host_chassis_access.md) | 现行（局域网上位机接入底盘驱动层） | 2026-11-17 |
+| [`how-to/road_follow_split.md`](how-to/road_follow_split.md) | 现行（纯视觉寻路：控制层走 Nav2 现成件，判别层自持） | 2026-11-19 |
 
 下位机侧的操作步骤在各自仓，不在这里复制：
 

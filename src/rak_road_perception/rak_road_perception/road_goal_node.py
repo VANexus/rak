@@ -28,12 +28,14 @@ from sensor_msgs.msg import Image
 from tf2_ros import Buffer, TransformListener
 
 from .road_follow_math import (
+    CORNER_DEFAULTS,
     GOAL_DEFAULTS,
     TRACE_DEFAULTS,
     extend_to_length,
     ground_points,
     trace_centerline,
 )
+from .params import declare_all
 
 NODE_DEFAULTS = {
     "enabled": False,
@@ -46,53 +48,19 @@ NODE_DEFAULTS = {
     "path_hz": 5.0,
 }
 
-PARAM_DEFAULTS = {**NODE_DEFAULTS, **TRACE_DEFAULTS, **GOAL_DEFAULTS}
+# CORNER_DEFAULTS is here because this node calls the SAME trace_centerline()
+# the direct follower does -- without it the corner params would silently fall
+# back to the in-code defaults and could not be tuned for the MPPI path mode.
+PARAM_DEFAULTS = {**NODE_DEFAULTS, **TRACE_DEFAULTS, **CORNER_DEFAULTS, **GOAL_DEFAULTS}
 
-PARAM_TYPES = {
-    "enabled": bool,
-    "mask_topic": str,
-    "path_topic": str,
-    "follow_action": str,
-    "odom_frame": str,
-    "base_frame": str,
-    "resend_period_s": float,
-    "path_hz": float,
-    "row_step_frac": float,
-    "branch_gate": float,
-    "gap_px": int,
-    "wide_run_frac": float,
-    "bottom_search_frac": float,
-    "image_width": int,
-    "image_height": int,
-    "fx_1280": float,
-    "fy_1280": float,
-    "cx_1280": float,
-    "cy_1280": float,
-    "cam_height_m": float,
-    "cam_pitch_rad": float,
-    "max_range_m": float,
-    "horizon_min_dep_rad": float,
-    "path_len_m": float,
-    "extend_step_m": float,
-}
+
 
 
 class RoadGoalNode(Node):
 
     def __init__(self):
         super().__init__("road_goal_node")
-        self._params = {}
-        for name, default in PARAM_DEFAULTS.items():
-            ptype = PARAM_TYPES[name]
-            if ptype is bool:
-                self.declare_parameter(name, bool(default))
-            elif ptype is int:
-                self.declare_parameter(name, int(default))
-            elif ptype is float:
-                self.declare_parameter(name, float(default))
-            else:
-                self.declare_parameter(name, default)
-            self._params[name] = self.get_parameter(name).value
+        self._params = declare_all(self, PARAM_DEFAULTS)
 
         self._enabled = bool(self._params["enabled"])
         if not self._enabled:
@@ -102,6 +70,7 @@ class RoadGoalNode(Node):
             )
         self._warned_at = {}
         self._last_path = None          # [(d, y_left)] in base frame
+        self._sent_path = None          # last BASE-frame path sent to FollowPath
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
         self._path_pub = self.create_publisher(Path, self._params["path_topic"], 10)
@@ -188,8 +157,17 @@ class RoadGoalNode(Node):
             pose.pose.position.y = y
             pose.pose.orientation.w = 1.0
             goal.path.poses.append(pose)
-        # nav2's controller server preempts the previous FollowPath goal, so a
-        # periodic re-send is all the refresh the moving path needs.
+        # Re-send ONLY when the ROAD changed. Compare in the base frame, never in
+        # odom: the odom-frame path shifts on every metre driven even when the
+        # road ahead is identical, and each resend preempts the running goal --
+        # the preempt window emits zero velocity (measured 2026-11-18:
+        # /cmd_vel_smoothed alternated 0.205 / 0.000 at exactly the resend period).
+        current = self._last_path
+        if self._sent_path is not None and len(self._sent_path) == len(current):
+            if all(abs(a[0] - b[0]) < 0.10 and abs(a[1] - b[1]) < 0.10
+                   for a, b in zip(self._sent_path, current)):
+                return
+        self._sent_path = list(current)
         self._client.send_goal_async(goal)
 
     def _warn(self, key, message, interval_s=10.0):

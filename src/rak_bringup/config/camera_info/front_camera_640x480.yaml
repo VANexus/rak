@@ -1,0 +1,66 @@
+# Front camera intrinsics at the OPERATING resolution (640x480).
+#
+# Derived from the 1280x720 ChArUco calibration (scripts/calibrate_camera_charuco.py,
+# /home/xrak/.ros/camera_info/front_camera.yaml) with the crop model measured
+# 2026-11-19: 640x480 shares the VERTICAL field of view with 1280x720 and crops
+# horizontally, so fx/cx rescale by 480/720 after shifting the principal point.
+# Scaling fx by 640/1280 instead is 33% low and shrinks every projected distance.
+#
+# Distortion coefficients are resolution-independent (normalised by focal
+# length), so they carry over unchanged.
+#
+image_width: 640
+image_height: 480
+camera_name: front_camera
+camera_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 562.9351
+  - 0
+  - 302.7983
+  - 0
+  - 567.6422
+  - 267.4554
+  - 0
+  - 0
+  - 1
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data:
+  - 0.2427693968
+  - -1.44429119
+  - 0.00111948994
+  - -5.606192935e-05
+  - 0
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 1.0
+  - 0
+  - 0
+  - 0
+  - 1
+  - 0
+  - 0
+  - 0
+  - 1
+projection_matrix:
+  rows: 3
+  cols: 4
+  data:
+  - 562.9351
+  - 0
+  - 302.7983
+  - 0
+  - 0
+  - 567.6422
+  - 267.4554
+  - 0
+  - 0
+  - 0
+  - 1
+  - 0

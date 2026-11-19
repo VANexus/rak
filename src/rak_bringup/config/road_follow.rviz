@@ -1,0 +1,153 @@
+# 纯视觉寻路预览（本机 rviz2，订阅板子上的分割输出）。
+#
+#   ROS_DOMAIN_ID=47 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+#     rviz2 -d src/rak_bringup/config/road_follow.rviz
+#
+# 板子只跑相机 + roadseg（headless）；本机跑逻辑与 rviz。见
+# docs/reference/perf/cross_host_dds.md。
+#
+# Fixed Frame 用 base_link：只有底盘 bringup 在跑时才有 TF，没有 TF 时
+# Image/Marker2D 显示照常工作，只是 3D 视图会报 "No transform"。
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 120
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Road Overlay1
+        - /Road Mask1
+        - /Centerline1
+      Splitter Ratio: 0.5
+    Tree Height: 480
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Alpha: 0.3
+      Cell Size: 0.5
+      Plane: XY
+      Plane Cell Count: 20
+      Color: 100; 100; 100
+      Reference Frame: <Fixed Frame>
+      Value: true
+
+    # 原图 + 分割叠加：判断“车到底把什么当成了路”最直观的一路。
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Road Overlay
+      Max Value: 1
+      Min Value: 0
+      Normalize Range: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /road_perception/overlay
+      Value: true
+
+    # 二值 mask：trace 算法的真实输入，出现分叉/断裂先看这一路。
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Road Mask
+      Max Value: 1
+      Min Value: 0
+      Normalize Range: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /road_perception/road_mask
+      Value: true
+
+    # 追踪结果：暗化的 mask + 烧进去的中心线（由 road_follow_node 在本机生成，
+    # 不过网）。这一路直接看出「它到底跟着哪条线走」。
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Centerline
+      Max Value: 1
+      Min Value: 0
+      Normalize Range: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /road_perception/centerline_debug
+      Value: true
+
+    # MPPI 模式下的地面路径（base/odom 系）。
+    - Class: rviz_default_plugins/Path
+      Alpha: 1
+      Buffer Length: 1
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Vision Path
+      Color: 0; 255; 90
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /vision_path
+      Value: true
+
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Frame Timeout: 15
+      Marker Scale: 0.3
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Value: false
+
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 3
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.6
+      Target Frame: <Fixed Frame>
+      Yaw: 0.6
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1000
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Width: 1600
+  X: 40
+  Y: 40

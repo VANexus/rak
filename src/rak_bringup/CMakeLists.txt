@@ -29,6 +29,13 @@ if(BUILD_TESTING)
     test_robot_launch_composition
     test/test_robot_launch_composition.py
   )
+
+  # 2026-11-19: 纯视觉寻路的 RotationShim 覆盖层必须逐字镜像 nav2_params.yaml 的
+  # MPPI 半边（旋转闸门按同名节点把参数交给副驾，没有独立命名空间）。
+  ament_add_pytest_test(
+    test_vision_follow_params
+    test/test_vision_follow_params.py
+  )
 endif()
 
 install(DIRECTORY launch config scripts udev DESTINATION share/${PROJECT_NAME})
