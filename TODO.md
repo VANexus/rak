@@ -259,10 +259,50 @@
   C1 静摩擦前馈机制已随 R76 落地，增益重整定等台架首测。
   依据：`docs/design/chassis_control.md` §6。
 
-- [ ] **抗打滑三级接入的 σ 标定与 L3 gate 重接线**
-  代码完成（L1 残差进 `/rak/metrics`、L3 gate 默认关、L2 静态回退）。
-  架空期真打滑不可复现，落地期做。
-  依据：`docs/reference/firmware_capability_spec.md` §7.2。
+- [x] **抗打滑三级接线**（2026-11-18）：L1 `slip_watch` 出
+  `/slip_watch/slip_suspected`（std_msgs/Bool）；L2 运行期协方差由新节点
+  `odom_cov_guard` 做（`/mecanum_drive_controller/odometry` → `/odom_wheel`，
+  打滑期 pose/twist 对角 ×10，时间戳透传）；L3 gate 接线完成但默认
+  `slip_gate:=false`。依据：`docs/reference/firmware_capability_spec.md` §7.2。
+- [ ] **抗打滑 σ 回填 + 打开 L3 gate**
+  为什么卡着：`sigma_baseline` 默认 0（只记数不判定），真打滑落地才可复现。
+  判过：用落地期基线 p95 回填 `sigma_baseline`（工具
+  `ros2 run rak_metrics slip_sigma <baseline.csv>`），再 `slip_gate:=true` 跑一次
+  受憋/打滑，确认 `/cmd_vel` 限幅生效且恢复斜坡无抖。
+
+- [x] **EKF 状态融合上真机**（2026-11-18 静态验收）：`slam.launch.py odom_source:=ekf`
+  真机跑通，EKF 订阅 `/odom_wheel` + `/imu/data_raw`、输出 30 Hz、
+  `odom→base_footprint` 单发布者、静止 30 s 航向漂移 0.000°。
+- [x] **EKF 直线运动验收**（2026-11-18 真机）：0.08 m/s × 5 s，轮系 0.389 m（指令
+  0.400，97%）、深度 0.378、雷达 0.381（轮系/雷达 1.02），IMU 航向 +0.06°（+0.15 °/m），
+  EKF 位移与轮式差 1 mm。工具 `scripts/smoke_guarded.py`。
+- [ ] **原地旋转：符号反向 + 横移退化成旋转（需人工确认滚子朝向）**
+  为什么卡着：实测 `angular.z=+0.30` → IMU −37°、激光航向 −24.6°（双源互证），
+  而 `linear.y=+0.08` → IMU +103° 几乎不横移。索引置换解释不通，更像滚子不镜像。
+  判过：左右两侧滚子应互为镜像（45° 交叉）；确认后若确为布局问题，用
+  `cmd_vel_omni` 的 `invert_angular_z`/`invert_lateral_y` 收口，并跑
+  纯 vy 横移 ±0.08 m/s 各 2.5 s，验证"横移不产生偏航"。
+- [ ] **主动原地旋转必须 `stabilizer:=false`**
+  实测稳定器开着时两轮几乎不动（Δθ = −50/−0.4/−64/−0.7），它在对抗旋转；
+  关掉后四轮一起驱动（左 −1.90 / 右 +1.22 rad/s）。
+- [ ] **EKF 在底盘重启后跑飞**（x 被拖到 ≈199 m）
+  根因：`odom0` 是绝对位姿 + 位置差分速度，底盘重启后位姿原点跳变被当成真实运动。
+  判过：EKF 前端加跳变门（单帧位移/速度超阈值即丢弃并报 WARN），或固定"先停 EKF
+  再重启底盘"的顺序。
+- [ ] **Nav2 → 底盘链路口径统一**
+  `cmd_vel_stub` 发 `/cmd_vel_raw`，`cmd_vel_omni` 默认订阅 `/cmd_vel`；两条线同时
+  开启时需要显式指定 `cmd_vel_topic:=/cmd_vel_raw`，否则最后一个 /cmd_vel 发布者赢。
+
+  为什么卡着：直行/原地旋转测试要操作员在场，本轮只做了静态链。
+  判过：0.453 m 直行 `/odometry/filtered` 方向 ≈0°、轮系/雷达里程比仍在 1.007 量级；
+  原地 +90° 旋转比对 `/odom` 的 yaw 变化量与 IMU 积分，同号同量级则启用
+  `ekf_params:=config/ekf_rf2o_yaw_only.yaml`。
+
+- [ ] **固件 R82 上板验收（`0x2010` 冻结根因修复）**
+  为什么卡着：根因（整数 EMA 负侧地板，静止时卡在 −15..−1 Q8 → 0x2010 常驻 −1 LSB）
+  已定案并编译通过，但板上仍是旧固件且当前无 ST-Link 可烧。
+  判过：正/反各停一次，`candump can0,181:7FF` 中 `0x2010..13` ≤150 ms 精确归 0x0000 并保持；
+  0.05 m/s 慢巡航与位置差分差 ≤3 LSB。三条全绿后才把 `velocity_from_position` 切 false。
 
 - [ ] **Nav2 `vx_min` 最低轮速钳位复核**（MPPI `vx_min` -0.10 → +0.02，basis 是推断）
   依据：`docs/design/chassis_control.md` §6。

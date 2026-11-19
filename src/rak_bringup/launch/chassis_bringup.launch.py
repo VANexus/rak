@@ -58,6 +58,16 @@ def _launch_setup(context, *args, **kwargs):
     if slaves not in ("both", "chassis", "arm"):
         raise RuntimeError(f"slaves 必须是 both|chassis|arm，得到 {slaves!r}")
 
+    cmd_vel_adapter = config("cmd_vel_adapter").lower()
+    cmd_vel_topic = config("cmd_vel_topic")
+    invert_angular = config("invert_angular_z").lower()
+    invert_lateral = config("invert_lateral_y").lower()
+    for name, val in (("cmd_vel_adapter", cmd_vel_adapter),
+                      ("invert_angular_z", invert_angular),
+                      ("invert_lateral_y", invert_lateral)):
+        if val not in ("true", "false"):
+            raise RuntimeError(f"{name} 只接受 true/false，得到 {val!r}")
+
     stabilizer = config("stabilizer").split()[0].lower()
     assert stabilizer in ("true", "false"), f"stabilizer 只接受 true/false，得到 {stabilizer!r}"
     sign = config("wheel_sign").split()
@@ -202,6 +212,27 @@ def _launch_setup(context, *args, **kwargs):
             )
         )
 
+    # [AI] 2026-11-18：底盘的运动入口。Nav2/寻路/键盘都发 /cmd_vel(Twist)，
+    # 而 mecanum_drive_controller 要的是 TwistStamped 的 /reference —— 在这之前
+    # 本仓没有这一环（/cmd_vel_raw 无人订阅，Nav2 的指令到不了轮子）。
+    # 全向：vx/vy/ωz 三路都通（麦轮原生支持矢量平移）。
+    # 符号：本车滚子排布与控制器假定的 O 布局左右相反，实测正 angular.z 会让车
+    # 顺时针转（IMU −37° / 激光 −24.6° 双源互证），故默认取反转向与横移；
+    # vx 不动（直行实测正确）。
+    if cmd_vel_adapter == "true" and slaves in ("both", "chassis"):
+        nodes.append(Node(
+            package="rak_motion_stub",
+            executable="cmd_vel_omni",
+            name="cmd_vel_omni",
+            output="screen",
+            parameters=[{
+                "cmd_vel_topic": cmd_vel_topic,
+                "reference_topic": "/mecanum_drive_controller/reference",
+                "invert_angular_z": invert_angular == "true",
+                "invert_lateral_y": invert_lateral == "true",
+            }],
+        ))
+
     return nodes
 
 
@@ -249,5 +280,21 @@ def generate_launch_description():
             # 这是"直走很歪"的第一手段；默认关，A/B 用 true 打开。
             "stabilizer", default_value="false",
             description="轮域陀螺稳定器（固件内环）：true 打开，直走抗偏"),
+        DeclareLaunchArgument(
+            "cmd_vel_adapter", default_value="true",
+            description="起 /cmd_vel -> /mecanum_drive_controller/reference 适配器"
+                        "（全向 vx/vy/ωz）。false 时本文件不提供运动入口"),
+        DeclareLaunchArgument(
+            "cmd_vel_topic", default_value="/cmd_vel",
+            description="适配器订阅的速度话题；Nav2 stub 链发 /cmd_vel_raw 时改这里"),
+        DeclareLaunchArgument(
+            "invert_angular_z", default_value="true",
+            description="angular.z 取反。2026-11-18 实测本车麦轮左右布局与控制器假定相反："
+                        "正 angular.z 实际顺时针转（IMU/激光航向双源互证）"),
+        DeclareLaunchArgument(
+            "invert_lateral_y", default_value="false",
+            description="linear.y 取反。**未裁决**：2026-11-18 实测本车横移指令会把车"
+                        "转起来（+103°），更像滚子不镜像的硬件特性而不是符号问题，"
+                        "没有可复现证据前不翻符号"),
         OpaqueFunction(function=_launch_setup),
     ])

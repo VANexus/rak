@@ -90,6 +90,24 @@ def test_diagnostics_are_visible(params):
     assert params["print_diagnostics"] is True
 
 
+def test_odom_slots_are_contiguous_from_zero(params):
+    """robot_localization 从 odom0 起**顺序**探测输入槽，遇到第一个缺失就停。
+
+    2026-11-18 实测：只声明 odom1 时节点根本没这一项参数（`ros2 param list` 只有
+    odom0），EKF 静默退化成单 IMU 源，`/odometry/filtered` 照发不误 —— 又一个
+    "看着在工作其实没接上"。所以槽位必须从 0 连续。
+    """
+    index = 0
+    while f"odom{index}" in params:
+        index += 1
+    for later in range(index, index + 4):
+        assert f"odom{later}" not in params, (
+            f"odom{later} 存在但 odom{index} 缺位：robot_localization 会静默忽略 "
+            f"odom{later}（槽位必须从 0 连续）"
+        )
+    assert index >= 1, "至少要有一路 odom 输入"
+
+
 def test_wheel_odometry_slot_is_connected_and_honest(params):
     """轮式里程计（F1 的主力）自 2026-11-18 起已接入。
 
@@ -98,9 +116,9 @@ def test_wheel_odometry_slot_is_connected_and_honest(params):
     横向滚子打滑时系统性漂移（实测无稳定器直行 -2.0°/m），航向权威只能是陀螺。
     """
     doc = (CONFIG / "ekf.yaml").read_text(encoding="utf-8")
-    assert "odom1:" in doc, "轮式那一路必须接进来（P0-1）"
-    assert params["odom1"].startswith("/"), params["odom1"]
-    config = params["odom1_config"]
+    assert "odom0:" in doc, "轮式那一路必须接进来（P0-1，且必须是 odom0 槽）"
+    assert params["odom0"].startswith("/"), params["odom0"]
+    config = params["odom0_config"]
     LABELS = ["x", "y", "z", "roll", "pitch", "yaw", "vx", "vy", "vz",
               "vroll", "vpitch", "vyaw", "ax", "ay", "az"]
     assert config[0] and config[1], "轮式必须提供 x/y 绝对位置"
@@ -108,3 +126,40 @@ def test_wheel_odometry_slot_is_connected_and_honest(params):
     for index in (2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14):
         assert not config[index], f"轮式不得贡献 {LABELS[index]}（打滑 + 位置差分不可信）"
 
+
+
+def _numeric_sequence_types(params) -> list[tuple[str, int]]:
+    """robot_localization 的参数解析器要求同一序列内元素类型一致。
+
+    2026-11-18 实测：协方差里 `0` 与 `0.0025` 混排会让 ekf_node 在启动时
+    `Couldn't parse params file: Sequence should be of same type` 直接 abort ——
+    整条 SLAM 链没有 odom→base_footprint，现象是"EKF 起了但 TF 没有"。
+    PyYAML 把 `0` 读成 int、`0.0025` 读成 float，所以这条门禁看的是**Python 类型**。
+    """
+    offenders = []
+    for key, value in params.items():
+        if not isinstance(value, list) or not value:
+            continue
+        types = {type(item) for item in value if isinstance(item, (int, float))
+                 and not isinstance(item, bool)}
+        if len(types) > 1:
+            offenders.append((key, len(types)))
+    return offenders
+
+
+def test_no_mixed_int_float_sequences(params):
+    assert not _numeric_sequence_types(params), (
+        f"序列里 int/float 混排会让 ekf_node 启动即 abort: {_numeric_sequence_types(params)}"
+    )
+
+
+def test_default_slot_free_of_declared_but_unused_inputs(params):
+    """列了 odom 话题却所有更新量为 false，robot_localization 会每周期报
+    "Potentially erroneous data" 把真正的警告淹掉（本轮 /diagnostics 实测被刷屏）。
+    不用的输入就别声明。"""
+    for slot in ("odom0", "odom1", "odom2", "imu0", "imu1"):
+        if slot not in params:
+            continue
+        assert any(params.get(f"{slot}_config") or []), (
+            f"{slot} 声明了话题却没有任何更新量；不用就整块删掉"
+        )

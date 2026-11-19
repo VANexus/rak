@@ -2,6 +2,31 @@
 
 > 状态：现行 · 最后更新：2026-11-16
 
+## 跑前守栏（每次真机动作前一条命令，只读）
+
+```bash
+python3 scripts/can0_preflight.py            # 退出码 0 才进 G1
+python3 scripts/can0_preflight.py --fix      # 有孤儿进程时；先打印将杀的 PID
+```
+
+判据含链路与板子在总线（原 G0 不变）、**进程单例**（NMT 主站 / controller_manager /
+i2c_imu / robot_state_publisher / rf2o / slam_toolbox）、`bus.yaml` 的
+`chassis.polling`、URDF 轮关节 `state_sign`、rf2o `init_pose_from_topic`、
+CANopen 插件 `.so` 与 URDF 的 mtime、两套安装树是否并存（并打印实际解析到的路径）。
+`--fix` 只杀超出上限的进程，且**永不杀 NMT 主站与 `ros2 launch` 父进程**。
+
+## 轮有效半径的标定不要再单趟
+
+单趟最小射线不稳（两档 0.0249/0.0309），改用多趟中位数：
+
+```bash
+python3 scripts/calibrate_wheels_radius.py runs.csv
+```
+
+CSV 列：`run,wheel_fl,wheel_fr,wheel_rl,wheel_rr,lidar_m,depth_m,imu_dyaw_deg`。
+输出中位数 + MAD + 每趟残差，按"四轮极差 <6%"与"轮系/雷达落在 [0.5, 2.0]"剔异常趟。
+95% 半宽 = 1.96·1.253·σ/√N ≤ 2%：σ_rel=2.8% 时 N=12 够，5% 要 38 趟。
+
 目标：在 Jetson 上按固定顺序验证底盘驱动层，直到"车轮真转 10 s"这一步。
 每一步都有明确判定与失败含义；跳过前一步做后一步只会得到误判。
 

@@ -96,7 +96,9 @@ ekf_filter_node:
     odom0_queue_size: 10
 
     # =====================================================================
-    # --- odom1: 轮式里程计（/mecanum_drive_controller/odometry, ~100 Hz）---
+    # --- odom1: 轮式里程计（/odom_wheel ← odom_cov_guard, ~100 Hz）---
+    # 槽位顺序有硬约束：robot_localization 从 odom0 起顺序探测、遇到第一个缺失就停，
+    # 所以本档必须 odom0 在前（rf2o）、odom1 在后（轮式）；改成只有 odom1 会静默不读。
     # =====================================================================
     # 链路：chassis_bringup.launch.py → controller_manager(100 Hz) →
     # mecanum_drive_controller（enable_odom_tf: false，TF 归本 EKF）→
@@ -110,7 +112,7 @@ ekf_filter_node:
     #      积分几米就是几十度；
     #   2) 轮速本身来自位置差分（±1 count 量化），yaw 差分项再叠一层差分噪声。
     # 航向速率权威是 imu0 的 vyaw（陀螺直测，R82 冻结看门狗后可信）。
-    odom1: /mecanum_drive_controller/odometry
+    odom1: /odom_wheel
     odom1_config: [true,  true,  false,      # x, y（轮系积分位姿，量程已双传感器互证）
                    false, false, false,      # yaw（打滑 + 位置差分，不可信）
                    true,  false, false,      # vx（vy 同理不可信：麦轮横移靠打滑）

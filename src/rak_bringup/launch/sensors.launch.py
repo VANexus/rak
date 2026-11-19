@@ -267,7 +267,7 @@ def generate_launch_description():
                 #   python3 /tmp/bias60.py             # 60 s 静置，输出即总零偏
                 # 旧值（2026-10-29）：-0.002902,-0.006872,-0.002291 —— Z 轴差 0.0027 rad/s
                 # ≈ 0.155 °/s，10 min 就是 56°，这是之前"航向不可信"的主要来源。
-                "gyro_bias": "0.001186,-0.007734,-0.003310",
+                "gyro_bias": "0.001189,-0.008293,-0.004501",
             }],
         ), condition=IfCondition(LaunchConfiguration("imu"))),
 

@@ -194,6 +194,20 @@ def list_procs(pattern):
         pid = int(pid_s)
         if pid == me or "can0_preflight" in cmd or "pgrep -af" in cmd:
             continue
+        # `ros2 run <pkg> <exe>` 是包装器，真正干活的节点是它 fork 出来的子进程
+        # （命令行是 install/.../lib/<pkg>/<exe>）。两个都数就会把"一个节点"
+        # 判成"两个实例"——本轮实测 i2c_imu 明明只有一个，却报了 [FAIL] 双实例。
+        # 只数真正的节点进程。
+        if re.search(r"\bros2\s+run\b", cmd):
+            continue
+        # 同理排除**查询者自己**：`pgrep -af X` 所在的 shell 命令行里也含 X，
+        # 直接 `python3 scripts/can0_preflight.py` 时它还会匹配 `grep X`/`bash -c ...`。
+        # 本轮实测：3 个 robot_state_publisher 里有 1 个是本脚本自己的 shell。
+        if re.search(r"\b(bash\s+-c|sh\s+-c)\b", cmd) or "grep" in cmd:
+            continue
+        # 只接受"可执行的绝对路径 + 参数"形态，避免把任何含关键词的行算作进程。
+        if not cmd.startswith("/"):
+            continue
         out.append((pid, cmd.strip()))
     return out
 

@@ -6,8 +6,8 @@
 # 单写者纪律（ADR-0011）：本链运行时不得同起 Nav2 / rak_wbc / chassis_tui。
 cd ~/rak || exit 1
 source /opt/ros/jazzy/setup.bash
-source install/local_setup.bash
-export ROS_DOMAIN_ID=47
+source install/architecture/local_setup.bash
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-47}"
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 pkill -9 -f 'usb_cam' 2>/dev/null
@@ -31,7 +31,7 @@ echo "front camera: $ARC"
 nohup setsid ros2 run usb_cam usb_cam_node_exe --ros-args \
   -r __ns:=/camera -r __node:=camera \
   -p video_device:="$ARC" -p pixel_format:=mjpeg2rgb \
-  -p image_width:=640 -p image_height:=480 -p framerate:=10.0 \
+  -p image_width:=640 -p image_height:=480 -p framerate:=30.0 \
   -p camera_name:=front_camera -p frame_id:=camera_optical_frame \
   > /tmp/front_cam.log 2>&1 < /dev/null &
 sleep 2

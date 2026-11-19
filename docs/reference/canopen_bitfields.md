@@ -137,3 +137,22 @@
 **修复方案（R76 固件）**：先按已知安装（+Y 朝上）把加速度旋到水平系再算 tilt，
 或直接按竖装解析式重推；影响面=遥测/OLED（`imu_tilt_deg` 消费者），不碰稳定器闭环。
 修好前 Jetson **不消费** 0x2031/0x2032（EKF 航向权威=Jetson LSM6DSR，本就不依赖）。
+
+## 8. 双 IMU 互校（2026-11-18，工具就位，数据待采）
+
+板载（chassis F407，平装、重力沿芯片 +Z）与 Jetson 直连 LSM6DSR（`axis_map:="-z,-x,y"`，
+重力 +Y）从未对同一运动比对过。工具：
+
+```bash
+python3 scripts/compare_imu.py --jetson jetson.csv --board board.csv
+python3 scripts/compare_imu.py --online --duration 20     # 需 ROS/CAN，默认关
+python3 scripts/compare_imu.py --selftest                 # 无硬件自检
+```
+
+口径：板载 `0x2030 imu_dyaw` 是**每 SYNC 的 mrad 增量**，必须先按 dt 换成 rad/s 再与
+Jetson `angular_velocity.z` 比；`0x2031/0x2032` 是 pitch/roll（R78 后按平装解析式算，
+实测 −2.14°/−0.21°）；`0x2034 imu_age` 是采样年龄，> 阈值视为该拍不可用。
+
+裁决三档：**同源可信** / **需重标定**（scale 出 [0.9, 1.11]、相关系数 <0.95、`|a|` 偏 0.5、
+倾角 >±5°）/ **轴或符号不一致**（整体异号）。同源可信之后再把板载 yaw 作为主机 EKF
+的第二航向源接入（单传感器冻结时不再静默）。

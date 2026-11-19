@@ -4,6 +4,173 @@
 
 更新日期：2026-11-18
 
+## 2026-11-18 增量三：真机烟测（第一次正式验收尝试）——结果与失败
+
+**先记失败，因为它是本轮最有价值的信息。** 第一次烟测我把车顶到墙上三次。
+
+- **根因是我的测试脚本没有墙距判断**：手工运动直接往 `/mecanum_drive_controller/reference`
+  灌速度，绕开了仓库仅有的两道防护（`allow_motion` 许可门、Nav2 的 `collision_monitor`——
+  手工调试时两者都不在链路上）。“操作员说前方安全”被当成了安全边界。
+- **已固化为 `scripts/smoke_guarded.py`**：三层护栏（起跑墙距 <0.90 m 拒绝跑；运行中
+  <0.45 m 立即停；时长到点即停并持续 1 s 零速），墙距取**深度与雷达的最小值**，
+  `--selftest` 覆盖护栏/直行判据/位移换算/积分。以后手工运动只走这个入口。
+- 另有两处**我的测量错误**产生过错误结论，都已修正并写进脚本：
+  ① 航向解析抓了 `position.z` 而不是四元数 → 一度得出“静止 30 s 漂移 0.000°”的假结论；
+  ② `scan` 角度换 base 系时 `lidar_yaw` 符号写反（应为 `a + lidar_yaw`）→ “前方护栏”
+  实际在看 +75° 方向的侧墙。用深度相机（真前方）当标尺可一眼判定：正确写法差 0.12 m
+  （= 雷达前置 0.11 m），错误写法差 1.64 m。
+
+**跑通的部分（真机实测，三路独立真值互证）**
+
+| 项 | 实测 |
+|---|---|
+| 直行 0.08 m/s × 5 s（指令 0.400 m） | 轮系 **0.389 m（97%）**、深度 0.378、雷达 0.381 |
+| 轮系/雷达、轮系/深度 | **1.02 / 1.03**（四轮极差 2.5%：干净直线） |
+| 直行航向漂移 | IMU 积分 **+0.06° over 0.389 m = +0.15 °/m** |
+| EKF 位移 vs 轮式 | 差 **1 mm**（EKF 忠实跟踪 `odom0`） |
+| EKF 订阅/输出 | `/odom_wheel`+`/imu/data_raw`；30.0 Hz；`odom→base_footprint` 单发布者 |
+| EKF 静止航向漂移 | **+0.26 °/min**（偏置修正后；修正前 −3.8 °/min） |
+| 深度相机 | 424×240 Y16，9.7–10.0 Hz；中心距离与雷达差 0.12 m（= 雷达前置量） |
+
+**修掉的真 bug（都有实测证据）**
+
+1. **陀螺零偏随热状态漂移**：另一次热状态下标的
+   `0.001186,-0.007734,-0.003310` 在跑完一轮热机后残差 **−0.00119 rad/s = −4.10 °/min**，
+   而 EKF 的航向就是积它 —— 静止十分钟就歪 40°。重标为
+   `0.001189,-0.008293,-0.004501`（|a|=9.707 确认未冻结），残差降到 **+0.08 °/min**。
+   新工具 `scripts/calibrate_gyro_bias.py`（`--apply` 直接写回 `sensors.launch.py`，
+   `--selftest` 覆盖修正公式与漂移换算）。**结论：这个值必须每次热机后重标**，
+   别指望用一周。
+2. **`/cmd_vel` 从来到不了轮子**：Nav2 的 stub 链发 `/cmd_vel_raw`，而底盘控制器订阅
+   `/mecanum_drive_controller/reference`(TwistStamped)，中间**没有任何节点**。
+   新增 `rak_motion_stub/cmd_vel_omni`（`/cmd_vel` → `/reference`，全向 `vx/vy/ωz`，
+   指令超时主动发零，符号开关显式化），并在 `chassis_bringup.launch.py` 里以其为
+   唯一运动入口（`cmd_vel_adapter:=true` 默认）。
+3. **preflight 两处误报**：`ros2 run` 包装器与真节点被数成两个实例；查询者自己的
+   shell（`bash -c ... grep X`）也被算作 `X` 的实例。都加了排除与 pytest 断言。
+
+**发现但未修（需要决策或硬件动作）**
+
+- **原地旋转方向与指令相反**：`angular.z=+0.30` → IMU 积分 **−37.0°**、激光航向
+  （rf2o，独立于 IMU）**−24.6°**，而轮系差动算出 +43.5°。反号再测同样反向
+  （−0.30 → IMU +6.8°、激光 +23.8°）。两个独立裁判一致，确定的符号错误。
+  `cmd_vel_omni` 已提供 `invert_angular_z`（默认 true）作为可用修法，但**根因未定**：
+  候选是麦轮滚子排布（O/X 布局）与控制器假定相反，或 OD 索引绑定转了 180°。
+- **横移指令会把车转起来**（`linear.y=+0.08` → IMU +103°，几乎不横移）。纯索引置换
+  解释不了（置换会让横移仍是横移），更像**滚子不镜像/滚子阻力过大**：麦轮横移需要
+  四轮沿 45° 打滑，滚子不自由时对角线力就变成偏航力矩。`invert_lateral_y` 因此
+  **默认 false —— 没有证据不猜符号**。需要人工确认滚子朝向（左右两侧应镜像）。
+- **原地旋转量不稳**：关掉固件轮域稳定器后四轮确实一起驱动（左 −1.90 / 右 +1.22 rad/s），
+  但转向响应在 +0.30 → −13°…−37° 之间波动；稳定器**开着**时会主动对抗旋转
+  （实测两轮几乎不动、Δθ = −50/−0.4/−64/−0.7）。结论：**主动原地旋转必须
+  `stabilizer:=false`**。
+- **EKF 在底盘重启后会跑飞**：重启 `chassis_bringup` 后 `odom0` 的绝对位姿跳变，
+  EKF 被拖到 `x≈199 m`。这是"绝对位姿 + 位置差分源"的真实风险，需在 EKF 前端加
+  跳变门（或重启顺序上先停 EKF）。未修。
+
+## 2026-11-18 增量二：EKF 上真机 + 0x2010 根因 + 打滑闭环 + 运维守栏
+
+先记一个必须写在最前面的教训：本轮**五个"静默接不上"的坑**，每一个都让系统
+看着在工作而实际没接上（详情见 `AGENTS.md` § Gotchas 同日条目）。它们的共同形态
+是"没有报错、话题照发、节点照活"。凡涉及"某路输入是否真在喂"，一律以
+`ros2 node info` / `ros2 param list` 的**实际订阅与参数**为准，不看配置文件。
+
+**P0-1：`odom_source:=ekf` 首次在真机跑通（静态已验收，运动待操作员在场）**
+
+链路：`chassis_bringup.launch.py`（`slaves:=chassis`, `allow_motion:=false`）→
+`mecanum_drive_controller`（100 Hz）→ `odom_cov_guard` → `/odom_wheel` → EKF；
+`i2c_imu`（零偏 `0.001186,-0.007734,-0.003310`）+ rf2o + slam_toolbox 同链。
+
+| 项 | 实测 |
+|---|---|
+| EKF 订阅 | `/odom_wheel`（nav_msgs/Odometry）+ `/imu/data_raw`，两路都在 |
+| EKF 输出 | `/odometry/filtered` 30.0 Hz；`odom→base_footprint` 单发布者 |
+| 全链 TF | `map→odom` 归 slam_toolbox，`odom→base_footprint` 归 EKF，无重复 |
+| 静止 30 s 航向 | 漂移 **0.000°**（vyaw 只来自陀螺，无轮式 yaw 污染） |
+| 诊断 | `ekf_filter_node: ... appears to be functioning properly` |
+
+`ekf.yaml` 的裁剪与依据：**轮式 = `odom0`**（只 x/y/vx，yaw/vyaw 排除）、
+**imu0 = 只有 vyaw**、**rf2o 本档不声明**（P1-2 见下）。协方差全部带小数点
+（int/float 混排会让 `ekf_node` 启动即 abort）。
+
+**P0-2：`0x2010..0x2013` 空闲冻结的根因（固件，已修未烧）**
+
+根因不是极性、不是 1T 档、不是量化，而是**整数 EMA 的负侧地板**：
+`app_car.c:1619` `wheel_filt_q8 += (spd_q8 - wheel_filt_q8) >> 4`，静止时 `spd_q8==0`，
+负残差 `(0-(-k))>>4` 在 `k<16` 时恒为 0（算术右移向下取整）→ filt 永久卡在
+`-15..-1` Q8，换算后 `0x2010..13` 常驻 **−1 LSB（−0.01 rad/s）**，永不归零。
+正侧能精确到 0，所以"正跑完停正常、倒跑完停冻结"，与现场"`~0x2010` 恒为 −1"精确吻合。
+
+修法（R82，`~/vehical_rak_motion`，**尚未上板**）：目标为 0 且残差低于遥测 1 LSB 时
+归零；`build_tag` R76→R82。干净重编通过（`text 64300 data 1508 bss 73584`）。
+板上验收清单（正/反各停一次、≤150 ms 归 0x0000、慢巡航 ≤3 LSB）见
+`AGENTS.md` 与固件仓提交说明；**三条全绿后**主机才把 `velocity_from_position` 切 false。
+量化对比：位置差分的噪声 ≈ ±0.0102 rad/s ≈ **1.02 个 0x201x LSB**，两者同量级、
+0x201x 还略细 2% 且自带 EMA 平滑——切换的真收益是省掉主机侧差分链路与其滞后。
+
+**P1-1：打滑闭环（L1 检测 → L2 运行期协方差 → L3 限幅门）**
+
+- `slip_watch` 新增 `std_msgs/Bool` 的 `/slip_watch/slip_suspected`（变化沿 + 激活初始
+  False），顺带把 `wheels_radius` 默认值回填 0.0309。
+- 新增 `odom_cov_guard`（`rak_metrics`，受管节点）：`/mecanum_drive_controller/odometry`
+  → `/odom_wheel` 原样转发（**时间戳不重写**），`slip_suspected=true` 期间
+  pose(x,y)/twist(vx,vy) 对角 ×10，恢复按 ÷4 斜坡；信号缺失 fail-open 并报 WARN。
+  QoS 用 RELIABLE：robot_localization 的 odom 订阅默认 RELIABLE，BEST_EFFORT 发布会静默断流。
+- L3 gate 接线完成但**默认关**（`slip_gate:=false`）：开启后
+  `collision_monitor → /cmd_vel_pre_slip → slip_watch → /cmd_vel`。打开前提是
+  `sigma_baseline` 用真打滑数据回填（工具 `ros2 run rak_metrics slip_sigma <csv>`）。
+- 生命周期拥有者：`slip_watch` 归 `nav2.launch.py`，`odom_cov_guard` 归 `slam.launch.py`
+  的 ekf 档（与 EKF 同生——`ekf.yaml` 的 `odom0` 订阅它的输出）。`system_manifest.yaml`
+  两条都改成 `owner: external:*`，避免与 `system_manager` 形成双拥有者。
+
+**P1-2：rf2o 坐标系语义 —— 选"显式降级"而不是"猜一个偏置"**
+
+实测（0.453 m 直行）：位移方向 +37.9°，而 `|lidar_yaw| = 37.59°`——量值相等、符号相反，
+即位移仍在激光系；绝对航向差 177°（航向"变化量"准）。上游 rf2o 只有 7 个参数、
+没有安装旋转入口，且 `twist.linear.y` 硬编码 0；静态中间帧方案在旋转时引入
+`|(I-Rot)·t_m| ≈ 0.16 m` 的圆弧项误差。**单次直行推不出可靠偏置，赌不如关。**
+
+因此：默认档 `ekf.yaml` **不声明 odom0**（声明了但全 false 会让 EKF 每周期刷
+"Potentially erroneous data"）；待贴的裁决档 `config/ekf_rf2o_yaw_only.yaml` 只开
+yaw 差分，经 `ekf_params:=` 切换。判据脚本 `src/rak_bringup/scripts/rf2o_frame_audit.py`
+（无参自检 7 组全绿；实测数据用 `--direction-err-deg/--yaw-offset-deg/--rotation-test`
+喂进去一条命令出结论）。**原地旋转测试仍需操作员在场。**
+
+**P2-1：电流/转矩反馈 = 结论②（有引脚、无采样电阻）**
+
+评估写在 `~/vehical_rak_motion/docs/CURRENT-SENSE-FEASIBILITY.md`：板上 `BOARD-C30D.md:59`
+明确"全板没有每通道电流采样"，AT8236 也没有电流镜像输出；ADC1 只占 PB0 电池分压，
+空闲 4 路正好够每轮一路。最小改动 = 10 mΩ 采样电阻 + INA181A1（`I_mA = ADC_mV × 5`）+
+ADC1 规则序列扩到 5 rank。零改动替代是 `duty` 转矩代理（上界 `I ≤ D·V_bat/R_mot`）。
+
+**P2-2：双 IMU 互校工具就位，数据待采**
+
+`scripts/compare_imu.py`（`--selftest` 6 场景：正常/反号/scale 1.03/1.25/倾角 89°/采样停）。
+口径：板载 `0x2030` 是**每 SYNC 的 mrad 增量**，必须按 dt 换成 rad/s 再与 Jetson `gz` 比。
+
+**P3-1：跑前守栏自动化（本轮三次被污染读数的直接产物）**
+
+`scripts/can0_preflight.py` 从 122 行扩到 465 行：链路 + 板子在总线（原 G0 判据不变）
++ **进程单例**（主站/controller_manager/i2c_imu/robot_state_publisher/rf2o/slam_toolbox）
++ 静态不变量（`bus.yaml polling`、URDF `state_sign`、rf2o `init_pose`、
+插件 `.so` 与 URDF 的 mtime、两套安装树并存 + 实际解析路径）。`--link-only` 保持原行为；
+`--fix` 先打印再杀，且**白名单永不杀 NMT 主站与 `ros2 launch` 父进程**。29 项 pytest。
+
+**P3-2：标定可重复性**
+
+`scripts/calibrate_wheels_radius.py`：N 趟取中位数 + MAD + 每趟残差，按"四轮极差 <6%"
+与"轮系/雷达落在 [0.5, 2.0]"剔异常趟，并给趟数—精度关系
+（95% 半宽 = 1.96·1.253·σ/√N ≤ 2% → σ_rel=2.8% 时 N=12 够、5% 要 38 趟）。
+`--selftest` 12 趟含 1 趟 +9.7% 离群，中位数 0.0308（真值 0.0309，偏差 −0.30%）。
+
+**本轮仍未闭合（诚实记录）**
+
+- EKF 的**运动**验收（直行 / 原地旋转）需要人盯着，静态链已闭合。
+- 固件 R82 未上板（`openocd` 当前连不上，`lsusb` 无 ST-Link），`0x2010` 真机验收清单待执行；
+  `velocity_from_position` 保持 true。
+- 打滑阈值 `sigma_baseline` 仍为 0（只记数不判定）；L3 gate 保持关。
+- rf2o 旋转裁决未做；`ekf_rf2o_yaw_only.yaml` 未启用。
+
 ## 2026-11-18 增量：底盘直行全链路闭合（真机验收，四轮同向 + 双传感器里程计对齐）
 
 本轮把"前进很歪、抬起放下后乱跑"从现象追到六个独立根因并全部闭合。

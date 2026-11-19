@@ -767,6 +767,11 @@ sources: `rf2o` today; `ekf` is reserved and does **not** auto-start an EKF (you
   一路正确。所以 `CanopenChassis` 现在用 `velocity_from_position:=true` 由位置差分
   出速度，`jr` 的 `aux_state_*` 把位置当第二路状态导出（否则 joint_states 位置是 NaN、
   车轮 TF 被 robot_state_publisher 丢弃、控制器只能积分速度算里程计）。
+- **2026-11-18 五个"静默接不上"的坑**（细节与门禁见 `docs/status/project_status.md` 同日增量）：
+  cyclonedds 网卡名写死会让每个 ROS 进程 abort（现由 CMake 构建期按本机网卡替换）；
+  `robot_localization` 输入槽必须从 `odom0` 连续；协方差列表 int/float 混排让 `ekf_node`
+  启动即 abort；`ManagedNode` 不要在 `main()` 里自己做生命周期转移；
+  `pgrep -af` 会把 `ros2 run` 包装器与真节点数成两个。
 - **两套安装树并存会静默喂旧 URDF**：`install/` 与 `install/architecture/` 同时存在时，
   launch 里的 `get_package_share_directory` 可能取到旧那份（本轮表现为改了 `sign`
   但线上一直是旧值）。改 URDF 后要么两棵树一起 build，要么确认 `AMENT_PREFIX_PATH` 顺序。

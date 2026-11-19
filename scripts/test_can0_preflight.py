@@ -112,6 +112,45 @@ def test_three_i2c_imu_fail():
     assert dc.level == "FAIL" and "3 个" in dc.detail
 
 
+def test_ros2_run_wrapper_is_not_counted_as_a_second_instance(monkeypatch):
+    """`ros2 run pkg exe` 会 fork 出真正的节点进程，两个命令行都含 exe 名。
+
+    本轮真机实测：只有一个 i2c_imu，却被判成 "2 个（上限 1）"。只数真正的节点。
+    """
+    def fake_pgrep(cmd, capture_output=True, text=True):
+        class R:
+            stdout = (
+                "500 /usr/bin/python3 /opt/ros/jazzy/bin/ros2 run rak_imu_driver i2c_imu\n"
+                "501 /home/xrak/rak/install/architecture/rak_imu_driver/lib/"
+                "rak_imu_driver/i2c_imu --ros-args -p topic:=/imu/data_raw\n"
+            )
+        return R()
+
+    monkeypatch.setattr(pf.subprocess, "run", fake_pgrep)
+    found = pf.list_procs("i2c_imu")
+    assert [pid for pid, _ in found] == [501], found
+
+
+def test_query_shell_is_not_counted_as_a_process(monkeypatch):
+    """本轮真机实测：3 个 robot_state_publisher 里 1 个是脚本自己的 shell。
+
+    `python3 scripts/can0_preflight.py` 的父 shell 命令行里含被查询的关键词，
+    `pgrep -af` 会把它列出来；只接受"以 / 开头的可执行路径"作为节点进程。
+    """
+    def fake_pgrep(cmd, capture_output=True, text=True):
+        class R:
+            stdout = (
+                "300 /opt/ros/jazzy/lib/robot_state_publisher/robot_state_publisher --ros-args\n"
+                "301 bash -c cd /home/xrak/rak && grep robot_state_publisher | head\n"
+                "302 /usr/bin/python3 /opt/ros/jazzy/bin/ros2 run rak_imu_driver i2c_imu\n"
+            )
+        return R()
+
+    monkeypatch.setattr(pf.subprocess, "run", fake_pgrep)
+    found = pf.list_procs("robot_state_publisher")
+    assert [pid for pid, _ in found] == [300], found
+
+
 def test_missing_device_container_is_warn_not_fail():
     rows = pf.check_singletons(lambda pat: [])
     dc = [r for r in rows if r.name == "device_container"][0]
