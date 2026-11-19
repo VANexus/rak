@@ -7,14 +7,18 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 
 from rak_road_perception.road_follow_math import (
+    CORNER_DEFAULTS,
     FOLLOW_DEFAULTS,
+    LANE_CENTER_BIAS,
     TRACE_DEFAULTS,
+    follow_command,
     trace_centerline,
 )
 
 
 def main() -> None:
-    params = {**TRACE_DEFAULTS, **FOLLOW_DEFAULTS}
+    params = {**TRACE_DEFAULTS, **FOLLOW_DEFAULTS, **CORNER_DEFAULTS}
+    params["lane_center_bias"] = LANE_CENTER_BIAS
     rclpy.init()
     node = Node("trace_diag")
     got = {}
@@ -41,6 +45,7 @@ def main() -> None:
     print(f"road_frac={mask.mean() / 255:.3f} has={has} spin={spin} n={len(pts)}")
     if pts:
         print(f"bottom={pts[0][1]:+.3f} top={pts[-1][1]:+.3f}")
+        print(f"cmd        {follow_command(pts, spin, has, params)}")
     rclpy.shutdown()
 
 

@@ -37,6 +37,7 @@ from .road_follow_math import (
     CORNER_DEFAULTS,
     FOLLOW_DEFAULTS,
     TRACE_DEFAULTS,
+    despike_command,
     follow_command,
     render_trace_debug,
     trace_centerline,
@@ -48,6 +49,9 @@ NODE_DEFAULTS = {
     "mask_topic": "/road_perception/road_mask",
     "cmd_topic": "/cmd_vel",
     "control_hz": 20.0,
+    # Median window over recent commands; kills single-frame segmentation
+    # spikes. 3 = one tick of latency. Set 1 to disable.
+    "cmd_median_window": 3,
     "max_mask_age_s": 0.3,
     "debug_image": True,
     "debug_topic": "/road_perception/centerline_debug",
@@ -79,6 +83,7 @@ class RoadFollowNode(Node):
         self._last_trace = []
         self._last_debug_time = 0.0
         self._warned_at = {}
+        self._history = []
 
         self._cmd_pub = self.create_publisher(Twist, self._params["cmd_topic"], 10)
         self._mask_sub = self.create_subscription(
@@ -125,10 +130,12 @@ class RoadFollowNode(Node):
         )
         if self._enabled and fresh:
             vx, vy, wz = follow_command(*self._last_obs, self._params)
+            vx, vy, wz = self._despike(vx, vy, wz)
         elif self._enabled and not fresh:
             self._warn("stale", "road mask stale — zero velocity")
             self._last_obs = ([], None, False)
             self._last_trace = []
+            self._history.clear()
 
         # Publish EVERY tick while enabled -- not only on change: downstream
         # consumers time out (cmd_vel_sim 0.15 s, the MCU 100 ms deadman), so a
@@ -154,6 +161,11 @@ class RoadFollowNode(Node):
             self._last_cmd = (vx, vy, wz)
 
         self._maybe_publish_debug(now)
+
+    def _despike(self, vx, vy, wz):
+        self._history.append((vx, vy, wz))
+        return despike_command(self._history,
+                               int(self._params.get("cmd_median_window", 0)))
 
     def _maybe_publish_debug(self, now: float) -> None:
         if self._debug_pub is None or self._last_mask is None:

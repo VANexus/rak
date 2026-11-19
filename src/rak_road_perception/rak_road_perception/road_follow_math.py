@@ -45,7 +45,11 @@ FOLLOW_DEFAULTS = {
     "max_vx": 0.12,
     "max_vy": 0.08,            # mecanum strafe cap (kept below vx: rollers slip)
     "max_wz": 0.5,
-    "k_lateral": 0.7,          # wz share of lateral error
+    # 1.4 since 2026-11-19: the closer lookahead (0.50) sees a smaller lateral
+    # error, so the gain absorbs the authority the far lookahead used to give.
+    # Measured over the same 8 real frames: bend response wz=+0.060 (was +0.073)
+    # while command noise is sigma=0.0025 vs 0.0195 before -- 8x quieter.
+    "k_lateral": 1.4,          # wz share of lateral error
     # 0.0 by default since 2026-11-19. MEASURED on the competition mat (PU/喷绘
     # cloth): a pure `linear.y` command does NOT translate -- the wheels form the
     # diagonal strafe pattern but with ~4x amplitude imbalance, and the robot
@@ -56,7 +60,15 @@ FOLLOW_DEFAULTS = {
     # a car. Raise this only after a clean strafe is shown on the real surface.
     "k_vy": 0.0,               # strafe gain: e>0 (road right) -> vy<0 (go right)
     "k_heading": 0.9,
-    "lookahead_frac": 0.70,    # pursuit target this far above the bottom row
+    # 0.50, not 0.70 (measured 2026-11-19 on the competition mat, 8 frames).
+    # The mat is a printed photo-realistic scene and the segmenter also lights up
+    # the printed ROADS in the artwork, which live in the upper part of the
+    # frame. Sweeping the lookahead against command noise on real frames:
+    #     0.20 -> wz sigma 0.0004 | 0.40 -> 0.0022 | 0.50 -> 0.0013
+    #     0.60 -> 0.0208         | 0.70 -> 0.0195   (16x worse)
+    # The trace is trustworthy to ~0.5 and garbage above ~0.6. 0.50 is ~0.9 m of
+    # preview at the measured camera geometry.
+    "lookahead_frac": 0.50,    # pursuit target this far above the bottom row
     "curv_slow": 1.5,          # vx scale = 1 - curv_slow * normalized curvature
     "min_vx_scale": 0.4,
     "slow_lateral": 0.35,
@@ -260,7 +272,9 @@ def trace_centerline(mask, params):
     # planner/controller receives actually turns.  Execution (rotation in place,
     # path tracking) is NOT done here -- see nav2_rotation_shim_controller.
     if (params.get("corner_follow", True) and points
-            and points[-1][0] > h * float(params["corner_min_depth_frac"])):
+            and points[-1][0] > h * float(
+                params.get("corner_min_depth_frac",
+                           CORNER_DEFAULTS["corner_min_depth_frac"]))):
         direction, _score = corner_signal(mask, points[-1][0], points[-1][1], params)
         policy = str(params.get("turn_policy", "auto")).lower()
         if policy in ("left", "right"):
@@ -390,6 +404,28 @@ def corner_signal(mask, y_stop, x_ref, params):
         return "right", right / max(left, 1e-6)
     return "ambiguous", 0.0
 
+
+
+def despike_command(history, window):
+    """Component-wise median of recent (vx, vy, wz) commands.
+
+    The segmenter occasionally loses the lane for a frame (printed colour blocks,
+    the purple station strips on the mat). One bad trace can swing wz by ~6x for
+    a single 50 ms tick -- measured 2026-11-19: e jumped -0.016 -> +0.137 and wz
+    to -0.097 while cruising at 0.06 m/s. A median kills that class of spike and
+    costs one tick of latency.
+
+    `history` is mutated in place (oldest dropped). Returns the newest command
+    unchanged until `window` samples exist, so the filter never invents motion.
+    """
+    window = int(window)
+    if window < 3:
+        return history[-1] if history else (0.0, 0.0, 0.0)
+    while len(history) > window:
+        history.pop(0)
+    if len(history) < 3:
+        return history[-1]
+    return tuple(float(np.median([h[i] for h in history])) for i in range(3))
 
 
 def render_trace_debug(mask, points):

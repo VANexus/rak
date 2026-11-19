@@ -503,3 +503,64 @@ def test_bias_shifts_the_ground_path_back_to_the_axis():
     assert gp
     lateral = max(abs(p[1]) for p in gp)
     assert lateral < 0.10, f"path should sit on the axis, max |y|={lateral:.3f} m"
+
+
+# --- command de-spiking (2026-11-19) ---------------------------------------
+# One bad segmentation frame swung wz from 0.015 to -0.097 while cruising the
+# real mat (printed colour blocks). A median over recent commands removes it.
+
+from rak_road_perception.road_follow_math import despike_command  # noqa: E402
+
+
+def test_despike_rejects_a_single_frame_spike():
+    h = []
+    for c in [(0.06, 0.0, 0.015), (0.06, 0.0, 0.016), (0.06, 0.0, -0.097)]:
+        h.append(c)
+        out = despike_command(h, 3)
+    # median of [0.015, 0.016, -0.097] is 0.015: the spike is gone
+    assert abs(out[2]) < 0.05, f"spike leaked through: {out}"
+    assert out[2] != -0.097
+
+
+def test_despike_passes_a_real_change_through():
+    h = []
+    for c in [(0.06, 0.0, 0.02), (0.06, 0.0, 0.05), (0.06, 0.0, 0.09)]:
+        h.append(c)
+        out = despike_command(h, 3)
+    assert abs(out[2] - 0.05) < 1e-9, out
+    h.append((0.06, 0.0, 0.12))
+    assert abs(despike_command(h, 3)[2] - 0.09) < 1e-9
+
+
+def test_despike_does_not_invent_a_command_before_the_window_fills():
+    h = [(0.06, 0.0, 0.1)]
+    assert despike_command(h, 3) == (0.06, 0.0, 0.1)
+    h.append((0.05, 0.0, 0.2))
+    assert despike_command(h, 3) == (0.05, 0.0, 0.2)
+
+
+def test_despike_window_one_is_a_passthrough():
+    h = [(0.06, 0.0, 0.1), (0.06, 0.0, -0.9)]
+    assert despike_command(h, 1) == (0.06, 0.0, -0.9)
+
+
+def test_lookahead_stays_inside_the_trustworthy_band():
+    # Measured on 8 real frames from the competition mat (2026-11-19): command
+    # noise vs lookahead was 0.0004 (0.20), 0.0022 (0.40), 0.0013 (0.50) and
+    # then jumps to 0.0208 (0.60) / 0.0195 (0.70) because the mat's printed
+    # artwork contains roads the segmenter also detects. Above ~0.55 the
+    # lookahead sits in that garbage. This test exists so nobody tunes it back.
+    assert P["lookahead_frac"] <= 0.55, (
+        f"lookahead_frac={P['lookahead_frac']} is in the noisy upper band")
+
+
+def test_bend_still_produces_meaningful_yaw():
+    m = np.zeros((H, W), np.uint8)
+    for y in range(H):
+        cx = 320 - int(180 * (max(0, 320 - y) / 320) ** 2)
+        band(m, cx - 40, cx + 40, y, y + 1)
+    pts, spin, has = run(m)
+    vx, vy, wz = follow_command(pts, spin, has, P)
+    assert wz > 0.04, f"bend must still command a real turn, got wz={wz:+.4f}"
+    assert abs(vy) < 1e-9
+    assert vx < P["max_vx"]
