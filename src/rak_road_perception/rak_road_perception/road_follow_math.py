@@ -16,6 +16,17 @@ ROS convention wz>0 = turn left, so wz = -(k_lat*e + k_head*h).
 
 import numpy as np
 
+# Camera-mount yaw, expressed as a constant offset of the traced lane centre in
+# normalised image x. MEASURED 2026-11-19 with the robot parked dead centre and
+# square on a straight competition lane: the trace settles at x_norm = +0.032
+# (6 frames, spread 0.0016), i.e. ~2.1 deg of camera yaw.
+#
+# ONE definition on purpose: the direct follower and the MPPI path builder both
+# subtract this, so the two control modes can never disagree about where the
+# lane centre is. Re-measure after any camera re-mount -- the procedure is in
+# docs/how-to/road_follow_split.md (park centred, read the stable trace x).
+LANE_CENTER_BIAS = 0.032
+
 TRACE_DEFAULTS = {
     "row_step_frac": 0.03,     # scanline stride as fraction of height
     "branch_gate": 0.20,       # max |run_center - predicted| per step (norm x)
@@ -43,6 +54,10 @@ FOLLOW_DEFAULTS = {
     "slow_lateral": 0.35,
     "spin_wz": 0.6,            # in-place turn rate when road left the bottom
     "spin_search": True,
+    # See LANE_CENTER_BIAS: a constant image-space offset from a yawed camera
+    # mount. Left uncorrected, the controller chases it forever and settles
+    # off-centre -- exactly the reported "never reaches the middle of the lane".
+    "lane_center_bias": LANE_CENTER_BIAS,
 }
 
 # --- Corner handling: this file's job is the PATH, not the motion ----------
@@ -298,10 +313,12 @@ def follow_command(points, spin_target, has_bottom, params):
         return 0.0, 0.0, 0.0
     n_look = max(1, int(params["lookahead_frac"] / max(params["row_step_frac"], 1e-6)))
     look_i = min(n_look, len(points) - 1)
-    look_x = points[look_i][1]
+    bias = float(params.get("lane_center_bias", 0.0))
+    look_x = points[look_i][1] - bias
     e = float(np.clip(look_x, -0.6, 0.6))
+    # A constant bias cancels in the difference, so the heading term is unbiased.
     dy = max(1, points[0][0] - points[look_i][0])
-    h = (look_x - points[0][1]) / dy
+    h = (points[look_i][1] - points[0][1]) / dy
     curv = 0.0
     if len(points) >= 4:
         t = np.arange(len(points), dtype=float)
@@ -411,12 +428,14 @@ GOAL_DEFAULTS = {
     # pitch +-0.3 deg at 15-22 px residual; the old 0.30 m / 0.0 rad
     # placeholders scored ~380 px, so they put every far point at the wrong
     # distance. Visible ground range is 0.32..2.1 m.
-    "cam_height_m": 0.347,
-    "cam_pitch_rad": 0.4825,
+    "cam_height_m": 0.343,
+    "cam_pitch_rad": 0.4775,
     "max_range_m": 2.5,
     "horizon_min_dep_rad": 0.05,   # rows near/above the horizon project to inf
     "path_len_m": 1.8,             # total FollowPath arc length
     "extend_step_m": 0.15,
+    # Same single source as FOLLOW_DEFAULTS.lane_center_bias (LANE_CENTER_BIAS).
+    "lane_center_bias": LANE_CENTER_BIAS,
 }
 
 
@@ -471,6 +490,9 @@ def ground_points(points, params):
         if not np.isfinite(d) or d > max_range:
             continue                      # beyond range: position is unknowable
         x_px = (xn + 0.5) * w          # x_norm is centered; convert to pixels
+        # Same camera-mount yaw correction the direct follower applies, so the
+        # MPPI path is centred on the robot rather than on the camera axis.
+        x_px -= float(params.get("lane_center_bias", 0.0)) * w
         y_left = -(x_px - cx) * d / fx
         out.append((float(d), float(y_left)))
     return out

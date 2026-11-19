@@ -194,6 +194,7 @@ def _nodes(context, *args, **kwargs):
                     _param("base_frame", str),
                     _param("turn_policy", str),
                     ("enabled", bool(enabled)),
+                    _param("lane_center_bias", float),
                 ])],
                 output="screen",
             ))
@@ -215,6 +216,7 @@ def _nodes(context, *args, **kwargs):
                 ("enabled", bool(enabled)),
                 ("control_hz", ParameterValue(
                     LaunchConfiguration("control_hz"), value_type=float)),
+                _param("lane_center_bias", float),
             ])
             actions.append(Node(
                 package="rak_road_perception",
@@ -307,6 +309,10 @@ def generate_launch_description() -> LaunchDescription:
         _arg("max_vy", "0.08"),
         _arg("max_wz", "0.5"),
         _arg("turn_policy", "auto"),
+        # 相机安装偏航 = 车道中心在图像里的恒定偏移。默认值来自实测（车停在车道
+        # 正中，trace 稳定在 x_norm=+0.032，6 帧极差 0.0016）。换了相机/重装后
+        # 必须重标：停正、读 trace 稳定段的 x，填这里。
+        _arg("lane_center_bias", "0.032"),
         _arg("corner_follow", "true"),
         _arg("lookahead_frac", "0.70"),
         _arg("k_lateral", "0.7"),

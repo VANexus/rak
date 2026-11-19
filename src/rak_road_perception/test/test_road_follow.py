@@ -26,12 +26,17 @@ def run(mask):
 
 
 def test_straight_centered():
+    # Geometry test: lane at the IMAGE centre, so the camera-mount bias is
+    # switched off explicitly. With the measured bias in play a lane at the
+    # image centre is 0.032 off the robot's axis, which is a different case
+    # (see test_lane_center_bias_removes_the_constant_offset).
+    p = {**P, "lane_center_bias": 0.0}
     m = band(np.zeros((H, W), np.uint8), 280, 360)
-    pts, spin, has = run(m)
+    pts, spin, has = trace_centerline(m, p)
     assert has and spin is None and len(pts) > 10
-    vx, vy, wz = follow_command(pts, spin, has, P)
+    vx, vy, wz = follow_command(pts, spin, has, p)
     assert abs(pts[-1][1]) < 0.02  # keeps center all the way up
-    assert abs(wz) < 0.05 and abs(vy) < 0.01 and abs(vx - P["max_vx"]) < 1e-6
+    assert abs(wz) < 0.05 and abs(vy) < 0.01 and abs(vx - p["max_vx"]) < 1e-6
 
 
 def test_offset_road_strafes_right():
@@ -303,11 +308,12 @@ def test_narrow_lane_is_not_open_floor():
 
 
 def test_narrow_lane_corrects_a_lateral_offset():
-    base = _perspective_lane()
+    # Offset-response test: bias off so the shift is the only lateral error.
+    p = {**P, "lane_center_bias": 0.0}
     for shift in (0.04, 0.08, 0.12):
         m = _perspective_lane(x_left=shift)
-        pts, spin, has = run(m)
-        cmd = follow_command(pts, spin, has, P)
+        pts, spin, has = trace_centerline(m, p)
+        cmd = follow_command(pts, spin, has, p)
         assert has and pts
         # road sits to the right -> strafe right (vy<0) and yaw right (wz<0)
         assert cmd[1] < -0.01, (shift, cmd)
@@ -454,3 +460,41 @@ def test_intrinsics_scale_with_resolution():
     full = intrinsics(G)
     for a, b in zip(small, full):
         assert abs(a * 2 - b) < 0.02, (small, full)
+
+
+# --- camera mount yaw bias (2026-11-19) ------------------------------------
+# With the robot parked dead centre on a straight lane the trace settles at
+# x_norm = +0.032 (6 frames, spread 0.0016): ~2.1 deg of camera-mount yaw.
+# Uncorrected, the controller chases that constant offset forever and settles
+# off-centre -- the reported "never reaches the middle of the lane".
+
+def test_lane_center_bias_removes_the_constant_offset():
+    bias = P["lane_center_bias"]
+    assert bias > 0.0, "the measured bias must be wired in"
+    # A lane drawn exactly at the measured bias is the robot's own centre.
+    m = np.zeros((H, W), np.uint8)
+    cx_px = int((0.5 + bias) * W)
+    for y in range(H):
+        m[y, max(0, cx_px - 60):min(W, cx_px + 60)] = 255
+    pts, spin, has = run(m)
+    cmd = follow_command(pts, spin, has, P)
+    assert abs(cmd[1]) < 0.01, f"strafe should be ~0, got {cmd[1]:+.4f}"
+    assert abs(cmd[2]) < 0.02, f"yaw should be ~0, got {cmd[2]:+.4f}"
+
+
+def test_lane_center_bias_is_one_constant_for_both_control_modes():
+    from rak_road_perception.road_follow_math import LANE_CENTER_BIAS
+    assert FOLLOW_DEFAULTS["lane_center_bias"] == LANE_CENTER_BIAS
+    assert GOAL_DEFAULTS["lane_center_bias"] == LANE_CENTER_BIAS
+
+
+def test_bias_shifts_the_ground_path_back_to_the_axis():
+    m = np.zeros((H, W), np.uint8)
+    cx_px = int((0.5 + P["lane_center_bias"]) * W)
+    for y in range(H):
+        m[y, max(0, cx_px - 60):min(W, cx_px + 60)] = 255
+    pts, _spin, _has = run(m)
+    gp = ground_points(pts, G)
+    assert gp
+    lateral = max(abs(p[1]) for p in gp)
+    assert lateral < 0.10, f"path should sit on the axis, max |y|={lateral:.3f} m"
